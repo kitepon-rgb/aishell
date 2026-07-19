@@ -107,6 +107,35 @@ public final class NativeApplicationService {
         }
     }
 
+    /// AIShellが停止中でも、利用者が設定を直せるよう管理アプリだけは開けます。
+    public func openManagerApplication(at applicationURL: URL) async throws -> RunningApplicationInfo {
+        let canonicalURL = applicationURL.resolvingSymlinksInPath().standardizedFileURL
+        guard canonicalURL.pathExtension == "app",
+              FileManager.default.fileExists(atPath: canonicalURL.path),
+              let bundle = Bundle(url: canonicalURL) else {
+            throw AIShellError.invalidPath(
+                "AIShell.appを見つけられません。@quolu/aishellを再インストールしてください。"
+            )
+        }
+
+        return try await audited(operation: "runtime.openManager", target: canonicalURL.path) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            let application = try await NSWorkspace.shared.openApplication(
+                at: canonicalURL,
+                configuration: configuration
+            )
+            return RunningApplicationInfo(
+                name: application.localizedName
+                    ?? bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+                    ?? "AIShell",
+                bundleIdentifier: application.bundleIdentifier ?? bundle.bundleIdentifier,
+                processIdentifier: application.processIdentifier,
+                isActive: application.isActive
+            )
+        }
+    }
+
     private func ensureActive() async throws {
         let configuration = try await store.loadConfiguration()
         guard !configuration.isPaused else { throw AIShellError.paused }

@@ -1,20 +1,39 @@
 import Foundation
 
 public struct AllowedPathResolver: Sendable {
-    public let rootURL: URL
+    public let rootURLs: [URL]
+
+    public var rootURL: URL {
+        rootURLs[0]
+    }
 
     public init(rootPath: String) throws {
-        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        try self.init(rootPaths: [rootPath])
+    }
 
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: rootURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            throw AIShellError.invalidPath(rootPath)
+    public init(rootPaths: [String]) throws {
+        guard !rootPaths.isEmpty else {
+            throw AIShellError.notConfigured
         }
 
-        self.rootURL = rootURL
+        var roots: [URL] = []
+        for rootPath in rootPaths {
+            let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: rootURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw AIShellError.invalidPath(rootPath)
+            }
+
+            if !roots.contains(rootURL) {
+                roots.append(rootURL)
+            }
+        }
+
+        rootURLs = roots
     }
 
     public func resolveExisting(_ path: String?) throws -> URL {
@@ -56,6 +75,11 @@ public struct AllowedPathResolver: Sendable {
         return resolved
     }
 
+    public func isAllowedRoot(_ url: URL) -> Bool {
+        let canonical = url.standardizedFileURL.resolvingSymlinksInPath()
+        return rootURLs.contains(canonical)
+    }
+
     private func rawURL(for path: String?) -> URL {
         guard let path, !path.isEmpty else {
             return rootURL
@@ -69,11 +93,15 @@ public struct AllowedPathResolver: Sendable {
     }
 
     private func ensureContained(_ url: URL) throws {
-        let rootComponents = rootURL.pathComponents
-        let targetComponents = url.pathComponents
-        guard targetComponents.count >= rootComponents.count,
-              Array(targetComponents.prefix(rootComponents.count)) == rootComponents else {
+        guard rootURLs.contains(where: { contains(url, in: $0) }) else {
             throw AIShellError.outsideAllowedRoot(url.path)
         }
+    }
+
+    private func contains(_ target: URL, in root: URL) -> Bool {
+        let rootComponents = root.pathComponents
+        let targetComponents = target.pathComponents
+        return targetComponents.count >= rootComponents.count
+            && Array(targetComponents.prefix(rootComponents.count)) == rootComponents
     }
 }

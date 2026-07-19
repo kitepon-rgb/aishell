@@ -248,7 +248,7 @@ public actor NativeFileService {
         try await audited(operation: "files.trash", target: path) {
             let resolver = try await activeResolver()
             let url = try resolver.resolveExisting(path)
-            guard url != resolver.rootURL else {
+            guard !resolver.isAllowedRoot(url) else {
                 throw AIShellError.invalidArgument("許可フォルダ自体はTrashへ移動できません。")
             }
 
@@ -261,8 +261,8 @@ public actor NativeFileService {
     private func activeResolver() async throws -> AllowedPathResolver {
         let configuration = try await store.loadConfiguration()
         guard !configuration.isPaused else { throw AIShellError.paused }
-        guard let rootPath = configuration.allowedRootPath else { throw AIShellError.notConfigured }
-        return try AllowedPathResolver(rootPath: rootPath)
+        guard !configuration.allowedRootPaths.isEmpty else { throw AIShellError.notConfigured }
+        return try AllowedPathResolver(rootPaths: configuration.allowedRootPaths)
     }
 
     private func fileEntry(

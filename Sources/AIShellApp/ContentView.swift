@@ -58,30 +58,56 @@ struct ContentView: View {
             Text("直接操作の設定")
                 .font(.headline)
 
-            HStack(spacing: 12) {
-                Image(systemName: "folder.fill")
-                    .font(.title2)
-                    .foregroundStyle(.blue)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(model.rootDisplayName)
-                        .font(.body.weight(.semibold))
-                    Text(model.rootPath)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .textSelection(.enabled)
-                }
-
+            HStack {
+                Text("許可root（\(model.configuration.allowedRootPaths.count)件）")
+                    .font(.subheadline.weight(.semibold))
                 Spacer()
-
-                Button("フォルダを選択") {
-                    model.chooseRoot()
+                Button("rootを追加", systemImage: "plus") {
+                    model.addRoots()
                 }
             }
 
+            if model.configuration.allowedRootPaths.isEmpty {
+                ContentUnavailableView(
+                    "許可rootがありません",
+                    systemImage: "folder.badge.plus",
+                    description: Text("rootを追加すると、その内側をAIが直接操作できます。")
+                )
+                .frame(maxHeight: 120)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(model.configuration.allowedRootPaths, id: \.self) { path in
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder.fill")
+                                .foregroundStyle(.blue)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(URL(fileURLWithPath: path).lastPathComponent)
+                                    .font(.body.weight(.semibold))
+                                Text(path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                            Button("削除", systemImage: "minus.circle") {
+                                model.removeRoot(path)
+                            }
+                            .labelStyle(.iconOnly)
+                            .foregroundStyle(.red)
+                            .help("この許可rootを削除")
+                        }
+                        .padding(.vertical, 8)
+                        if path != model.configuration.allowedRootPaths.last {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            }
+
             HStack {
-                Text("このフォルダ内で、ファイルの調査・編集と開発プログラムの直接実行が使えます。")
+                Text("絶対パスは一致するrootへ自動割当て、相対パスは先頭rootを基準にします。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -90,7 +116,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(model.configuration.isPaused ? .green : .red)
-                .disabled(model.configuration.allowedRootPath == nil)
+                .disabled(model.configuration.allowedRootPaths.isEmpty)
             }
         }
         .padding(20)

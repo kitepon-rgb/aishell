@@ -47,6 +47,27 @@ final class NativeProcessServiceTests: XCTestCase {
         XCTAssertEqual(result.terminationReason, "signal")
     }
 
+    func testRunsWithSecondAllowedRootAsAbsoluteWorkingDirectory() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let first = fixture.base.appendingPathComponent("first", isDirectory: true)
+        let second = fixture.base.appendingPathComponent("second", isDirectory: true)
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoots([first, second])
+        let service = NativeProcessService(store: store)
+
+        let result = try await service.run(
+            executable: "/bin/pwd",
+            workingDirectory: second.path
+        )
+        let canonicalSecond = second.resolvingSymlinksInPath().path
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.workingDirectory, canonicalSecond)
+        XCTAssertTrue(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("/second"))
+    }
+
     func testRejectsShellAndWorkingDirectoryOutsideRoot() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }

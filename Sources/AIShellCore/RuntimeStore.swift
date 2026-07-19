@@ -49,16 +49,36 @@ public actor RuntimeStore {
 
     @discardableResult
     public func setAllowedRoot(_ url: URL) throws -> RuntimeConfiguration {
+        try setAllowedRoots([url])
+    }
+
+    @discardableResult
+    public func setAllowedRoots(_ urls: [URL]) throws -> RuntimeConfiguration {
         var configuration = try loadConfiguration()
-        let canonicalURL = url.standardizedFileURL.resolvingSymlinksInPath()
-        var isDirectory: ObjCBool = false
+        configuration.allowedRootPaths = try canonicalRootPaths(urls)
+        try saveConfiguration(configuration)
+        return configuration
+    }
 
-        guard FileManager.default.fileExists(atPath: canonicalURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            throw AIShellError.invalidPath(url.path)
+    @discardableResult
+    public func addAllowedRoots(_ urls: [URL]) throws -> RuntimeConfiguration {
+        var configuration = try loadConfiguration()
+        let additions = try canonicalRootPaths(urls)
+        for path in additions where !configuration.allowedRootPaths.contains(path) {
+            configuration.allowedRootPaths.append(path)
         }
+        try saveConfiguration(configuration)
+        return configuration
+    }
 
-        configuration.allowedRootPath = canonicalURL.path
+    @discardableResult
+    public func removeAllowedRoot(path: String) throws -> RuntimeConfiguration {
+        var configuration = try loadConfiguration()
+        let canonicalPath = URL(fileURLWithPath: path, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        configuration.allowedRootPaths.removeAll { $0 == canonicalPath }
         try saveConfiguration(configuration)
         return configuration
     }
@@ -114,5 +134,21 @@ public actor RuntimeStore {
             at: baseDirectory,
             withIntermediateDirectories: true
         )
+    }
+
+    private func canonicalRootPaths(_ urls: [URL]) throws -> [String] {
+        var paths: [String] = []
+        for url in urls {
+            let canonicalURL = url.standardizedFileURL.resolvingSymlinksInPath()
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: canonicalURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                throw AIShellError.invalidPath(url.path)
+            }
+            if !paths.contains(canonicalURL.path) {
+                paths.append(canonicalURL.path)
+            }
+        }
+        return paths
     }
 }

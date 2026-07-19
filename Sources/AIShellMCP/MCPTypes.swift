@@ -49,12 +49,16 @@ struct MCPToolAnnotations: Encodable, Sendable {
 enum ToolCatalog {
     static let tools: [MCPTool] = [
         tool(
-            "runtime_status", "実行状態", "許可フォルダと停止状態を取得します。",
+            "runtime_status", "実行状態", "複数の許可root、停止状態、相対パスの基準、次に必要な操作を取得します。停止中でも利用できます。",
             properties: [:], required: [], readOnly: true, idempotent: true
         ),
         tool(
-            "files_list", "フォルダ一覧", "許可フォルダ内の項目を一覧します。pathを省略すると許可ルートです。",
-            properties: ["path": string("許可ルートからの相対パス、または許可ルート内の絶対パス")],
+            "runtime_open_manager", "管理画面を開く", "AIShellが停止中でも管理画面を開きます。許可rootの追加・削除と再開は画面上で行います。",
+            properties: [:], required: [], idempotent: true
+        ),
+        tool(
+            "files_list", "フォルダ一覧", "許可root内の項目を一覧します。pathを省略すると先頭の許可rootです。",
+            properties: ["path": string("先頭rootからの相対パス、またはいずれかの許可root内の絶対パス")],
             required: [], readOnly: true, idempotent: true
         ),
         tool(
@@ -172,7 +176,7 @@ enum ToolCatalog {
             properties: [
                 "executable": string("実行ファイルの絶対パス。shellとenvは拒否します"),
                 "arguments": stringArray("引数配列。shell展開は行いません"),
-                "working_directory": string("許可ルート内の作業ディレクトリ。省略時は許可ルート"),
+                "working_directory": string("いずれかの許可root内の作業ディレクトリ。省略時は先頭root"),
                 "environment": stringMap("追加・上書きする環境変数"),
                 "timeout_seconds": number("timeout秒。0.1〜3600、既定120")
             ],

@@ -46,9 +46,9 @@ final class MCPServer {
                 ]),
                 "serverInfo": .object([
                     "name": .string("aishell-macos"),
-                    "version": .string("0.1.0")
+                    "version": .string("0.2.0")
                 ]),
-                "instructions": .string("SwiftのmacOS APIを直接呼びます。shell、AppleScript、任意コード実行機能はありません。")
+                "instructions": .string("SwiftのmacOS APIを直接呼びます。最初にruntime_statusを確認してください。停止中または許可root不足ならruntime_open_managerで管理画面を開けます。process_runはshellを介さず、絶対実行ファイルと引数配列を直接渡します。")
             ]))
 
         case "ping":
@@ -103,7 +103,11 @@ final class MCPServer {
     private func invoke(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
         switch name {
         case "runtime_status":
-            return try await .from(store.loadConfiguration())
+            return try await runtimeStatus()
+        case "runtime_open_manager":
+            return try await .from(NativeApplicationService(store: store).openManagerApplication(
+                at: try managerApplicationURL()
+            ))
         case "files_list":
             return try await .from(files.list(path: optionalString("path", in: arguments)))
         case "files_search":
@@ -189,6 +193,45 @@ final class MCPServer {
         default:
             throw AIShellError.invalidArgument("未定義のtoolです: \(name)")
         }
+    }
+
+    private func runtimeStatus() async throws -> JSONValue {
+        let configuration = try await store.loadConfiguration()
+        let primary = configuration.primaryAllowedRootPath.map(JSONValue.string) ?? .null
+        let nextAction: String
+        if configuration.isPaused {
+            nextAction = "runtime_open_managerを呼び、AIShell画面で再開してください。"
+        } else if configuration.allowedRootPaths.isEmpty {
+            nextAction = "runtime_open_managerを呼び、AIShell画面で許可rootを追加してください。"
+        } else {
+            nextAction = "利用可能です。絶対パスは一致する許可root、相対パスはprimaryAllowedRootPathを基準にします。"
+        }
+
+        return .object([
+            "allowedRootPaths": .array(configuration.allowedRootPaths.map(JSONValue.string)),
+            "primaryAllowedRootPath": primary,
+            "relativePathBase": primary,
+            "isPaused": .bool(configuration.isPaused),
+            "updatedAt": .string(ISO8601DateFormatter().string(from: configuration.updatedAt)),
+            "managerTool": .string("runtime_open_manager"),
+            "nextAction": .string(nextAction)
+        ])
+    }
+
+    private func managerApplicationURL() throws -> URL {
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let applicationURL = executableURL
+            .deletingLastPathComponent() // Helpers
+            .deletingLastPathComponent() // Contents
+            .deletingLastPathComponent() // AIShell.app
+        guard applicationURL.pathExtension == "app" else {
+            throw AIShellError.invalidPath(
+                "実行中のMCP helperに対応するAIShell.appを特定できません。@quolu/aishellを再インストールしてください。"
+            )
+        }
+        return applicationURL
     }
 
     private func requiredString(_ key: String, in arguments: [String: JSONValue]) throws -> String {

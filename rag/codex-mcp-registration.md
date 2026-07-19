@@ -18,7 +18,7 @@ codex mcp add aishell -- /Users/kite/Developer/aishell/build/AIShell.app/Content
 
 - `codex mcp get aishell`: `enabled: true`、`transport: stdio`
 - `codex mcp list`: `aishell` を有効なserverとして表示
-- 同梱helper: `tools/list` で19ツール、`runtime_status` 応答済み
+- 同梱helper: `tools/list` で20ツール、`runtime_status` と停止中の `runtime_open_manager` 応答済み
 - 停止中: `process_run` をAIShell側で拒否
 
 `codex --strict-config mcp get aishell` は、現行CLIが `codex mcp` で `--strict-config` をサポートしないため検証経路として使用できなかった。通常の `get/list` は設定を正常に解析した。

@@ -70,6 +70,27 @@ final class NativeFileServiceTests: XCTestCase {
         }
     }
 
+    func testAbsolutePathCanTargetSecondAllowedRoot() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.base.appendingPathComponent("runtime", isDirectory: true)
+        let first = fixture.base.appendingPathComponent("first", isDirectory: true)
+        let second = fixture.base.appendingPathComponent("second", isDirectory: true)
+        try FileManager.default.createDirectory(at: first, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        let store = RuntimeStore(baseDirectory: runtime)
+        try await store.setAllowedRoots([first, second])
+        let service = NativeFileService(store: store)
+
+        let created = try await service.createTextFile(
+            path: second.appendingPathComponent("second.txt").path,
+            content: "second root"
+        )
+        XCTAssertEqual(created.path, second.appendingPathComponent("second.txt").path)
+        let content = try await service.readText(path: created.path)
+        XCTAssertEqual(content, "second root")
+    }
+
     func testCreateDoesNotOverwriteExistingFile() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }

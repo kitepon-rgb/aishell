@@ -41,8 +41,8 @@ public actor NativeProcessService {
     private func activeResolver() async throws -> AllowedPathResolver {
         let configuration = try await store.loadConfiguration()
         guard !configuration.isPaused else { throw AIShellError.paused }
-        guard let rootPath = configuration.allowedRootPath else { throw AIShellError.notConfigured }
-        return try AllowedPathResolver(rootPath: rootPath)
+        guard !configuration.allowedRootPaths.isEmpty else { throw AIShellError.notConfigured }
+        return try AllowedPathResolver(rootPaths: configuration.allowedRootPaths)
     }
 
     private func validateExecutable(_ path: String) throws -> URL {
