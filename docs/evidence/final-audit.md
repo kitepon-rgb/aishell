@@ -13,3 +13,5 @@ Known non-blocking limits are explicit in the ADR and release notes: bounded ini
 ## 0.3.1 release follow-up
 
 The 0.3.1 patch documents shell/env basename denial as a product rail rather than a security boundary; runtime behavior is unchanged. The release candidate passed all 42 Swift tests, npm payload verification, strict deep code-signature verification, MCP initialize version 0.3.1, default five-tool discovery, and full 25-tool discovery. The dry-run package contains seven expected entries, is 835,796 bytes packed, and has no lifecycle install script.
+
+After publication, registry `latest` resolved to `0.3.1` with shasum `b6407da41c579a4a9e995bf8dc4654df43c05a07`, matching the inspected tarball. A version-pinned global install from the registry then passed package/app version checks, strict deep code-signature verification, MCP initialize, default five-tool discovery, and full 25-tool discovery.

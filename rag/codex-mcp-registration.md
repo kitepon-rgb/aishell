@@ -22,6 +22,6 @@ codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
 - full profileの`runtime_status`と停止中の`runtime_open_manager`は応答済み
 - 停止中: `process_run` をAIShell側で拒否
 - 0.2.1: 設定rootに属するGit worktreeを `automaticGitWorktreePaths` と `effectiveAllowedRootPaths` へ自動反映し、worktree単位の追加依頼を不要化
-- 0.3.1: shell/env basename拒否を安全境界ではなく、高密度な直接process経路へ誘導する製品レールとして明文化
+- 0.3.1: npm global install後のhelperでinitialize version `0.3.1`、default 5/full 25 toolを再検証。shell/env basename拒否は安全境界ではなく、高密度な直接process経路へ誘導する製品レールとして明文化
 
 `codex --strict-config mcp get aishell` は、現行CLIが `codex mcp` で `--strict-config` をサポートしないため検証経路として使用できなかった。通常の `get/list` は設定を正常に解析した。
