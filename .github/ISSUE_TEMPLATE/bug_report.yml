@@ -1,0 +1,49 @@
+name: Bug report
+description: Report a reproducible AIShell defect
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug. Do not include secrets or private paths.
+  - type: input
+    id: version
+    attributes:
+      label: AIShell version
+      placeholder: 0.3.2
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: macOS version, hardware, AI host, and installation method
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include the tool name and sanitized inputs. Never paste secrets or sensitive filesystem contents.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the structured error code and sanitized diagnostics when available.
+    validations:
+      required: true
+  - type: checkboxes
+    id: security
+    attributes:
+      label: Security check
+      options:
+        - label: This report does not disclose a vulnerability or secret. Security reports use the private process in SECURITY.md.
+          required: true

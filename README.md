@@ -1,89 +1,163 @@
+<p align="center">
+  <img src=".github/og.png" alt="AIShell — Direct OS context for AI development" width="100%">
+</p>
+
 # AIShell
 
-AIの要求を汎用shell文字列へ潰さず、SwiftのmacOS APIと指定された開発workerを通してOS状態を直接扱う実験プロジェクト。
+[![CI](https://github.com/kitepon-rgb/aishell/actions/workflows/ci.yml/badge.svg)](https://github.com/kitepon-rgb/aishell/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@quolu/aishell)](https://www.npmjs.com/package/@quolu/aishell)
+![macOS 15+](https://img.shields.io/badge/macOS-15%2B-111827)
+![Swift 6](https://img.shields.io/badge/Swift-6-F05138)
 
-## 現在できること
+> A macOS-native MCP runtime that gives AI development hosts fresh workspace state, bounded context, and retained execution evidence—without collapsing every operation into a shell string.
 
-- 既定のdevelopment profileから、OS状態を束ねた5本の高密度toolを提供
-  - `workspace_snapshot`: 初回scanのbounded previewとFSEvents由来の変更delta、Git状態、主要context
-  - `read_context`: 複数fileのbudget付きread、SHA-256、continuation
-  - `search_context`: `rg` workerによるbudget付き検索context
-  - `run_check`: 直接process実行、主要診断、完全stdout/stderr artifact
-  - `artifact_read`: artifactのrange、tail、pattern周辺read
-- 許可フォルダ内の一覧、検索、UTF-8テキスト読取
-- フォルダ／テキスト作成、copy、move、rename、Trash
-- stat、SHA-256、再帰tree
-- SHA-256競合検出付き原子的更新、旧テキストを事前条件にした部分置換
-- executable URLと引数配列による開発プログラムの直接実行
-- working directory、環境変数、timeout、stdout、stderr、終了コードの取得
-- 実行中／インストール済みアプリの一覧
-- bundle identifierによるアプリ起動・前面化
-- 管理アプリから複数の許可rootを追加・削除、全停止、操作履歴確認
-- 停止中でも状態確認と管理アプリ起動が可能
-- 許可済みGitリポジトリに登録されたworktreeを追加操作なしで自動認識
-- MCP 2025-11-25 stdio接続
+[日本語](README.ja.md)
 
-## 起動
+AIShell owns the OS-facing state below the model: allowed roots, file identity, filesystem reconciliation, directly launched processes, complete logs, and retained artifacts. The AI host remains responsible for reasoning, threads, compaction, sub-agents, and general-purpose terminal work.
 
-### npmからインストール
+## Try it in 30 seconds
 
-対応環境はApple Silicon Mac、macOS 15以降。
+Requires an Apple Silicon Mac running macOS 15 or later.
+
+```sh
+npm install -g @quolu/aishell
+aishell-open
+codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
+```
+
+In the manager app, add the folders the AI may access. Start a new Codex task and try:
 
 ```text
+Use workspace_snapshot for the initial workspace context. Run the focused tests with
+run_check, and read retained output with artifact_read only if the summary omits evidence.
+```
+
+The default development profile exposes five high-density tools:
+
+| Tool | Purpose |
+|---|---|
+| `workspace_snapshot` | Bounded initial workspace preview, reconciled change delta, Git state, and primary context |
+| `read_context` | Budgeted multi-file reads with SHA-256 identity and continuation |
+| `search_context` | Budgeted search context produced by a directly launched `rg` worker |
+| `run_check` | Direct process execution, primary diagnostics, and complete stdout/stderr artifacts |
+| `artifact_read` | Range, tail, and pattern-centered reads from retained artifacts |
+
+## Why AIShell
+
+Typical stateless integrations repeatedly ask the model to rediscover workspace state and interpret command output. AIShell keeps the stateful, OS-facing part below the model so later turns can ask for deltas and primary evidence instead of rescanning everything.
+
+| Concern | AIShell | Typical shell-first integration |
+|---|---|---|
+| Workspace state | File identity plus filesystem observation and reconciliation | Re-run commands and reconstruct state from text |
+| Context | Bounded, cursor-based structured results | Unbounded or manually truncated stdout |
+| Execution | Executable URL, arguments, working directory, and lifecycle remain separate | A shell evaluates one command string |
+| Evidence | Complete stdout/stderr retained behind expiring handles | Evidence often disappears when the response is truncated |
+| Scope | Human-managed allowed roots and explicit stop state | Depends on the surrounding shell and host policy |
+
+AIShell is not a sandbox and does not make arbitrary code execution safe. Its process rails exist to preserve typed execution and observable lifecycle—not to stop renamed binaries or child processes launched by an allowed worker.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Host[AI host<br/>reasoning · threads · compaction] --> MCP[AIShellMCP<br/>MCP 2025-11-25]
+    MCP --> Core[AIShellCore]
+    Core --> State[Allowed roots · file identity<br/>FSEvents + reconciliation]
+    Core --> Process[Direct process lifecycle<br/>stdout · stderr · timeout]
+    Core --> Evidence[Retained evidence<br/>artifacts · freshness]
+    Process --> Workers[git · rg · compiler · tests]
+    State --> macOS[macOS APIs]
+    Evidence --> Host
+```
+
+`AIShellCore` owns domain behavior. `AIShellMCP` only translates protocol requests and results. Git, ripgrep, compilers, tests, and SourceKit-LSP remain directly launched workers rather than becoming new state owners.
+
+## Install from npm
+
+The global package adds `aishell-mcp` and `aishell-open` to `PATH`. `aishell-open` opens the bundled manager app through LaunchServices. The package runs no install script.
+
+```sh
 npm install -g @quolu/aishell
 aishell-open
 ```
 
-global installは `aishell-mcp` と `aishell-open` をPATHへ追加する。`aishell-open` はnpm package内の管理アプリをLaunchServicesで開く。install scriptは実行しない。現在はDeveloper ID署名・notarization前の実験版である。
+The current experimental build is not yet Developer ID signed or notarized.
 
-### ソースから起動
+## Build from source
 
-ローカル成果物は `build/AIShell.app`。Finderから通常のMacアプリとして起動できる。
-
-最初に「許可rootを追加」でAIに操作させる範囲を選ぶ。絶対パスはいずれかのrootへ自動的に対応し、相対パスは一覧の先頭rootを基準にする。許可済みGitリポジトリの `.git/worktrees` に正式登録され、双方の管理情報が一致するworktreeは自動的に実効rootへ加わる。worktreeごとの手動追加は不要。停止中は通常のファイル・アプリ・process操作を拒否するが、`runtime_status` と `runtime_open_manager` は利用できる。
-
-MCP実行ファイルはアプリ内に同梱される。
-
-```text
-/Users/kite/Developer/aishell/build/AIShell.app/Contents/Helpers/aishell-mcp
+```sh
+git clone https://github.com/kitepon-rgb/aishell.git
+cd aishell
+swift test
+scripts/package-app.sh release
+open build/AIShell.app
 ```
 
-## 別のCodexタスクから使う
+The MCP executable is bundled at `build/AIShell.app/Contents/Helpers/aishell-mcp`.
 
-個人用のグローバルMCPとして登録する。npm版ではPATH上の絶対パスを指定する。
+After opening the app, use **Add Allowed Root** to select the folders AIShell may access. A Git worktree registered under an allowed repository is recognized automatically when both sides of the worktree metadata agree.
 
-```text
+## Connect another AI host
+
+For a Homebrew-prefix npm installation, register the absolute executable path:
+
+```sh
 codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
-```
-
-新しく開始したCodexタスクでは、既定で上記5本のdevelopment toolを利用できる。従来のprimitiveを含む25 toolが必要な互換利用では、server環境へ`AISHELL_TOOL_PROFILE=full`を設定する。
-
-```text
-複数file・反復workspace観測ではworkspace_snapshotを使い、返されたcursorでdeltaを取って。32 KiBを超え得るbuild/test出力はrun_checkを使い、通常responseにない証拠だけartifact_readで読む。小さな単一file作業はCodex標準toolを使ってよい。
-```
-
-full profileの`runtime_status`は設定root、自動認識したGit worktree、実効root、相対パスの基準、停止状態、次の操作を返す。停止中でも`runtime_open_manager`で管理アプリを前面化できる。許可root変更と再開は管理画面で人が行い、停止中の通常操作は引き続き拒否される。
-
-`run_check`は指定workerがfile更新・子process・network accessを行い得るため、MCPへdestructive/open-world capabilityとして掲示する。host設定によっては実行承認が必要になる。0.3のstdio serverは1 requestずつ処理し、timeout時のprocess tree終了は行うが、MCP cancellationと並列pollingは未実装である。
-
-登録確認と解除は次のとおり。
-
-```text
 codex mcp get aishell
+```
+
+Remove the registration with:
+
+```sh
 codex mcp remove aishell
 ```
 
-## 開発検証
+The compatibility profile retains the original 20 primitives alongside the five development tools:
 
-```text
+```sh
+AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp
+```
+
+The full profile includes file listing and reads, atomic SHA-256-guarded updates, copy/move/rename/Trash, direct process execution, app discovery and launch, runtime status, and manager activation.
+
+## Execution and safety boundaries
+
+- AIShell never evaluates a shell command string. It resolves a development program from `PATH` to an executable URL and keeps arguments, environment, and working directory separate.
+- Direct launch of shell and wrapper basenames such as `sh`, `bash`, `zsh`, `env`, and `osascript` is rejected as a product rail, not advertised as a security boundary.
+- `run_check` is an open-world capability: an allowed worker may update files, launch child processes, or access the network. AI hosts may require approval before execution.
+- Text updates may use SHA-256 or expected old text as a precondition. Deletes go to Trash.
+- The manager app can stop normal operations globally. Runtime status and manager activation remain available while stopped.
+
+## Current limitations
+
+- The stdio server handles one request at a time.
+- MCP cancellation and concurrent run polling are not implemented.
+- A timeout terminates the directly owned process tree, but an allowed worker remains capable of open-world side effects before termination.
+- Initial workspace entries are a bounded preview; later deltas are cursor-paged.
+- Developer ID signing and notarization are not yet configured.
+
+## Development
+
+```sh
 swift test
 scripts/package-app.sh release
 ```
 
-`xcodegen generate` で `AIShell.xcodeproj` を再生成できる。現在の検証機ではXcode 26.6とCoreSimulatorのbuild versionが一致せず、`xcodebuild` はXCBuild開始待ちで停止するため、同じSwift 6.3.3 toolchainを使うSwiftPMでビルド・テストした。この環境問題はソースの成功扱いへ混ぜていない。
+Run `xcodegen generate` to regenerate `AIShell.xcodeproj`. The authoritative implementation lives under `Sources/AIShellCore`, `Sources/AIShellMCP`, and `Sources/AIShellApp`; focused tests live under `Tests/`.
 
-## 高密度runtimeの設計制約
+<details>
+<summary>Local Xcode verification note</summary>
 
-`AIShellCore` と `AIShellMCP` はshellやAppleScript/JXAの文字列を解釈せず、開発プログラム名を`PATH`から実行ファイルURLへ解決し、引数配列と分離したままmacOSのprocess APIへ渡す。`sh`、`bash`、`zsh`、`dash`、`ksh`、`csh`、`tcsh`、`fish`、`env`、`osascript`というbasenameの直接起動と、パイプ、リダイレクト、shell展開は拒否する。
+On the original verification machine, Xcode 26.6 and the installed CoreSimulator build version did not match, so `xcodebuild` stalled before XCBuild began. The same Swift 6.3.3 toolchain passed through SwiftPM. That host issue was not counted as source success.
 
-この拒否listはsecurity boundaryではない。改名したbinaryや、許可されたworkerが内部で起動する子processまでは阻止しない。目的は任意コード実行を安全化することではなく、AIの要求を安易な`zsh -lc`へ戻さず、executable、arguments、working directory、lifecycle、artifactを分離してAIShellが所有する高密度経路へ誘導することである。`env`も環境変数mapとAIShell自身の`PATH`解決で不要なwrapperなので同じ設計レールに含める。MCPは型付き要求をOS-owned runtimeへ渡すアダプターである。
+</details>
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing a change. Please report vulnerabilities through the private process in [SECURITY.md](SECURITY.md), not through a public issue.
+
+Release notes are kept in [`docs/`](docs/). GitHub Releases are the public record for shipped versions.
+
+## License
+
+AIShell is licensed under the [Apache License 2.0](LICENSE).

@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose an OS-state capability that reduces model work
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Development task and current cost
+      description: What repeated scan, read, execution, or model round-trip should AIShell eliminate?
+    validations:
+      required: true
+  - type: textarea
+    id: os_state
+    attributes:
+      label: OS state AIShell should own
+      description: Identify the file identity, change state, process lifecycle, worktree, or artifact involved.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing tools and alternatives
+      description: Explain why an existing AIShell tool or a normal host terminal is insufficient.
+    validations:
+      required: true

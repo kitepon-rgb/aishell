@@ -1,8 +1,8 @@
 {
   "name": "@quolu/aishell",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A native macOS state runtime with high-density MCP tools for AI development",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "author": "quolu",
   "repository": {
     "type": "git",
