@@ -46,7 +46,7 @@ final class MCPServer {
                 ]),
                 "serverInfo": .object([
                     "name": .string("aishell-macos"),
-                    "version": .string("0.2.1")
+                    "version": .string(AIShellProduct.version)
                 ]),
                 "instructions": .string("SwiftのmacOS APIを直接呼びます。最初にruntime_statusを確認してください。停止中または許可root不足ならruntime_open_managerで管理画面を開けます。process_runはshellを介さず、絶対実行ファイルと引数配列を直接渡します。")
             ]))
@@ -102,6 +102,10 @@ final class MCPServer {
 
     private func invoke(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
         switch name {
+        case "factory_diagnostics":
+            return try await .from(FactoryDiagnosticsService(store: store).diagnose(
+                managerApplicationURL: managerApplicationCandidateURL()
+            ))
         case "runtime_status":
             return try await runtimeStatus()
         case "runtime_open_manager":
@@ -224,6 +228,15 @@ final class MCPServer {
     }
 
     private func managerApplicationURL() throws -> URL {
+        guard let applicationURL = managerApplicationCandidateURL() else {
+            throw AIShellError.invalidPath(
+                "実行中のMCP helperに対応するAIShell.appを特定できません。@quolu/aishellを再インストールしてください。"
+            )
+        }
+        return applicationURL
+    }
+
+    private func managerApplicationCandidateURL() -> URL? {
         let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
             .resolvingSymlinksInPath()
             .standardizedFileURL
@@ -231,12 +244,7 @@ final class MCPServer {
             .deletingLastPathComponent() // Helpers
             .deletingLastPathComponent() // Contents
             .deletingLastPathComponent() // AIShell.app
-        guard applicationURL.pathExtension == "app" else {
-            throw AIShellError.invalidPath(
-                "実行中のMCP helperに対応するAIShell.appを特定できません。@quolu/aishellを再インストールしてください。"
-            )
-        }
-        return applicationURL
+        return applicationURL.pathExtension == "app" ? applicationURL : nil
     }
 
     private func requiredString(_ key: String, in arguments: [String: JSONValue]) throws -> String {

@@ -49,6 +49,10 @@ struct MCPToolAnnotations: Encodable, Sendable {
 enum ToolCatalog {
     static let tools: [MCPTool] = [
         tool(
+            "factory_diagnostics", "工場診断", "製品version、対応platform、runtime schema・migration、MCP・管理アプリのreadinessを、許可pathや操作本文を含めず返します。停止中でも利用できます。",
+            properties: [:], required: [], readOnly: true, idempotent: true
+        ),
+        tool(
             "runtime_status", "実行状態", "設定root、自動認識したGit worktree、実効root、停止状態、相対パスの基準、次に必要な操作を取得します。Git worktreeを手動追加する必要はありません。停止中でも利用できます。",
             properties: [:], required: [], readOnly: true, idempotent: true
         ),
