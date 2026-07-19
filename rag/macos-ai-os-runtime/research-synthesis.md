@@ -32,6 +32,10 @@ status: research recommendation; implementation decisionではない
 
 各実装段階は、新しいmacOS操作能力を少なくとも一つ完成させる。安全機構だけを成果物とする段階は設けない。
 
+### process実装後の訂正（2026-07-19）
+
+shell群、`env`、`osascript`のbasename拒否だけでは安全境界を作れない。改名binaryや、許可された開発workerが起動する子processを阻止しないためである。現実装でこの拒否を残す理由は、公開面を汎用command runnerへ退行させず、executable、arguments、working directory、lifecycle、artifactを分離したDirect OS経路へAIを誘導する製品上の設計レールだからである。権限強制や隔離はこのlistに依存させない。
+
 ## 判断を変えた主要根拠
 
 ### 1. 汎用GUI操作は既に競争領域である
@@ -166,7 +170,7 @@ Peekabooも、TCC権限を持つホストアプリとCLI/MCP側をUnix socketで
 
 | 除外対象 | 初期除外の理由 | 将来の再検討条件 |
 |---|---|---|
-| 任意shell、AppleScript/JXA、コマンド文字列評価 | 能力境界を一手で無効化し、今回の目的にも反する | 専用sandboxと別製品境界が必要になった時 |
+| 任意shell、AppleScript/JXA、コマンド文字列評価 | 公開面を汎用command runnerへ退行させ、Direct OS状態所有という今回の目的に反する。basename拒否自体は安全境界ではない | 汎用実行面が別製品として必要になり、責務と評価を分離できる時 |
 | root権限、常駐daemon、LaunchDaemon、カーネル拡張 | 被害半径と配布負担が大きく、初期価値に不要 | 非特権APIで解けない確定ユースケースが出た時 |
 | ファイルの完全削除、無確認上書き | 回復不能。最初の安全仮説と矛盾 | 復元・二段確認・ポリシー検証が完成した後 |
 | 他アプリの強制終了、VPN／OSセキュリティ／パスワード等の設定 | Apple Sandbox非互換かつ高リスク | 専用の高権限モジュールとして別途設計した時 |
@@ -178,7 +182,7 @@ Peekabooも、TCC権限を持つホストアプリとCLI/MCP側をUnix socketで
 | 独自のAIエージェント／モデルホスティング | OSランタイムの価値検証と無関係で、既存AIクライアントと競合する | ランタイムが安定し、明確な不足が判明した時 |
 | App Store配布 | 広範なAccessibility等とApp Sandboxが衝突する | 機能分割でsandbox適合が証明できた時 |
 
-開発用途で後から追加する「実行ファイルURL + 引数配列」の直接process実行は、shell文字列評価とは区別する。パイプ、リダイレクト、展開、`/bin/sh -c` は提供せず、working directoryを許可ルート内へ固定し、timeoutと構造化結果を持たせる。
+開発用途で後から追加する「実行ファイルURL + 引数配列」の直接process実行は、shell文字列評価とは区別する。パイプ、リダイレクト、展開、`/bin/sh -c` は提供せず、working directoryを許可ルート内へ固定し、timeoutと構造化結果を持たせる。この区別は状態所有とtool密度のための製品境界であり、任意コード実行を封じるsecurity boundaryではない。
 
 「初期除外」は永久禁止ではない。再検討条件を満たすまでは、初期版の完成条件へ混ぜないという意味である。
 

@@ -1,6 +1,6 @@
 # AIShell
 
-AIの要求をshell文字列として解釈せず、SwiftのmacOS APIと指定された開発workerを通してOS状態を直接扱う実験プロジェクト。
+AIの要求を汎用shell文字列へ潰さず、SwiftのmacOS APIと指定された開発workerを通してOS状態を直接扱う実験プロジェクト。
 
 ## 現在できること
 
@@ -82,6 +82,8 @@ scripts/package-app.sh release
 
 `xcodegen generate` で `AIShell.xcodeproj` を再生成できる。現在の検証機ではXcode 26.6とCoreSimulatorのbuild versionが一致せず、`xcodebuild` はXCBuild開始待ちで停止するため、同じSwift 6.3.3 toolchainを使うSwiftPMでビルド・テストした。この環境問題はソースの成功扱いへ混ぜていない。
 
-## 実装上の禁止事項
+## 高密度runtimeの設計制約
 
-`AIShellCore` と `AIShellMCP` はshellやAppleScript/JXAの文字列を解釈せず、開発プログラム名を`PATH`から実行ファイルURLへ解決し、引数配列と分離したままmacOSのprocess APIへ渡す。shell本体、`env`、`osascript`の直接起動と、パイプ、リダイレクト、shell展開は拒否する。ただし許可された任意の開発workerが内部で何を起動するかまではAIShell 0.3の境界外である。MCPは型付き要求をOS-owned runtimeへ渡すアダプターである。
+`AIShellCore` と `AIShellMCP` はshellやAppleScript/JXAの文字列を解釈せず、開発プログラム名を`PATH`から実行ファイルURLへ解決し、引数配列と分離したままmacOSのprocess APIへ渡す。`sh`、`bash`、`zsh`、`dash`、`ksh`、`csh`、`tcsh`、`fish`、`env`、`osascript`というbasenameの直接起動と、パイプ、リダイレクト、shell展開は拒否する。
+
+この拒否listはsecurity boundaryではない。改名したbinaryや、許可されたworkerが内部で起動する子processまでは阻止しない。目的は任意コード実行を安全化することではなく、AIの要求を安易な`zsh -lc`へ戻さず、executable、arguments、working directory、lifecycle、artifactを分離してAIShellが所有する高密度経路へ誘導することである。`env`も環境変数mapとAIShell自身の`PATH`解決で不要なwrapperなので同じ設計レールに含める。MCPは型付き要求をOS-owned runtimeへ渡すアダプターである。

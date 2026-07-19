@@ -21,6 +21,7 @@ The tools share one macOS state runtime owned below the model:
 9. Executable names are resolved by AIShell through `PATH` before direct launch. Shell executables, relative paths containing `/`, and command strings remain rejected.
 10. TextContent is a concise model-facing projection. `structuredContent` remains an object-shaped metadata projection and does not duplicate large file or artifact contents.
 11. `run_check` truthfully advertises destructive and open-world capability because a caller-selected worker can write files, start descendants, or access the network. Formal benchmarks use Codex bypass mode only inside disposable deterministic fixtures; normal hosts may require approval.
+12. The basename denial of `sh`, `bash`, `zsh`, `dash`, `ksh`, `csh`, `tcsh`, `fish`, `env`, and `osascript` is a product rail, not a security boundary. It prevents the public API from collapsing into a generic command-string wrapper, but renamed binaries and descendants launched by an allowed worker remain possible. Authorization and isolation must not rely on this list.
 
 ## Rejected alternatives
 

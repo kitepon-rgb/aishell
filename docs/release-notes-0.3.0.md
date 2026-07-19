@@ -14,7 +14,7 @@ AIShell 0.3.0 turns the direct-OS spike into a macOS state runtime for AI develo
 
 ## Changed
 
-- `run_check` accepts an executable name and resolves it through `PATH`; command strings and shell executables remain rejected.
+- `run_check` accepts an executable name and resolves it through `PATH`; command strings and shell executables remain rejected. This basename denial is a product rail that preserves the direct executable/argument boundary, not a security boundary against renamed binaries or worker descendants.
 - The default MCP catalog exposes only the five high-density tools. Set `AISHELL_TOOL_PROFILE=full` for the 25-tool compatibility surface.
 - MCP server and distribution versions are now 0.3.0.
 
