@@ -1,0 +1,1108 @@
+{
+  "schemaVersion": "aishell.benchmark-report.v1",
+  "generatedAt": "2026-07-19T11:05:10.195Z",
+  "formula": "sum(total_tokens_across_all_attempts) / oracle_successes",
+  "arms": {
+    "native": {
+      "attempts": 9,
+      "successes": 9,
+      "totalTokens": 1298256,
+      "tokenRecords": 9,
+      "wallMilliseconds": 451224,
+      "tokensPerSolvedTask": 144250.66666666666,
+      "meanWallMilliseconds": 50136,
+      "p50WallMilliseconds": 48430,
+      "p95WallMilliseconds": 72491.2
+    },
+    "aishell": {
+      "attempts": 9,
+      "successes": 9,
+      "totalTokens": 962591,
+      "tokenRecords": 9,
+      "wallMilliseconds": 304182,
+      "tokensPerSolvedTask": 106954.55555555556,
+      "meanWallMilliseconds": 33798,
+      "p50WallMilliseconds": 31987,
+      "p95WallMilliseconds": 43543.6
+    }
+  },
+  "records": [
+    {
+      "runId": "20260719105233406-code-change-native-1",
+      "taskId": "code-change",
+      "arm": "native",
+      "repetition": 1,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "da0e09ab68c2fcfb7ef7f28293f2ace37d8d5605f5f93fbdddc981b8a40455a5",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "ad9d50310de95f55ae81b511047e6fdef0743a52ff3e77fd3bb6682d0607f913",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 151,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 96448,
+        "cachedInputTokens": 84736,
+        "outputTokens": 815,
+        "totalTokens": 97263,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 32680
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3125,
+        "eventCount": 14,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105306200-code-change-native-2",
+      "taskId": "code-change",
+      "arm": "native",
+      "repetition": 2,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "da0e09ab68c2fcfb7ef7f28293f2ace37d8d5605f5f93fbdddc981b8a40455a5",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "ad9d50310de95f55ae81b511047e6fdef0743a52ff3e77fd3bb6682d0607f913",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 151,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 156385,
+        "cachedInputTokens": 131072,
+        "outputTokens": 1065,
+        "totalTokens": 157450,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 38469
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3900,
+        "eventCount": 18,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105344758-code-change-native-3",
+      "taskId": "code-change",
+      "arm": "native",
+      "repetition": 3,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "da0e09ab68c2fcfb7ef7f28293f2ace37d8d5605f5f93fbdddc981b8a40455a5",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "ad9d50310de95f55ae81b511047e6fdef0743a52ff3e77fd3bb6682d0607f913",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 150,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 115378,
+        "cachedInputTokens": 110080,
+        "outputTokens": 824,
+        "totalTokens": 116202,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 27291
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3125,
+        "eventCount": 14,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105412139-code-change-aishell-1",
+      "taskId": "code-change",
+      "arm": "aishell",
+      "repetition": 1,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "da0e09ab68c2fcfb7ef7f28293f2ace37d8d5605f5f93fbdddc981b8a40455a5",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "ad9d50310de95f55ae81b511047e6fdef0743a52ff3e77fd3bb6682d0607f913",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 150,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 96360,
+        "cachedInputTokens": 75520,
+        "outputTokens": 788,
+        "totalTokens": 97148,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 29615
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 2968,
+        "eventCount": 14,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105441825-code-change-aishell-2",
+      "taskId": "code-change",
+      "arm": "aishell",
+      "repetition": 2,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "da0e09ab68c2fcfb7ef7f28293f2ace37d8d5605f5f93fbdddc981b8a40455a5",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "ad9d50310de95f55ae81b511047e6fdef0743a52ff3e77fd3bb6682d0607f913",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [
+          "workspace_snapshot"
+        ],
+        "stdoutBytes": 151,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 103960,
+        "cachedInputTokens": 90880,
+        "outputTokens": 758,
+        "totalTokens": 104718,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 26368
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 2968,
+        "eventCount": 12,
+        "aishellToolCalls": 1
+      }
+    },
+    {
+      "runId": "20260719105508281-code-change-aishell-3",
+      "taskId": "code-change",
+      "arm": "aishell",
+      "repetition": 3,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "da0e09ab68c2fcfb7ef7f28293f2ace37d8d5605f5f93fbdddc981b8a40455a5",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "ad9d50310de95f55ae81b511047e6fdef0743a52ff3e77fd3bb6682d0607f913",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [
+          "workspace_snapshot"
+        ],
+        "stdoutBytes": 151,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 101899,
+        "cachedInputTokens": 79616,
+        "outputTokens": 756,
+        "totalTokens": 102655,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 28443
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 2968,
+        "eventCount": 12,
+        "aishellToolCalls": 1
+      }
+    },
+    {
+      "runId": "20260719105536819-compile-failure-native-1",
+      "taskId": "compile-failure",
+      "arm": "native",
+      "repetition": 1,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "b20182500b368c9d891df214fab6a477ec0e8ab88ff35c021e2a463bd9f4403d",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "17355d605e71d7814fe615860c180f524c67da26848e1e2d6f82579f65c75035",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 0,
+        "stderrBytes": 216000
+      },
+      "usage": {
+        "inputTokens": 124457,
+        "cachedInputTokens": 102656,
+        "outputTokens": 1761,
+        "totalTokens": 126218,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 59313
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 4275,
+        "eventCount": 15,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105636170-compile-failure-native-2",
+      "taskId": "compile-failure",
+      "arm": "native",
+      "repetition": 2,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "b20182500b368c9d891df214fab6a477ec0e8ab88ff35c021e2a463bd9f4403d",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "17355d605e71d7814fe615860c180f524c67da26848e1e2d6f82579f65c75035",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 0,
+        "stderrBytes": 216000
+      },
+      "usage": {
+        "inputTokens": 209152,
+        "cachedInputTokens": 178688,
+        "outputTokens": 2271,
+        "totalTokens": 211423,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 74692
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 4677,
+        "eventCount": 23,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105750922-compile-failure-native-3",
+      "taskId": "compile-failure",
+      "arm": "native",
+      "repetition": 3,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "b20182500b368c9d891df214fab6a477ec0e8ab88ff35c021e2a463bd9f4403d",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "17355d605e71d7814fe615860c180f524c67da26848e1e2d6f82579f65c75035",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 0,
+        "stderrBytes": 216000
+      },
+      "usage": {
+        "inputTokens": 161339,
+        "cachedInputTokens": 142336,
+        "outputTokens": 1920,
+        "totalTokens": 163259,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 69190
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 4065,
+        "eventCount": 17,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719105900158-compile-failure-aishell-1",
+      "taskId": "compile-failure",
+      "arm": "aishell",
+      "repetition": 1,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "b20182500b368c9d891df214fab6a477ec0e8ab88ff35c021e2a463bd9f4403d",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "17355d605e71d7814fe615860c180f524c67da26848e1e2d6f82579f65c75035",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [
+          "run_check"
+        ],
+        "completedAIShellTools": [
+          "workspace_snapshot",
+          "run_check"
+        ],
+        "stdoutBytes": 0,
+        "stderrBytes": 216000
+      },
+      "usage": {
+        "inputTokens": 105443,
+        "cachedInputTokens": 96000,
+        "outputTokens": 916,
+        "totalTokens": 106359,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 29034
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3125,
+        "eventCount": 12,
+        "aishellToolCalls": 2
+      }
+    },
+    {
+      "runId": "20260719105929250-compile-failure-aishell-2",
+      "taskId": "compile-failure",
+      "arm": "aishell",
+      "repetition": 2,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "b20182500b368c9d891df214fab6a477ec0e8ab88ff35c021e2a463bd9f4403d",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "17355d605e71d7814fe615860c180f524c67da26848e1e2d6f82579f65c75035",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [
+          "run_check"
+        ],
+        "completedAIShellTools": [
+          "workspace_snapshot",
+          "run_check"
+        ],
+        "stdoutBytes": 0,
+        "stderrBytes": 216000
+      },
+      "usage": {
+        "inputTokens": 103333,
+        "cachedInputTokens": 78592,
+        "outputTokens": 930,
+        "totalTokens": 104263,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 31987
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3125,
+        "eventCount": 13,
+        "aishellToolCalls": 2
+      }
+    },
+    {
+      "runId": "20260719110001293-compile-failure-aishell-3",
+      "taskId": "compile-failure",
+      "arm": "aishell",
+      "repetition": 3,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "b20182500b368c9d891df214fab6a477ec0e8ab88ff35c021e2a463bd9f4403d",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "17355d605e71d7814fe615860c180f524c67da26848e1e2d6f82579f65c75035",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [
+          "run_check"
+        ],
+        "completedAIShellTools": [
+          "workspace_snapshot",
+          "run_check"
+        ],
+        "stdoutBytes": 0,
+        "stderrBytes": 216000
+      },
+      "usage": {
+        "inputTokens": 105698,
+        "cachedInputTokens": 99072,
+        "outputTokens": 1006,
+        "totalTokens": 106704,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 36484
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 2968,
+        "eventCount": 13,
+        "aishellToolCalls": 2
+      }
+    },
+    {
+      "runId": "20260719110037821-repeated-workspace-native-1",
+      "taskId": "repeated-workspace",
+      "arm": "native",
+      "repetition": 1,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "f7676b2976bd58be1d6676f242976a5265199ed575ec59b6c2d3bead1a44a538",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "5bf6f8c85461d36726cb055cd87c2227d58ef7870d6f19cf585b76a2956bde4f",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 177,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 136168,
+        "cachedInputTokens": 112896,
+        "outputTokens": 1160,
+        "totalTokens": 137328,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 48430
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3282,
+        "eventCount": 16,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719110126328-repeated-workspace-native-2",
+      "taskId": "repeated-workspace",
+      "arm": "native",
+      "repetition": 2,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "f7676b2976bd58be1d6676f242976a5265199ed575ec59b6c2d3bead1a44a538",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "5bf6f8c85461d36726cb055cd87c2227d58ef7870d6f19cf585b76a2956bde4f",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 176,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 127093,
+        "cachedInputTokens": 112896,
+        "outputTokens": 1515,
+        "totalTokens": 128608,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 44527
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3282,
+        "eventCount": 17,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719110210939-repeated-workspace-native-3",
+      "taskId": "repeated-workspace",
+      "arm": "native",
+      "repetition": 3,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "f7676b2976bd58be1d6676f242976a5265199ed575ec59b6c2d3bead1a44a538",
+        "toolProfile": "native",
+        "aishellBinaryHash": null
+      },
+      "provenance": {
+        "promptHash": "5bf6f8c85461d36726cb055cd87c2227d58ef7870d6f19cf585b76a2956bde4f",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": null,
+        "configHash": "19083398e7a2d514eb9148ace3cbdfaefbfc6b6771b652842d78b3d048e4b605",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "native"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [],
+        "completedAIShellTools": [],
+        "stdoutBytes": 177,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 158850,
+        "cachedInputTokens": 134144,
+        "outputTokens": 1655,
+        "totalTokens": 160505,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 56632
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3439,
+        "eventCount": 27,
+        "aishellToolCalls": 0
+      }
+    },
+    {
+      "runId": "20260719110307667-repeated-workspace-aishell-1",
+      "taskId": "repeated-workspace",
+      "arm": "aishell",
+      "repetition": 1,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "f7676b2976bd58be1d6676f242976a5265199ed575ec59b6c2d3bead1a44a538",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "5bf6f8c85461d36726cb055cd87c2227d58ef7870d6f19cf585b76a2956bde4f",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [
+          "workspace_snapshot"
+        ],
+        "completedAIShellTools": [
+          "workspace_snapshot"
+        ],
+        "stdoutBytes": 175,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 92901,
+        "cachedInputTokens": 71424,
+        "outputTokens": 1018,
+        "totalTokens": 93919,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 42139
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3125,
+        "eventCount": 12,
+        "aishellToolCalls": 1
+      }
+    },
+    {
+      "runId": "20260719110349898-repeated-workspace-aishell-2",
+      "taskId": "repeated-workspace",
+      "arm": "aishell",
+      "repetition": 2,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "f7676b2976bd58be1d6676f242976a5265199ed575ec59b6c2d3bead1a44a538",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "5bf6f8c85461d36726cb055cd87c2227d58ef7870d6f19cf585b76a2956bde4f",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [
+          "workspace_snapshot"
+        ],
+        "completedAIShellTools": [
+          "workspace_snapshot",
+          "workspace_snapshot"
+        ],
+        "stdoutBytes": 173,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 116168,
+        "cachedInputTokens": 92672,
+        "outputTokens": 1195,
+        "totalTokens": 117363,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 44480
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 2968,
+        "eventCount": 15,
+        "aishellToolCalls": 2
+      }
+    },
+    {
+      "runId": "20260719110434468-repeated-workspace-aishell-3",
+      "taskId": "repeated-workspace",
+      "arm": "aishell",
+      "repetition": 3,
+      "environment": {
+        "codexVersion": "codex-cli 0.144.6",
+        "model": "gpt-5.6-sol",
+        "reasoningEffort": "medium",
+        "fixtureHash": "f7676b2976bd58be1d6676f242976a5265199ed575ec59b6c2d3bead1a44a538",
+        "toolProfile": "development",
+        "aishellBinaryHash": "ace89c0076325b0860091895b07eb499f62e144a72b374673bb1013689050713"
+      },
+      "provenance": {
+        "promptHash": "5bf6f8c85461d36726cb055cd87c2227d58ef7870d6f19cf585b76a2956bde4f",
+        "manifestHash": "61cd99dbfdaf7bbeb08299bab715446c2f958f3dddb6c68c0b79e37a0f8d038e",
+        "runnerHash": "e17a55f36276b22bb29bae70a3ebfe6a618ccfdf9107f8f0e9163a8e2cc5fd7d",
+        "repositoryCommit": "a0c22c3f2254e5fdf151ffefc4771d7907759111",
+        "repositoryDirty": false,
+        "repositoryStatusHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "pathHash": "ec4dad1ecfb049457899fabd39a3ca64879e95f2747f8637491a9d3274072c3e",
+        "rtkExecutable": null,
+        "toolCatalogHash": "e8f73b7200765b053e73289fa5ba68bfa8d30f6b2473ff857facf80dc4b6cf8a",
+        "configHash": "1ebade893967f1bc4f2c7731d7e9cb344d6ca1ae2b03dda78dee57cd42e65947",
+        "sandbox": "danger-full-access",
+        "approvalPolicy": "bypass",
+        "timeoutMilliseconds": 180000,
+        "ephemeral": true,
+        "ignoreUserConfig": true,
+        "ignoreRules": true,
+        "toolProfile": "development"
+      },
+      "oracle": {
+        "success": true,
+        "exitCode": 0,
+        "requiredTools": [
+          "workspace_snapshot"
+        ],
+        "completedAIShellTools": [
+          "workspace_snapshot",
+          "workspace_snapshot"
+        ],
+        "stdoutBytes": 177,
+        "stderrBytes": 0
+      },
+      "usage": {
+        "inputTokens": 128302,
+        "cachedInputTokens": 100864,
+        "outputTokens": 1160,
+        "totalTokens": 129462,
+        "available": true
+      },
+      "timing": {
+        "wallMilliseconds": 35632
+      },
+      "agent": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stderrBytes": 3125,
+        "eventCount": 15,
+        "aishellToolCalls": 2
+      }
+    }
+  ]
+}

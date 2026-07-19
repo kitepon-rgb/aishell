@@ -3,7 +3,7 @@ title: AIShell macOS直結・開発効率ランタイム調査
 source: オーナー裁定（Direct OS state ownershipを製品の根とする）、rag/raw/development-efficiency-runtime/SOURCES.md、AIShell 0.2.1ローカル実装
 acquired: 2026-07-19
 confidence: 中〜高。外部仕様とローカル実装事実は高、製品効果と削減率は未検証
-status: 初期5 tool実装済み。正式性能値は同一candidate再実測後に確定する
+status: 初期5 tool実装・M1実測済み。3-task sentinelでtoken 25.86%減、平均wall 32.59%減
 ---
 
 # AIShell macOS直結・開発効率ランタイム調査
@@ -14,7 +14,7 @@ status: 初期5 tool実装済み。正式性能値は同一candidate再実測後
 
 実装中、FSEventsがtemporary directoryを`/private/var/...`で通知する一方、許可rootが`/var/...`になる実体path aliasを確認した。文字列prefixだけでroot包含を判定すると正しいイベントを捨てるため、event pathとrootの双方をsymlink解決してからboundary比較する。これはFSEventsを信頼するのでなく、現在filesystemと照合する設計の一部である。
 
-探索runではPATH解決不足や過剰routingが追加turnを生むことを確認した。ただし異なるcandidateのrecordを混成した集計は正式比較として無効である。runnerはprompt、manifest、binary、tool catalog、repository、config、PATHのhashとRTK不在を記録し、AIShell armではtask別の必須tool成功までoracle gateへ含める。正式値は同一candidateのpaired runだけで確定する。
+探索runではPATH解決不足や過剰routingが追加turnを生むことを確認し、異なるcandidateの混成集計を無効として棄却した。最終candidate `a0c22c3` はprompt、manifest、binary、tool catalog、repository、config、PATHのhashとRTK不在を固定し、AIShell armの必須tool成功、agent正常終了、timeoutなしをoracle gateへ含めた。同一candidateの3 task × 3反復で両arm 9/9、AIShellはtoken/solved taskを25.86%、平均wallを32.59%削減した。noisy compileはtoken 36.65%減、反復workspaceは20.10%減。小規模・bypass隔離fixtureの結果であり、一般化には30-task suiteが必要。
 
 ## 研究課題
 

@@ -20,7 +20,9 @@ AIShell 0.3.0 turns the direct-OS spike into a macOS state runtime for AI develo
 
 ## Measured result
 
-The final same-binary, same-manifest three-task sentinel is pending. Earlier exploratory runs are not release evidence because records from different candidates were combined. No token-saving claim is made until the formal report is complete.
+The final same-binary, same-manifest three-task sentinel solved 9/9 in both arms. Against native Codex, AIShell reduced tokens per solved task by 25.86%, mean wall time by 32.59%, and p95 wall time by 39.93%. This passes the pre-registered 20% M1 token gate.
+
+This is a controlled three-task result under approval/sandbox bypass in disposable fixtures, not a product-wide claim. The noisy compile task accounted for the clearest causal win (36.65% fewer tokens, 52.01% less time); repeated workspace observation used 20.10% fewer tokens. A 30-task representative suite remains future work.
 
 ## Known limits
 
