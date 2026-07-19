@@ -30,6 +30,11 @@ jobs:
           node --version
           npm --version
 
+      - name: Install development workers
+        run: |
+          brew install ripgrep
+          rg --version
+
       - name: Run Swift tests
         run: swift test
 
