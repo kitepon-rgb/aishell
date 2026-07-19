@@ -77,6 +77,7 @@ public actor NativeProcessService {
         FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
         let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
         let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+        let stdinPipe = Pipe()
 
         let process = Process()
         process.executableURL = executableURL
@@ -85,11 +86,14 @@ public actor NativeProcessService {
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
         process.standardOutput = stdoutHandle
         process.standardError = stderrHandle
+        process.standardInput = stdinPipe
 
         let startedAt = Date()
         do {
             try process.run()
+            try stdinPipe.fileHandleForWriting.close()
         } catch {
+            try? stdinPipe.fileHandleForWriting.close()
             try? stdoutHandle.close()
             try? stderrHandle.close()
             throw AIShellError.processLaunchFailed(error.localizedDescription)

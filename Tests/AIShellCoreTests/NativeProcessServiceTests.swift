@@ -47,6 +47,25 @@ final class NativeProcessServiceTests: XCTestCase {
         XCTAssertEqual(result.terminationReason, "signal")
     }
 
+    func testClosesStandardInputSoReaderObservesEOF() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let allowed = fixture.base.appendingPathComponent("allowed", isDirectory: true)
+        try FileManager.default.createDirectory(at: allowed, withIntermediateDirectories: true)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(allowed)
+        let service = NativeProcessService(store: store)
+
+        let result = try await service.run(
+            executable: "/bin/cat",
+            timeoutSeconds: 0.2
+        )
+
+        XCTAssertFalse(result.timedOut, "stdinを読む子プロセスへEOFを渡す必要があります。")
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "")
+    }
+
     func testRunsWithSecondAllowedRootAsAbsoluteWorkingDirectory() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
