@@ -3,14 +3,17 @@ import Foundation
 public actor RuntimeStore {
     public static let productDirectoryName = "AIShell"
 
-    public let baseDirectory: URL
-    public let configurationURL: URL
-    public let activityURL: URL
+    public nonisolated let baseDirectory: URL
+    public nonisolated let configurationURL: URL
+    public nonisolated let activityURL: URL
 
     public init(baseDirectory: URL? = nil) {
         let resolvedBase: URL
         if let baseDirectory {
             resolvedBase = baseDirectory
+        } else if let isolatedPath = ProcessInfo.processInfo.environment["AISHELL_STATE_DIRECTORY"],
+                  !isolatedPath.isEmpty {
+            resolvedBase = URL(fileURLWithPath: isolatedPath, isDirectory: true).standardizedFileURL
         } else {
             let applicationSupport = FileManager.default.urls(
                 for: .applicationSupportDirectory,

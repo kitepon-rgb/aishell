@@ -3,6 +3,8 @@
 更新日: 2026-07-19
 対象: macOS 15以降、初期検証機 macOS 26.5.2
 
+> 状態: 0.2.1で完了した技術スパイク。Direct OS基盤を継承する今後のロードマップは[macOS直結・開発効率ランタイム 開発計画](development-efficiency-plan.md)を正本とし、下記「次の段階」のGUI/Accessibility案は置き換え済み。
+
 ## 目的
 
 AIがshell、Terminal、AppleScript、JXA、任意コード実行を介さず、SwiftのmacOS APIを通してファイルとアプリを直接操作できる一本目の経路を完成させる。

@@ -1,9 +1,15 @@
 # AIShell
 
-AIがshell、Terminal、AppleScript、JXAを介さず、SwiftのmacOS APIを通してOSを直接操作する実験プロジェクト。
+AIの要求をshell文字列として解釈せず、SwiftのmacOS APIと指定された開発workerを通してOS状態を直接扱う実験プロジェクト。
 
 ## 現在できること
 
+- 既定のdevelopment profileから、OS状態を束ねた5本の高密度toolを提供
+  - `workspace_snapshot`: 初回scanのbounded previewとFSEvents由来の変更delta、Git状態、主要context
+  - `read_context`: 複数fileのbudget付きread、SHA-256、continuation
+  - `search_context`: `rg` workerによるbudget付き検索context
+  - `run_check`: 直接process実行、主要診断、完全stdout/stderr artifact
+  - `artifact_read`: artifactのrange、tail、pattern周辺read
 - 許可フォルダ内の一覧、検索、UTF-8テキスト読取
 - フォルダ／テキスト作成、copy、move、rename、Trash
 - stat、SHA-256、再帰tree
@@ -50,13 +56,15 @@ MCP実行ファイルはアプリ内に同梱される。
 codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
 ```
 
-このMacでは登録済み。新しく開始したCodexタスクから `aishell` の20ツールを利用できる。AIには次のように伝えればよい。
+新しく開始したCodexタスクでは、既定で上記5本のdevelopment toolを利用できる。従来のprimitiveを含む25 toolが必要な互換利用では、server環境へ`AISHELL_TOOL_PROFILE=full`を設定する。
 
 ```text
-AIShellを使いこなして。最初にruntime_statusを確認して。Git worktreeはautomaticGitWorktreePathsとeffectiveAllowedRootPathsへ自動反映されるので、worktreeごとの許可追加を私へ要求しないで。停止中または通常フォルダの許可root不足ならruntime_open_managerで管理画面を開いて。絶対パスはeffectiveAllowedRootPaths、相対パスはprimaryAllowedRootPathを基準に扱って。
+複数file・反復workspace観測ではworkspace_snapshotを使い、返されたcursorでdeltaを取って。32 KiBを超え得るbuild/test出力はrun_checkを使い、通常responseにない証拠だけartifact_readで読む。小さな単一file作業はCodex標準toolを使ってよい。
 ```
 
-`runtime_status` は設定root、自動認識したGit worktree、実効root、相対パスの基準、停止状態、次の操作を返す。停止中でも `runtime_open_manager` で管理アプリを前面化できるため、Computer Useや旧shellで入口を作る必要はない。許可root変更と再開は管理画面で人が行い、停止中の通常操作は引き続き拒否される。
+full profileの`runtime_status`は設定root、自動認識したGit worktree、実効root、相対パスの基準、停止状態、次の操作を返す。停止中でも`runtime_open_manager`で管理アプリを前面化できる。許可root変更と再開は管理画面で人が行い、停止中の通常操作は引き続き拒否される。
+
+`run_check`のMCP annotationはローカルfocused checkという利用意図を表すhintであり、安全強制ではない。指定workerはfile更新・子process・network accessを行い得る。0.3のstdio serverは1 requestずつ処理し、timeout時のprocess tree終了は行うが、MCP cancellationと並列pollingは未実装である。
 
 登録確認と解除は次のとおり。
 
@@ -76,4 +84,4 @@ scripts/package-app.sh release
 
 ## 実装上の禁止事項
 
-`AIShellCore` と `AIShellMCP` は、shell、AppleScript、JXA、コマンド文字列を実行しない。開発プログラムは実行ファイルの絶対パスと引数配列を分離したままmacOSのprocess APIへ渡し、shell本体の起動、パイプ、リダイレクト、shell展開を拒否する。MCPは型付き要求をmacOSネイティブAPIへ渡すアダプターである。
+`AIShellCore` と `AIShellMCP` はshellやAppleScript/JXAの文字列を解釈せず、開発プログラム名を`PATH`から実行ファイルURLへ解決し、引数配列と分離したままmacOSのprocess APIへ渡す。shell本体、`env`、`osascript`の直接起動と、パイプ、リダイレクト、shell展開は拒否する。ただし許可された任意の開発workerが内部で何を起動するかまではAIShell 0.3の境界外である。MCPは型付き要求をOS-owned runtimeへ渡すアダプターである。

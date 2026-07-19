@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aishell.local/schemas/benchmark-run.v1.json",
+  "type": "object",
+  "required": ["schemaVersion", "runId", "taskId", "arm", "environment", "provenance", "usage", "oracle", "timing"],
+  "properties": {
+    "schemaVersion": { "const": "aishell.benchmark-run.v1" },
+    "runId": { "type": "string" },
+    "taskId": { "type": "string" },
+    "arm": { "enum": ["native", "aishell"] },
+    "environment": {
+      "type": "object",
+      "required": ["codexVersion", "model", "fixtureHash", "toolProfile", "aishellBinaryHash"],
+      "additionalProperties": { "type": ["string", "null"] }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["promptHash", "manifestHash", "runnerHash", "repositoryCommit", "repositoryDirty", "repositoryStatusHash", "pathHash", "rtkExecutable", "toolCatalogHash", "configHash", "sandbox", "approvalPolicy", "timeoutMilliseconds", "ephemeral", "ignoreUserConfig", "ignoreRules", "toolProfile"],
+      "additionalProperties": false,
+      "properties": {
+        "promptHash": { "type": "string" },
+        "manifestHash": { "type": "string" },
+        "runnerHash": { "type": "string" },
+        "repositoryCommit": { "type": "string" },
+        "repositoryDirty": { "type": "boolean" },
+        "repositoryStatusHash": { "type": "string" },
+        "pathHash": { "type": "string" },
+        "rtkExecutable": { "type": ["string", "null"] },
+        "toolCatalogHash": { "type": ["string", "null"] },
+        "configHash": { "type": "string" },
+        "sandbox": { "const": "workspace-write" },
+        "approvalPolicy": { "const": "never" },
+        "timeoutMilliseconds": { "type": "integer" },
+        "ephemeral": { "const": true },
+        "ignoreUserConfig": { "const": true },
+        "ignoreRules": { "const": true },
+        "toolProfile": { "enum": ["native", "development"] }
+      }
+    },
+    "usage": {
+      "type": "object",
+      "required": ["inputTokens", "cachedInputTokens", "outputTokens", "totalTokens", "available"],
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": { "type": ["integer", "null"] },
+        "cachedInputTokens": { "type": ["integer", "null"] },
+        "outputTokens": { "type": ["integer", "null"] },
+        "totalTokens": { "type": ["integer", "null"] },
+        "available": { "type": "boolean" }
+      }
+    },
+    "oracle": {
+      "type": "object",
+      "required": ["success", "exitCode"],
+      "properties": {
+        "success": { "type": "boolean" },
+        "exitCode": { "type": ["integer", "null"] }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["wallMilliseconds"],
+      "properties": { "wallMilliseconds": { "type": "integer" } }
+    }
+  }
+}

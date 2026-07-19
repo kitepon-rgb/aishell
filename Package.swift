@@ -31,6 +31,11 @@ let package = Package(
             name: "AIShellCoreTests",
             dependencies: ["AIShellCore"],
             path: "Tests/AIShellCoreTests"
+        ),
+        .testTarget(
+            name: "AIShellMCPTests",
+            dependencies: ["AIShellMCP"],
+            path: "Tests/AIShellMCPTests"
         )
     ]
 )

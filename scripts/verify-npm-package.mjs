@@ -12,7 +12,7 @@ const packageMetadata = JSON.parse(
 );
 
 assert.equal(packageMetadata.name, "@quolu/aishell");
-assert.equal(packageMetadata.version, "0.2.1");
+assert.equal(packageMetadata.version, "0.3.0");
 assert.deepEqual(packageMetadata.os, ["darwin"]);
 assert.deepEqual(packageMetadata.cpu, ["arm64"]);
 assert.equal(

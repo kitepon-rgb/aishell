@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "aishell.benchmark-manifest.v2",
+  "minimumRepetitions": 3,
+  "primaryMetric": "sum(total_tokens_across_all_attempts) / oracle_successes",
+  "correctnessRule": "an arm may not lose a task solved by baseline",
+  "commonPrompt": "Route by task shape. For a tiny single-file change, use native tools even if AIShell exists. For repeated or multi-file workspace observation, you must start with workspace_snapshot when it exists and use its embedded context before drilldown. For a repository check expected to emit more than 32 KiB, you must use run_check when it exists; use artifact_read only if its primary diagnostic is insufficient. If those tools do not exist, use the native tools available to you.",
+  "tasks": [
+    {
+      "id": "code-change",
+      "category": "sentinel",
+      "fixture": "fixtures/code-change",
+      "prompt": "Fix the implementation so the repository tests pass. Inspect only what is needed, make the smallest correct edit, and run the deterministic test before finishing.",
+      "oracle": ["node", "--test"]
+    },
+    {
+      "id": "compile-failure",
+      "category": "sentinel",
+      "fixture": "fixtures/compile-failure",
+      "prompt": "Diagnose and fix the syntax failure, then run the repository check defined by package.json. The check intentionally emits high-volume dependency diagnostics before the primary error. Preserve the intended exported greeting and avoid unrelated edits.",
+      "oracle": ["node", "noisy-check.mjs"],
+      "requiredAIShellTools": ["run_check"]
+    },
+    {
+      "id": "repeated-workspace",
+      "category": "sentinel",
+      "fixture": "fixtures/repeated-workspace",
+      "prompt": "Update the runtime protocol version from 1 to 2 everywhere required by the tests. Discover the relevant files, make only necessary edits, and run the deterministic test.",
+      "oracle": ["node", "--test"],
+      "requiredAIShellTools": ["workspace_snapshot"]
+    },
+    {
+      "id": "mcp-surface-probe",
+      "category": "capability",
+      "fixture": "fixtures/mcp-surface-probe",
+      "prompt": "Do not edit files. You must call these AIShell MCP tools exactly once each: workspace_snapshot; read_context for probe.txt; search_context for the fixed string needle; run_check with /usr/bin/printf and arguments [%s, probe]; then artifact_read using the returned stdout handle. Finish only after all five calls succeed.",
+      "oracle": ["node", "--test"],
+      "requiredAIShellTools": ["workspace_snapshot", "read_context", "search_context", "run_check", "artifact_read"]
+    }
+  ]
+}

@@ -1,0 +1,306 @@
+import CryptoKit
+import Foundation
+
+public actor EvidenceStore {
+    public static let defaultRetentionSeconds: TimeInterval = 86_400
+    public static let defaultMaximumBytes = 512 * 1_024 * 1_024
+    public static let maximumReadBytes = 1_048_576
+
+    private let baseDirectory: URL
+    private let maximumBytes: Int
+    private let clock: @Sendable () -> Date
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    public init(
+        baseDirectory: URL,
+        maximumBytes: Int = EvidenceStore.defaultMaximumBytes,
+        clock: @escaping @Sendable () -> Date = Date.init
+    ) {
+        self.baseDirectory = baseDirectory
+        self.maximumBytes = max(1, maximumBytes)
+        self.clock = clock
+        encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+    }
+
+    public func store(
+        text: String,
+        kind: String,
+        producer: String,
+        retentionSeconds: TimeInterval = EvidenceStore.defaultRetentionSeconds
+    ) throws -> ArtifactMetadata {
+        try store(
+            data: Data(text.utf8),
+            kind: kind,
+            producer: producer,
+            retentionSeconds: retentionSeconds
+        )
+    }
+
+    public func store(
+        data: Data,
+        kind: String,
+        producer: String,
+        retentionSeconds: TimeInterval = EvidenceStore.defaultRetentionSeconds
+    ) throws -> ArtifactMetadata {
+        guard !kind.isEmpty, !producer.isEmpty else {
+            throw AIShellError.invalidArgument("artifactのkindとproducerは必須です。")
+        }
+        try ensureDirectory()
+        try garbageCollectExpired()
+        let usedBytes = try currentStoredBytes()
+        guard data.count <= maximumBytes - usedBytes else {
+            throw AIShellError.evidenceQuotaExceeded(maximumBytes)
+        }
+
+        let now = clock()
+        let handle = "art_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let metadata = ArtifactMetadata(
+            handle: handle,
+            kind: kind,
+            sizeBytes: data.count,
+            lineCount: Self.lineCount(in: data),
+            sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(max(1, retentionSeconds)),
+            producer: producer
+        )
+        try data.write(to: dataURL(for: handle), options: [.atomic])
+        do {
+            try encoder.encode(metadata).write(to: metadataURL(for: handle), options: [.atomic])
+        } catch {
+            try? FileManager.default.removeItem(at: dataURL(for: handle))
+            throw error
+        }
+        return metadata
+    }
+
+    public func store(
+        fileAt sourceURL: URL,
+        kind: String,
+        producer: String,
+        retentionSeconds: TimeInterval = EvidenceStore.defaultRetentionSeconds
+    ) throws -> ArtifactMetadata {
+        guard !kind.isEmpty, !producer.isEmpty else {
+            throw AIShellError.invalidArgument("artifactのkindとproducerは必須です。")
+        }
+        try ensureDirectory()
+        try garbageCollectExpired()
+        let sourceInspection = try Self.inspectFile(sourceURL)
+        let usedBytes = try currentStoredBytes()
+        guard sourceInspection.size <= maximumBytes - usedBytes else {
+            throw AIShellError.evidenceQuotaExceeded(maximumBytes)
+        }
+        let now = clock()
+        let handle = "art_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        do {
+            let destination = dataURL(for: handle)
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            let inspection = try Self.inspectFile(destination)
+            guard inspection.size <= maximumBytes - usedBytes else {
+                throw AIShellError.evidenceQuotaExceeded(maximumBytes)
+            }
+            let metadata = ArtifactMetadata(
+                handle: handle,
+                kind: kind,
+                sizeBytes: inspection.size,
+                lineCount: inspection.lineCount,
+                sha256: inspection.sha256,
+                createdAt: now,
+                expiresAt: now.addingTimeInterval(max(1, retentionSeconds)),
+                producer: producer
+            )
+            try encoder.encode(metadata).write(to: metadataURL(for: handle), options: [.atomic])
+            return metadata
+        } catch {
+            discard(handle: handle)
+            throw error
+        }
+    }
+
+    public func read(
+        handle: String,
+        mode: ArtifactReadMode = .range(offset: 0, length: 65_536),
+        byteBudget: Int = 65_536
+    ) throws -> ArtifactSlice {
+        let metadata = try loadMetadata(handle: handle)
+        guard clock() <= metadata.expiresAt else {
+            throw AIShellError.handleExpired(handle)
+        }
+        guard FileManager.default.fileExists(atPath: dataURL(for: handle).path) else {
+            throw AIShellError.handleNotFound(handle)
+        }
+        let budget = min(max(1, byteBudget), Self.maximumReadBytes)
+
+        let selection: (offset: Int, data: Data, matchLine: Int?)
+        switch mode {
+        case let .range(offset, length):
+            let start = min(max(0, offset), metadata.sizeBytes)
+            let count = min(max(0, length), budget, metadata.sizeBytes - start)
+            selection = (start, try Self.readRange(url: dataURL(for: handle), offset: start, count: count), nil)
+        case let .tail(lines):
+            let windowStart = max(0, metadata.sizeBytes - budget)
+            let window = try Self.readRange(
+                url: dataURL(for: handle), offset: windowStart, count: metadata.sizeBytes - windowStart
+            )
+            let tail = Self.tail(data: window, lines: max(1, lines), budget: budget)
+            selection = (windowStart + tail.0, tail.1, nil)
+        case let .around(pattern, contextLines):
+            guard !pattern.isEmpty else {
+                throw AIShellError.invalidArgument("patternは空にできません。")
+            }
+            guard metadata.sizeBytes <= 64 * 1_024 * 1_024 else {
+                throw AIShellError.invalidArgument("64MiB超のartifactではrangeまたはtailを使ってください。")
+            }
+            let data = try Data(contentsOf: dataURL(for: handle), options: .mappedIfSafe)
+            selection = try Self.around(
+                data: data,
+                pattern: pattern,
+                contextLines: max(0, contextLines),
+                budget: budget
+            )
+        }
+
+        let end = selection.offset + selection.data.count
+        let utf8 = String(data: selection.data, encoding: .utf8)
+        return ArtifactSlice(
+            handle: handle,
+            encoding: utf8 == nil ? "base64" : "utf-8",
+            text: utf8,
+            base64: utf8 == nil ? selection.data.base64EncodedString() : nil,
+            offset: selection.offset,
+            returnedBytes: selection.data.count,
+            totalBytes: metadata.sizeBytes,
+            omittedBytes: max(0, metadata.sizeBytes - selection.data.count),
+            eof: end == metadata.sizeBytes,
+            sha256: metadata.sha256,
+            expiresAt: metadata.expiresAt,
+            matchLine: selection.matchLine
+        )
+    }
+
+    @discardableResult
+    public func garbageCollectExpired() throws -> Int {
+        guard FileManager.default.fileExists(atPath: baseDirectory.path) else { return 0 }
+        var removed = 0
+        for url in try FileManager.default.contentsOfDirectory(at: baseDirectory, includingPropertiesForKeys: nil)
+        where url.pathExtension == "json" {
+            guard let metadata = try? decoder.decode(ArtifactMetadata.self, from: Data(contentsOf: url)),
+                  clock() > metadata.expiresAt else { continue }
+            try? FileManager.default.removeItem(at: dataURL(for: metadata.handle))
+            removed += 1
+        }
+        return removed
+    }
+
+    private func loadMetadata(handle: String) throws -> ArtifactMetadata {
+        guard handle.hasPrefix("art_"),
+              FileManager.default.fileExists(atPath: metadataURL(for: handle).path) else {
+            throw AIShellError.handleNotFound(handle)
+        }
+        return try decoder.decode(ArtifactMetadata.self, from: Data(contentsOf: metadataURL(for: handle)))
+    }
+
+    func discard(handle: String) {
+        try? FileManager.default.removeItem(at: dataURL(for: handle))
+        try? FileManager.default.removeItem(at: metadataURL(for: handle))
+    }
+
+    private func ensureDirectory() throws {
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+    }
+
+    private func currentStoredBytes() throws -> Int {
+        try FileManager.default.contentsOfDirectory(
+            at: baseDirectory,
+            includingPropertiesForKeys: [.fileSizeKey]
+        ).filter { $0.pathExtension == "data" }.reduce(0) { total, url in
+            total + (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        }
+    }
+
+    private func dataURL(for handle: String) -> URL {
+        baseDirectory.appendingPathComponent(handle).appendingPathExtension("data")
+    }
+
+    private func metadataURL(for handle: String) -> URL {
+        baseDirectory.appendingPathComponent(handle).appendingPathExtension("json")
+    }
+
+    private static func lineCount(in data: Data) -> Int {
+        guard !data.isEmpty else { return 0 }
+        let newlines = data.reduce(into: 0) { count, byte in
+            if byte == 0x0A { count += 1 }
+        }
+        return newlines + (data.last == 0x0A ? 0 : 1)
+    }
+
+    private static func inspectFile(_ url: URL) throws -> (size: Int, lineCount: Int, sha256: String) {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var size = 0
+        var newlines = 0
+        var lastByte: UInt8?
+        while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty {
+            hasher.update(data: data)
+            size += data.count
+            newlines += data.reduce(into: 0) { count, byte in if byte == 0x0A { count += 1 } }
+            lastByte = data.last
+        }
+        let lineCount = size == 0 ? 0 : newlines + (lastByte == 0x0A ? 0 : 1)
+        return (
+            size,
+            lineCount,
+            hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        )
+    }
+
+    private static func readRange(url: URL, offset: Int, count: Int) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(offset))
+        return try handle.read(upToCount: count) ?? Data()
+    }
+
+    private static func tail(data: Data, lines: Int, budget: Int) -> (Int, Data, Int?) {
+        var start = data.count
+        var newlines = 0
+        while start > 0 {
+            start -= 1
+            if data[start] == 0x0A, start < data.count - 1 {
+                newlines += 1
+                if newlines == lines { start += 1; break }
+            }
+        }
+        if data.count - start > budget { start = data.count - budget }
+        return (start, data.subdata(in: start..<data.count), nil)
+    }
+
+    private static func around(
+        data: Data,
+        pattern: String,
+        contextLines: Int,
+        budget: Int
+    ) throws -> (Int, Data, Int?) {
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw AIShellError.notTextFile("artifact")
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard let index = lines.firstIndex(where: { $0.contains(pattern) }) else {
+            throw AIShellError.invalidArgument("patternがartifactに見つかりません。")
+        }
+        let lower = max(0, index - contextLines)
+        let upper = min(lines.count - 1, index + contextLines)
+        var selected = lines[lower...upper].joined(separator: "\n")
+        if upper < lines.count - 1 || text.hasSuffix("\n") { selected += "\n" }
+        var selectedData = Data(selected.utf8)
+        if selectedData.count > budget { selectedData = Data(selectedData.prefix(budget)) }
+        let offset = Data(lines[..<lower].joined(separator: "\n").utf8).count + (lower == 0 ? 0 : 1)
+        return (offset, selectedData, index + 1)
+    }
+}

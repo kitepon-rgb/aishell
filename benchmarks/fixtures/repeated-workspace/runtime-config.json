@@ -1,0 +1,5 @@
+{
+  "protocolVersion": 1,
+  "transport": "stdio",
+  "features": ["artifacts", "workspace-delta"]
+}
