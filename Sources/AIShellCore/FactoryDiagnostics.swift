@@ -2,7 +2,7 @@ import Foundation
 
 public enum AIShellProduct {
     public static let identifier = "aishell"
-    public static let version = "0.2.1"
+    public static let version = "0.3.0"
     public static let diagnosticsSchemaVersion = "aishell.native_factory_diagnostics.v1"
     public static let runtimeSchemaVersion = "aishell.runtime_configuration.v2"
     public static let mcpProtocolVersion = "2025-11-25"

@@ -25,7 +25,7 @@ final class FactoryDiagnosticsTests: XCTestCase {
 
         XCTAssertEqual(diagnostics.schemaVersion, "aishell.native_factory_diagnostics.v1")
         XCTAssertEqual(diagnostics.product.identifier, "aishell")
-        XCTAssertEqual(diagnostics.product.version, "0.2.1")
+        XCTAssertEqual(diagnostics.product.version, "0.3.0")
         XCTAssertEqual(diagnostics.runtime.configurationState, "valid")
         XCTAssertEqual(diagnostics.runtime.operationReadiness, "ready")
         XCTAssertEqual(diagnostics.runtime.configuredRootCount, 1)
