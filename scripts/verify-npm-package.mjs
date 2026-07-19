@@ -12,13 +12,14 @@ const packageMetadata = JSON.parse(
 );
 
 assert.equal(packageMetadata.name, "@quolu/aishell");
-assert.equal(packageMetadata.version, "0.1.0");
+assert.equal(packageMetadata.version, "0.1.1");
 assert.deepEqual(packageMetadata.os, ["darwin"]);
 assert.deepEqual(packageMetadata.cpu, ["arm64"]);
 assert.equal(
   packageMetadata.bin["aishell-mcp"],
   "dist/AIShell.app/Contents/Helpers/aishell-mcp"
 );
+assert.equal(packageMetadata.bin["aishell-open"], "scripts/aishell-open.mjs");
 
 await access(path.join(projectDirectory, packageMetadata.bin["aishell-mcp"]));
 
