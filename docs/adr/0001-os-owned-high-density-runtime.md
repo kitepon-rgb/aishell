@@ -17,7 +17,7 @@ The tools share one macOS state runtime owned below the model:
 5. Dropped events, wrapped IDs, changed roots, or expired generations return an explicit rescan/cursor error. They never trigger a silent full-scan fallback.
 6. Git, `rg`, compiler, and test executables are workers launched and observed by AIShell. They enrich OS-owned state but do not own it.
 7. Existing primitive tools remain compatible during the initial rollout. The five new tools use a versioned top-level object result and stable error codes; legacy-wide refactoring is outside the first vertical slice.
-8. The default profile contains exactly the five high-density tools. `AISHELL_TOOL_PROFILE=full` exposes the five plus the 20 legacy primitives.
+8. The default profile contains the five high-density development tools plus the two recovery control-plane tools, `runtime_status` and `runtime_open_manager`. These controls remain callable when configuration is missing or normal AI operations are paused. `AISHELL_TOOL_PROFILE=full` exposes all 25 tools; it does not duplicate the two controls already present in the default seven.
 9. Executable names are resolved by AIShell through `PATH` before direct launch. Shell executables, relative paths containing `/`, and command strings remain rejected.
 10. TextContent is a concise model-facing projection. `structuredContent` remains an object-shaped metadata projection and does not duplicate large file or artifact contents.
 11. `run_check` truthfully advertises destructive and open-world capability because a caller-selected worker can write files, start descendants, or access the network. Formal benchmarks use Codex bypass mode only inside disposable deterministic fixtures; normal hosts may require approval.

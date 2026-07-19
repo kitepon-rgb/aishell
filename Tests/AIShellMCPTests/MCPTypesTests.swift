@@ -2,12 +2,13 @@ import XCTest
 @testable import AIShellMCP
 
 final class MCPTypesTests: XCTestCase {
-    func testDevelopmentProfileListsOnlyHighDensitySurfaceAndRuntimeEntry() {
+    func testDevelopmentProfileListsHighDensitySurfaceAndRecoveryControls() {
         let tools = ToolCatalog.listedTools(profile: nil)
         XCTAssertEqual(
             Set(tools.map(\.name)),
             [
-                "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context"
+                "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
+                "runtime_status", "runtime_open_manager"
             ]
         )
         XCTAssertEqual(tools.prefix(5).map(\.name), [
@@ -18,6 +19,9 @@ final class MCPTypesTests: XCTestCase {
             $0.outputSchema?.objectValue?["type"] == .string("object")
                 && $0.outputSchema?.objectValue?["oneOf"]?.arrayValue?.count == 2
         })
+        XCTAssertEqual(tools.suffix(2).map(\.name), ["runtime_status", "runtime_open_manager"])
+        XCTAssertTrue(tools.suffix(2).allSatisfy { $0.outputSchema != nil })
+        XCTAssertTrue(ToolCatalog.controlToolNames.isSubset(of: Set(tools.map(\.name))))
         XCTAssertEqual(tools.first { $0.name == "run_check" }?.annotations.destructiveHint, true)
         XCTAssertEqual(tools.first { $0.name == "run_check" }?.annotations.openWorldHint, true)
         let snapshot = tools.first { $0.name == "workspace_snapshot" }
@@ -31,9 +35,11 @@ final class MCPTypesTests: XCTestCase {
 
     func testFullProfileRetainsLegacyDiscoveryCompatibility() {
         let names = Set(ToolCatalog.listedTools(profile: "full").map(\.name))
+        XCTAssertEqual(names.count, 25)
         XCTAssertTrue(names.contains("process_run"))
         XCTAssertTrue(names.contains("files_read_text"))
         XCTAssertTrue(names.isSuperset(of: ToolCatalog.developmentToolNames))
+        XCTAssertTrue(names.isSuperset(of: ToolCatalog.controlToolNames))
     }
 
     func testArtifactStructuredProjectionDoesNotDuplicatePayload() {

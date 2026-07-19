@@ -32,7 +32,7 @@ Use workspace_snapshot for the initial workspace context. Run the focused tests 
 run_check, and read retained output with artifact_read only if the summary omits evidence.
 ```
 
-The default development profile exposes five high-density tools:
+The default profile exposes five high-density development tools plus two always-available recovery controls:
 
 | Tool | Purpose |
 |---|---|
@@ -41,6 +41,8 @@ The default development profile exposes five high-density tools:
 | `search_context` | Budgeted search context produced by a directly launched `rg` worker |
 | `run_check` | Direct process execution, primary diagnostics, and complete stdout/stderr artifacts |
 | `artifact_read` | Range, tail, and pattern-centered reads from retained artifacts |
+| `runtime_status` | Allowed-root, pause, worktree, and next-action state, including while paused or unconfigured |
+| `runtime_open_manager` | Open the manager app to add roots or resume AI operations |
 
 ## Why AIShell
 
@@ -112,7 +114,7 @@ Remove the registration with:
 codex mcp remove aishell
 ```
 
-The compatibility profile retains the original 20 primitives alongside the five development tools:
+The compatibility profile retains all 25 tools. The default seven are the five development tools plus the two recovery controls; full mode adds the remaining legacy primitives:
 
 ```sh
 AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp

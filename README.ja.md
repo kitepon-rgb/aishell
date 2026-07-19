@@ -32,7 +32,7 @@ codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
 summaryから省略された証拠だけartifact_readで読んで。
 ```
 
-既定development profileは5本の高密度toolを提供する。
+既定profileは5本の高密度development toolと、常時利用できる2本の復旧control toolを提供する。
 
 | Tool | 役割 |
 |---|---|
@@ -41,6 +41,8 @@ summaryから省略された証拠だけartifact_readで読んで。
 | `search_context` | 直接起動した`rg` workerによるbudget付き検索context |
 | `run_check` | 直接process実行、主要diagnostic、完全stdout/stderr artifact |
 | `artifact_read` | 保持artifactのrange、tail、pattern周辺read |
+| `runtime_status` | 未設定・停止中も含む許可root、停止、worktree、次操作の状態取得 |
+| `runtime_open_manager` | root追加またはAI操作再開のため管理アプリを開く |
 
 ## なぜAIShellか
 
@@ -112,7 +114,7 @@ codex mcp get aishell
 codex mcp remove aishell
 ```
 
-互換用full profileは既存20 primitiveと5本のdevelopment toolを合わせた25 toolを提供する。
+互換用full profileは全25 toolを提供する。既定7本は5本のdevelopment toolと2本の復旧control toolで、full modeは残りのlegacy primitiveも公開する。
 
 ```sh
 AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp

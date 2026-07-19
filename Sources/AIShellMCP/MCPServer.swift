@@ -49,7 +49,7 @@ final class MCPServer {
                 ]),
                 "serverInfo": .object([
                     "name": .string("aishell-macos"),
-                    "version": .string("0.3.2")
+                    "version": .string("0.3.3")
                 ]),
                 "instructions": .string("macOSの生きたfilesystem・process・artifact状態を直接所有します。tinyなsingle-file taskはhost native toolを使います。反復またはmulti-file観測だけworkspace_snapshotから開始し埋込contextを先に使います。32KiB超の出力が見込まれる検査だけrun_checkを使い、artifact_readは主要診断が不足する時だけ使います。search_context/read_contextはsnapshot不足時のdrilldownです。")
             ]))

@@ -51,13 +51,17 @@ enum ToolCatalog {
     static let developmentToolNames: Set<String> = [
         "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context"
     ]
+    static let controlToolNames: Set<String> = [
+        "runtime_status", "runtime_open_manager"
+    ]
+    static let defaultToolNames = developmentToolNames.union(controlToolNames)
 
     static func listedTools(profile: String?) -> [MCPTool] {
         switch profile {
         case "full", "legacy":
             tools
         default:
-            tools.filter { developmentToolNames.contains($0.name) }.map(compactTool)
+            tools.filter { defaultToolNames.contains($0.name) }.map(compactTool)
         }
     }
 
@@ -192,11 +196,27 @@ enum ToolCatalog {
         ),
         tool(
             "runtime_status", "実行状態", "設定root、自動認識したGit worktree、実効root、停止状態、相対パスの基準、次に必要な操作を取得します。Git worktreeを手動追加する必要はありません。停止中でも利用できます。",
-            properties: [:], required: [], readOnly: true, idempotent: true
+            properties: [:], required: [], readOnly: true, idempotent: true,
+            outputSchema: objectOutput(
+                required: ["allowedRootPaths", "automaticGitWorktreePaths", "effectiveAllowedRootPaths", "primaryAllowedRootPath", "relativePathBase", "isPaused", "updatedAt", "managerTool", "nextAction"],
+                properties: [
+                    "allowedRootPaths": type("array"), "automaticGitWorktreePaths": type("array"),
+                    "effectiveAllowedRootPaths": type("array"), "primaryAllowedRootPath": nullableType("string"),
+                    "relativePathBase": nullableType("string"), "isPaused": type("boolean"),
+                    "updatedAt": type("string"), "managerTool": type("string"), "nextAction": type("string")
+                ]
+            )
         ),
         tool(
             "runtime_open_manager", "管理画面を開く", "AIShellが停止中でも管理画面を開きます。許可rootの追加・削除と再開は画面上で行います。",
-            properties: [:], required: [], idempotent: true
+            properties: [:], required: [], idempotent: true,
+            outputSchema: objectOutput(
+                required: ["name", "processIdentifier", "isActive"],
+                properties: [
+                    "name": type("string"), "bundleIdentifier": nullableType("string"),
+                    "processIdentifier": type("integer"), "isActive": type("boolean")
+                ]
+            )
         ),
         tool(
             "files_list", "フォルダ一覧", "許可root内の項目を一覧します。pathを省略すると先頭の許可rootです。",
