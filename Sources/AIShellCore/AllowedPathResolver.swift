@@ -1,6 +1,8 @@
 import Foundation
 
 public struct AllowedPathResolver: Sendable {
+    public let configuredRootURLs: [URL]
+    public let gitWorktreeRootURLs: [URL]
     public let rootURLs: [URL]
 
     public var rootURL: URL {
@@ -33,7 +35,9 @@ public struct AllowedPathResolver: Sendable {
             }
         }
 
-        rootURLs = roots
+        configuredRootURLs = roots
+        gitWorktreeRootURLs = Self.discoverGitWorktreeRoots(for: roots)
+        rootURLs = roots + gitWorktreeRootURLs.filter { !roots.contains($0) }
     }
 
     public func resolveExisting(_ path: String?) throws -> URL {
@@ -103,5 +107,79 @@ public struct AllowedPathResolver: Sendable {
         let targetComponents = target.pathComponents
         return targetComponents.count >= rootComponents.count
             && Array(targetComponents.prefix(rootComponents.count)) == rootComponents
+    }
+
+    private static func discoverGitWorktreeRoots(for roots: [URL]) -> [URL] {
+        var discovered: [URL] = []
+        for root in roots {
+            guard let commonGitDirectory = commonGitDirectory(for: root) else { continue }
+            let worktreesDirectory = commonGitDirectory.appendingPathComponent("worktrees", isDirectory: true)
+            guard let administrativeDirectories = try? FileManager.default.contentsOfDirectory(
+                at: worktreesDirectory,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            for administrativeDirectory in administrativeDirectories {
+                guard let values = try? administrativeDirectory.resourceValues(forKeys: [.isDirectoryKey]),
+                      values.isDirectory == true,
+                      let gitFileURL = pathFromPlainFile(
+                        administrativeDirectory.appendingPathComponent("gitdir"),
+                        relativeTo: administrativeDirectory
+                      ),
+                      gitFileURL.lastPathComponent == ".git" else { continue }
+
+                let worktreeURL = gitFileURL.deletingLastPathComponent()
+                    .standardizedFileURL
+                    .resolvingSymlinksInPath()
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: worktreeURL.path, isDirectory: &isDirectory),
+                      isDirectory.boolValue,
+                      let reciprocalDirectory = pathFromGitFile(gitFileURL),
+                      reciprocalDirectory == administrativeDirectory.standardizedFileURL.resolvingSymlinksInPath()
+                else { continue }
+
+                if !roots.contains(worktreeURL), !discovered.contains(worktreeURL) {
+                    discovered.append(worktreeURL)
+                }
+            }
+        }
+        return discovered
+    }
+
+    private static func commonGitDirectory(for root: URL) -> URL? {
+        let dotGit = root.appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: dotGit.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return dotGit.standardizedFileURL.resolvingSymlinksInPath()
+        }
+
+        guard let administrativeDirectory = pathFromGitFile(dotGit) else { return nil }
+        let commonDirectoryFile = administrativeDirectory.appendingPathComponent("commondir")
+        return pathFromPlainFile(commonDirectoryFile, relativeTo: administrativeDirectory)
+            ?? administrativeDirectory
+    }
+
+    private static func pathFromGitFile(_ url: URL) -> URL? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8),
+              text.hasPrefix("gitdir:") else { return nil }
+        let path = String(text.dropFirst("gitdir:".count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return resolvedPath(path, relativeTo: url.deletingLastPathComponent())
+    }
+
+    private static func pathFromPlainFile(_ url: URL, relativeTo base: URL) -> URL? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let path = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return resolvedPath(path, relativeTo: base)
+    }
+
+    private static func resolvedPath(_ path: String, relativeTo base: URL) -> URL? {
+        guard !path.isEmpty else { return nil }
+        let url = path.hasPrefix("/")
+            ? URL(fileURLWithPath: path)
+            : base.appendingPathComponent(path)
+        return url.standardizedFileURL.resolvingSymlinksInPath()
     }
 }

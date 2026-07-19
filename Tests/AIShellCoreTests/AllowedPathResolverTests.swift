@@ -51,4 +51,53 @@ final class AllowedPathResolverTests: XCTestCase {
             }
         }
     }
+
+    func testAutomaticallyAllowsRegisteredGitWorktree() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let repository = fixture.base.appendingPathComponent("repository", isDirectory: true)
+        let worktree = fixture.base.appendingPathComponent("repository-wt-task", isDirectory: true)
+        let administrativeDirectory = repository
+            .appendingPathComponent(".git/worktrees/task", isDirectory: true)
+        try FileManager.default.createDirectory(at: administrativeDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try Data("\(worktree.appendingPathComponent(".git").path)\n".utf8).write(
+            to: administrativeDirectory.appendingPathComponent("gitdir")
+        )
+        try Data("gitdir: \(administrativeDirectory.path)\n".utf8).write(
+            to: worktree.appendingPathComponent(".git")
+        )
+        let file = worktree.appendingPathComponent("value.txt")
+        try Data("value".utf8).write(to: file)
+
+        let resolver = try AllowedPathResolver(rootPath: repository.path)
+
+        XCTAssertEqual(resolver.gitWorktreeRootURLs.map(\.path), [worktree.path])
+        XCTAssertEqual(try resolver.resolveExisting(file.path).path, file.path)
+    }
+
+    func testRejectsUnregisteredOrNonReciprocalWorktree() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let repository = fixture.base.appendingPathComponent("repository", isDirectory: true)
+        let sibling = fixture.base.appendingPathComponent("repository-wt-fake", isDirectory: true)
+        let administrativeDirectory = repository
+            .appendingPathComponent(".git/worktrees/fake", isDirectory: true)
+        try FileManager.default.createDirectory(at: administrativeDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try Data("\(sibling.appendingPathComponent(".git").path)\n".utf8).write(
+            to: administrativeDirectory.appendingPathComponent("gitdir")
+        )
+        try Data("gitdir: /unrelated/admin\n".utf8).write(to: sibling.appendingPathComponent(".git"))
+        let file = sibling.appendingPathComponent("value.txt")
+        try Data("value".utf8).write(to: file)
+        let resolver = try AllowedPathResolver(rootPath: repository.path)
+
+        XCTAssertTrue(resolver.gitWorktreeRootURLs.isEmpty)
+        XCTAssertThrowsError(try resolver.resolveExisting(file.path)) { error in
+            guard case AIShellError.outsideAllowedRoot = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
 }

@@ -16,7 +16,7 @@ install scriptを使わないことで、npm 12の既定動作でもMCPと管理
 
 ## 実測
 
-- 公開: `@quolu/aishell@0.2.0`、dist-tag `latest`
+- 公開: `@quolu/aishell@0.2.1`、dist-tag `latest`
 - global install先: `/opt/homebrew/lib/node_modules/@quolu/aishell`
 - PATH: `/opt/homebrew/bin/aishell-mcp`、`/opt/homebrew/bin/aishell-open`
 - npm導入後のhelperから20 MCP toolsを取得

@@ -20,5 +20,6 @@ codex mcp add aishell -- /Users/kite/Developer/aishell/build/AIShell.app/Content
 - `codex mcp list`: `aishell` を有効なserverとして表示
 - 同梱helper: `tools/list` で20ツール、`runtime_status` と停止中の `runtime_open_manager` 応答済み
 - 停止中: `process_run` をAIShell側で拒否
+- 0.2.1: 設定rootに属するGit worktreeを `automaticGitWorktreePaths` と `effectiveAllowedRootPaths` へ自動反映し、worktree単位の追加依頼を不要化
 
 `codex --strict-config mcp get aishell` は、現行CLIが `codex mcp` で `--strict-config` をサポートしないため検証経路として使用できなかった。通常の `get/list` は設定を正常に解析した。

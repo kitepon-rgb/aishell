@@ -46,7 +46,7 @@ final class MCPServer {
                 ]),
                 "serverInfo": .object([
                     "name": .string("aishell-macos"),
-                    "version": .string("0.2.0")
+                    "version": .string("0.2.1")
                 ]),
                 "instructions": .string("SwiftのmacOS APIを直接呼びます。最初にruntime_statusを確認してください。停止中または許可root不足ならruntime_open_managerで管理画面を開けます。process_runはshellを介さず、絶対実行ファイルと引数配列を直接渡します。")
             ]))
@@ -197,6 +197,9 @@ final class MCPServer {
 
     private func runtimeStatus() async throws -> JSONValue {
         let configuration = try await store.loadConfiguration()
+        let resolver = try? AllowedPathResolver(rootPaths: configuration.allowedRootPaths)
+        let automaticWorktrees = resolver?.gitWorktreeRootURLs.map(\.path) ?? []
+        let effectiveRoots = resolver?.rootURLs.map(\.path) ?? configuration.allowedRootPaths
         let primary = configuration.primaryAllowedRootPath.map(JSONValue.string) ?? .null
         let nextAction: String
         if configuration.isPaused {
@@ -204,11 +207,13 @@ final class MCPServer {
         } else if configuration.allowedRootPaths.isEmpty {
             nextAction = "runtime_open_managerを呼び、AIShell画面で許可rootを追加してください。"
         } else {
-            nextAction = "利用可能です。絶対パスは一致する許可root、相対パスはprimaryAllowedRootPathを基準にします。"
+            nextAction = "利用可能です。絶対パスはeffectiveAllowedRootPaths、相対パスはprimaryAllowedRootPathを基準にします。Git worktreeは自動認識されるため手動追加しないでください。"
         }
 
         return .object([
             "allowedRootPaths": .array(configuration.allowedRootPaths.map(JSONValue.string)),
+            "automaticGitWorktreePaths": .array(automaticWorktrees.map(JSONValue.string)),
+            "effectiveAllowedRootPaths": .array(effectiveRoots.map(JSONValue.string)),
             "primaryAllowedRootPath": primary,
             "relativePathBase": primary,
             "isPaused": .bool(configuration.isPaused),

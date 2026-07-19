@@ -1,6 +1,6 @@
 {
   "name": "@quolu/aishell",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A native macOS MCP server for direct file, app, and development tool operations without a shell",
   "license": "UNLICENSED",
   "author": "quolu",
