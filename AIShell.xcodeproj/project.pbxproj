@@ -1,0 +1,721 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0684A30315E568F14F86CA8E /* AIShellCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38257124B69B9FACDF405DBD /* AIShellCore.framework */; };
+		073957B614C9F4C76748FB8F /* NativeApplicationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F669FC9E9B48E15985D0B9CB /* NativeApplicationService.swift */; };
+		0D5B669ECEB8AC8A9E4CEA68 /* NativeFileServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA426FCBCC075E7316FB155E /* NativeFileServiceTests.swift */; };
+		0F884EE64C7822500D040365 /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E88A5A7FA156279328604E8A /* MCPServer.swift */; };
+		16A786A3DA9AF2E46964824E /* AIShellCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38257124B69B9FACDF405DBD /* AIShellCore.framework */; };
+		3108423DC622AEFD274BC82E /* AIShellCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 38257124B69B9FACDF405DBD /* AIShellCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		34565FE5925AD901C0652BB5 /* AIShellCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 38257124B69B9FACDF405DBD /* AIShellCore.framework */; };
+		426D5CFD80536AD6BDAE9D6B /* AllowedPathResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E35F1499E28DF831E55FD67 /* AllowedPathResolverTests.swift */; };
+		47669FDDCD1AD09CB1A344B4 /* NativeProcessServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD7E0320495B39243F38F9B8 /* NativeProcessServiceTests.swift */; };
+		57E17C63303375025B06AD92 /* MCPTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 310BA94C6902392B15D63C82 /* MCPTypes.swift */; };
+		5FF795276275EE6188D91652 /* TemporaryFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECD4FC7522045E10F86B2D0 /* TemporaryFixture.swift */; };
+		8E12787A512829D7730CC73C /* AllowedPathResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2B0D6399D8A5E707ADB42B3 /* AllowedPathResolver.swift */; };
+		9C7107FC94A7DA0930472AF5 /* NativeApplicationServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 271519BEEF96B04B43DCAC55 /* NativeApplicationServiceTests.swift */; };
+		9E5C15BB6051A16F4161B304 /* RuntimeStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74DA22E64A3C2ADAD117925D /* RuntimeStoreTests.swift */; };
+		AB6DDC9D301AC0CF9EE206B7 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9AD8F95AFB44E1BB7CF501C /* Models.swift */; };
+		BC51FEF7E491BE4008DCCF00 /* AIShellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60B89A09C86CD3F1AEBAD9DC /* AIShellApp.swift */; };
+		BF1C7C57E552B6E237965C47 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED0671DEBD43FF8ADDC2C0BE /* ContentView.swift */; };
+		C25918C93D1A2980C547B90B /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1DC41C1D4E57364243292D7 /* JSONValue.swift */; };
+		C805377227A4700BE66A680A /* AIShellCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 38257124B69B9FACDF405DBD /* AIShellCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		CE78BF62E357997DFA55DD9D /* AIShellMCPMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02341502229A669603CF38E5 /* AIShellMCPMain.swift */; };
+		D8B5D46D2C3B3ABD63D9BB77 /* NativeProcessService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CF521207C85E79A8553BE7E /* NativeProcessService.swift */; };
+		D8EE2595500CDAD5FCDB6221 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 965C5D8F843B2CEE161C822B /* AppModel.swift */; };
+		E1B4B8CC1611A8ADBDF42B96 /* NativeFileService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA38A9A487C91B1B5008E460 /* NativeFileService.swift */; };
+		EFF92903F2358A33571A4098 /* RuntimeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F09BD2EE36070BEC758EF574 /* RuntimeStore.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		649F3EF9ED90651991A29C91 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 72D7717B14292F257C36B23D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4E5F692639F732376840880D;
+			remoteInfo = AIShellCore;
+		};
+		A23C0A822FBA0B6D2EE68555 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 72D7717B14292F257C36B23D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4E5F692639F732376840880D;
+			remoteInfo = AIShellCore;
+		};
+		A4AD553498DDE87E3BFD197B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 72D7717B14292F257C36B23D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4E5F692639F732376840880D;
+			remoteInfo = AIShellCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A5DC765B9C9F43A8244E0259 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				3108423DC622AEFD274BC82E /* AIShellCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BAEBDD6B99F42D8C57553EAA /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				C805377227A4700BE66A680A /* AIShellCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		02341502229A669603CF38E5 /* AIShellMCPMain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIShellMCPMain.swift; sourceTree = "<group>"; };
+		17E684105A1E4C92D6FEC8E0 /* AIShellMCP */ = {isa = PBXFileReference; includeInIndex = 0; path = AIShellMCP; sourceTree = BUILT_PRODUCTS_DIR; };
+		271519BEEF96B04B43DCAC55 /* NativeApplicationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeApplicationServiceTests.swift; sourceTree = "<group>"; };
+		310BA94C6902392B15D63C82 /* MCPTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPTypes.swift; sourceTree = "<group>"; };
+		37CB846EB58D9DBC4FC5826C /* AIShellCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AIShellCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		38257124B69B9FACDF405DBD /* AIShellCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = AIShellCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CF521207C85E79A8553BE7E /* NativeProcessService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProcessService.swift; sourceTree = "<group>"; };
+		60B89A09C86CD3F1AEBAD9DC /* AIShellApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIShellApp.swift; sourceTree = "<group>"; };
+		6E35F1499E28DF831E55FD67 /* AllowedPathResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllowedPathResolverTests.swift; sourceTree = "<group>"; };
+		74DA22E64A3C2ADAD117925D /* RuntimeStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeStoreTests.swift; sourceTree = "<group>"; };
+		965C5D8F843B2CEE161C822B /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		A9AD8F95AFB44E1BB7CF501C /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		AECD4FC7522045E10F86B2D0 /* TemporaryFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemporaryFixture.swift; sourceTree = "<group>"; };
+		B82343B6490225159AB6BFB7 /* AIShell.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIShell.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CD7E0320495B39243F38F9B8 /* NativeProcessServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeProcessServiceTests.swift; sourceTree = "<group>"; };
+		E1DC41C1D4E57364243292D7 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
+		E88A5A7FA156279328604E8A /* MCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServer.swift; sourceTree = "<group>"; };
+		ED0671DEBD43FF8ADDC2C0BE /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		F09BD2EE36070BEC758EF574 /* RuntimeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeStore.swift; sourceTree = "<group>"; };
+		F2B0D6399D8A5E707ADB42B3 /* AllowedPathResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AllowedPathResolver.swift; sourceTree = "<group>"; };
+		F669FC9E9B48E15985D0B9CB /* NativeApplicationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeApplicationService.swift; sourceTree = "<group>"; };
+		FA38A9A487C91B1B5008E460 /* NativeFileService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFileService.swift; sourceTree = "<group>"; };
+		FA426FCBCC075E7316FB155E /* NativeFileServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFileServiceTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		52798691836A7F4198644C74 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				34565FE5925AD901C0652BB5 /* AIShellCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5B6FEFEAB8EEB8610F661E12 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0684A30315E568F14F86CA8E /* AIShellCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F293B606F416335912ACE3AA /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				16A786A3DA9AF2E46964824E /* AIShellCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0C19D1EF3A7B55B2A58D092B /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				6AA5DB8427CB6AFD5493FB81 /* AIShellApp */,
+				6D74751F24E3CC6009A93654 /* AIShellCore */,
+				1DCC45D59A407BFC408E7C61 /* AIShellMCP */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		1288C1292306C16D855EC528 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				13C522D3A6575A7EB50A50B9 /* AIShellCoreTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		13C522D3A6575A7EB50A50B9 /* AIShellCoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				6E35F1499E28DF831E55FD67 /* AllowedPathResolverTests.swift */,
+				271519BEEF96B04B43DCAC55 /* NativeApplicationServiceTests.swift */,
+				FA426FCBCC075E7316FB155E /* NativeFileServiceTests.swift */,
+				CD7E0320495B39243F38F9B8 /* NativeProcessServiceTests.swift */,
+				74DA22E64A3C2ADAD117925D /* RuntimeStoreTests.swift */,
+				AECD4FC7522045E10F86B2D0 /* TemporaryFixture.swift */,
+			);
+			path = AIShellCoreTests;
+			sourceTree = "<group>";
+		};
+		189C51769FD9BB681BDE2D76 = {
+			isa = PBXGroup;
+			children = (
+				0C19D1EF3A7B55B2A58D092B /* Sources */,
+				1288C1292306C16D855EC528 /* Tests */,
+				796B9A4E2FF78AEFC3486DFA /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1DCC45D59A407BFC408E7C61 /* AIShellMCP */ = {
+			isa = PBXGroup;
+			children = (
+				02341502229A669603CF38E5 /* AIShellMCPMain.swift */,
+				E1DC41C1D4E57364243292D7 /* JSONValue.swift */,
+				E88A5A7FA156279328604E8A /* MCPServer.swift */,
+				310BA94C6902392B15D63C82 /* MCPTypes.swift */,
+			);
+			path = AIShellMCP;
+			sourceTree = "<group>";
+		};
+		6AA5DB8427CB6AFD5493FB81 /* AIShellApp */ = {
+			isa = PBXGroup;
+			children = (
+				60B89A09C86CD3F1AEBAD9DC /* AIShellApp.swift */,
+				965C5D8F843B2CEE161C822B /* AppModel.swift */,
+				ED0671DEBD43FF8ADDC2C0BE /* ContentView.swift */,
+			);
+			path = AIShellApp;
+			sourceTree = "<group>";
+		};
+		6D74751F24E3CC6009A93654 /* AIShellCore */ = {
+			isa = PBXGroup;
+			children = (
+				F2B0D6399D8A5E707ADB42B3 /* AllowedPathResolver.swift */,
+				A9AD8F95AFB44E1BB7CF501C /* Models.swift */,
+				F669FC9E9B48E15985D0B9CB /* NativeApplicationService.swift */,
+				FA38A9A487C91B1B5008E460 /* NativeFileService.swift */,
+				4CF521207C85E79A8553BE7E /* NativeProcessService.swift */,
+				F09BD2EE36070BEC758EF574 /* RuntimeStore.swift */,
+			);
+			path = AIShellCore;
+			sourceTree = "<group>";
+		};
+		796B9A4E2FF78AEFC3486DFA /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				B82343B6490225159AB6BFB7 /* AIShell.app */,
+				38257124B69B9FACDF405DBD /* AIShellCore.framework */,
+				37CB846EB58D9DBC4FC5826C /* AIShellCoreTests.xctest */,
+				17E684105A1E4C92D6FEC8E0 /* AIShellMCP */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4E5F692639F732376840880D /* AIShellCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F9B1AD0A876288B86816E2DC /* Build configuration list for PBXNativeTarget "AIShellCore" */;
+			buildPhases = (
+				A0066A9676FEAF58F0E1534C /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AIShellCore;
+			packageProductDependencies = (
+			);
+			productName = AIShellCore;
+			productReference = 38257124B69B9FACDF405DBD /* AIShellCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		59CA2896241C505801350971 /* AIShellMCP */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C2DE93444BB971B842544663 /* Build configuration list for PBXNativeTarget "AIShellMCP" */;
+			buildPhases = (
+				3024AC32ACC116B288063D6D /* Sources */,
+				F293B606F416335912ACE3AA /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B307625D384652C04ABDE600 /* PBXTargetDependency */,
+			);
+			name = AIShellMCP;
+			packageProductDependencies = (
+			);
+			productName = AIShellMCP;
+			productReference = 17E684105A1E4C92D6FEC8E0 /* AIShellMCP */;
+			productType = "com.apple.product-type.tool";
+		};
+		7FA17DDF469DA51E95055A81 /* AIShell */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 892B2895996FF036A5361C6F /* Build configuration list for PBXNativeTarget "AIShell" */;
+			buildPhases = (
+				0D74B34BE34BAF63AF2AEC5D /* Sources */,
+				52798691836A7F4198644C74 /* Frameworks */,
+				A5DC765B9C9F43A8244E0259 /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				BA35251A6350EA31F8EC9A84 /* PBXTargetDependency */,
+			);
+			name = AIShell;
+			packageProductDependencies = (
+			);
+			productName = AIShell;
+			productReference = B82343B6490225159AB6BFB7 /* AIShell.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E986C688A207E4EF296D260D /* AIShellCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FC37409F1B4363E05CC0BCA2 /* Build configuration list for PBXNativeTarget "AIShellCoreTests" */;
+			buildPhases = (
+				9B4F4C01B50A3F15021AD50D /* Sources */,
+				5B6FEFEAB8EEB8610F661E12 /* Frameworks */,
+				BAEBDD6B99F42D8C57553EAA /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FB499DBBCF05FB66D2C7199F /* PBXTargetDependency */,
+			);
+			name = AIShellCoreTests;
+			packageProductDependencies = (
+			);
+			productName = AIShellCoreTests;
+			productReference = 37CB846EB58D9DBC4FC5826C /* AIShellCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		72D7717B14292F257C36B23D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = ABA7BA24C2E307362967747A /* Build configuration list for PBXProject "AIShell" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 189C51769FD9BB681BDE2D76;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 796B9A4E2FF78AEFC3486DFA /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				7FA17DDF469DA51E95055A81 /* AIShell */,
+				4E5F692639F732376840880D /* AIShellCore */,
+				E986C688A207E4EF296D260D /* AIShellCoreTests */,
+				59CA2896241C505801350971 /* AIShellMCP */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0D74B34BE34BAF63AF2AEC5D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BC51FEF7E491BE4008DCCF00 /* AIShellApp.swift in Sources */,
+				D8EE2595500CDAD5FCDB6221 /* AppModel.swift in Sources */,
+				BF1C7C57E552B6E237965C47 /* ContentView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3024AC32ACC116B288063D6D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE78BF62E357997DFA55DD9D /* AIShellMCPMain.swift in Sources */,
+				C25918C93D1A2980C547B90B /* JSONValue.swift in Sources */,
+				0F884EE64C7822500D040365 /* MCPServer.swift in Sources */,
+				57E17C63303375025B06AD92 /* MCPTypes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9B4F4C01B50A3F15021AD50D /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				426D5CFD80536AD6BDAE9D6B /* AllowedPathResolverTests.swift in Sources */,
+				9C7107FC94A7DA0930472AF5 /* NativeApplicationServiceTests.swift in Sources */,
+				0D5B669ECEB8AC8A9E4CEA68 /* NativeFileServiceTests.swift in Sources */,
+				47669FDDCD1AD09CB1A344B4 /* NativeProcessServiceTests.swift in Sources */,
+				9E5C15BB6051A16F4161B304 /* RuntimeStoreTests.swift in Sources */,
+				5FF795276275EE6188D91652 /* TemporaryFixture.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0066A9676FEAF58F0E1534C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8E12787A512829D7730CC73C /* AllowedPathResolver.swift in Sources */,
+				AB6DDC9D301AC0CF9EE206B7 /* Models.swift in Sources */,
+				073957B614C9F4C76748FB8F /* NativeApplicationService.swift in Sources */,
+				E1B4B8CC1611A8ADBDF42B96 /* NativeFileService.swift in Sources */,
+				D8B5D46D2C3B3ABD63D9BB77 /* NativeProcessService.swift in Sources */,
+				EFF92903F2358A33571A4098 /* RuntimeStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B307625D384652C04ABDE600 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4E5F692639F732376840880D /* AIShellCore */;
+			targetProxy = A23C0A822FBA0B6D2EE68555 /* PBXContainerItemProxy */;
+		};
+		BA35251A6350EA31F8EC9A84 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4E5F692639F732376840880D /* AIShellCore */;
+			targetProxy = 649F3EF9ED90651991A29C91 /* PBXContainerItemProxy */;
+		};
+		FB499DBBCF05FB66D2C7199F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4E5F692639F732376840880D /* AIShellCore */;
+			targetProxy = A4AD553498DDE87E3BFD197B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0273DB617949219717A553B8 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell.mcp;
+				PRODUCT_NAME = "aishell-mcp";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		029D39C2BEE8007061E17A18 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell.tests;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		17779DCE0B29F12A02F6FE15 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		31E3C34CF0D4CEBD2D6D4081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		4AFC2CBA7252C6293D17FC7A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = AIShell;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Kite";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell;
+				PRODUCT_NAME = AIShell;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		5B34AF8425B1645B26108534 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = AIShell;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Copyright © 2026 Kite";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell;
+				PRODUCT_NAME = AIShell;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		77A3E0815D7EE4C811FF4FDB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell.core;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		B7266BBDCF43AAAD4B0684E7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell.core;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		CE0FD84FB6853CDA7C696A9A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell.tests;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		EED547A484B6CB593E4AB1A4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = dev.kite.aishell.mcp;
+				PRODUCT_NAME = "aishell-mcp";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		892B2895996FF036A5361C6F /* Build configuration list for PBXNativeTarget "AIShell" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5B34AF8425B1645B26108534 /* Debug */,
+				4AFC2CBA7252C6293D17FC7A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ABA7BA24C2E307362967747A /* Build configuration list for PBXProject "AIShell" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				31E3C34CF0D4CEBD2D6D4081 /* Debug */,
+				17779DCE0B29F12A02F6FE15 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		C2DE93444BB971B842544663 /* Build configuration list for PBXNativeTarget "AIShellMCP" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0273DB617949219717A553B8 /* Debug */,
+				EED547A484B6CB593E4AB1A4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F9B1AD0A876288B86816E2DC /* Build configuration list for PBXNativeTarget "AIShellCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				77A3E0815D7EE4C811FF4FDB /* Debug */,
+				B7266BBDCF43AAAD4B0684E7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FC37409F1B4363E05CC0BCA2 /* Build configuration list for PBXNativeTarget "AIShellCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				029D39C2BEE8007061E17A18 /* Debug */,
+				CE0FD84FB6853CDA7C696A9A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 72D7717B14292F257C36B23D /* Project object */;
+}

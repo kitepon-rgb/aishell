@@ -1,0 +1,15 @@
+.DS_Store
+.build/
+build/
+dist/
+.backups/
+.npmrc
+*.tgz
+
+**/xcuserdata/
+
+DemoWorkspace/*
+!DemoWorkspace/README.txt
+
+# 取得した一次資料・PDFは再配布しない。要約と出典一覧だけを管理する。
+rag/raw/
