@@ -11,7 +11,7 @@ const packageMetadata = JSON.parse(
   await readFile(path.join(projectDirectory, "package.json"), "utf8")
 );
 
-assert.equal(packageMetadata.name, "aishell");
+assert.equal(packageMetadata.name, "@quolu/aishell");
 assert.equal(packageMetadata.version, "0.1.0");
 assert.deepEqual(packageMetadata.os, ["darwin"]);
 assert.deepEqual(packageMetadata.cpu, ["arm64"]);
