@@ -75,8 +75,7 @@ async function runOnce({ task, arm, repetition }) {
     const fixtureHash = await hashDirectory(workspace);
     const args = [
       "exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-      "--skip-git-repo-check", "--color", "never", "--sandbox", "workspace-write",
-      "--config", "approval_policy=\"never\"",
+      "--skip-git-repo-check", "--color", "never", "--dangerously-bypass-approvals-and-sandbox",
       "--config", `model_reasoning_effort=${tomlString(options.reasoningEffort)}`,
       "--cd", workspace
     ];
@@ -88,8 +87,8 @@ async function runOnce({ task, arm, repetition }) {
     const prompt = `${manifest.commonPrompt}\n\n${task.prompt}`;
     args.push(prompt);
     const configManifest = {
-      sandbox: "workspace-write",
-      approvalPolicy: "never",
+      sandbox: "danger-full-access",
+      approvalPolicy: "bypass",
       timeoutMilliseconds: options.timeoutMilliseconds,
       ephemeral: true,
       ignoreUserConfig: true,
@@ -112,6 +111,7 @@ async function runOnce({ task, arm, repetition }) {
     });
     const requiredTools = arm === "aishell" ? (task.requiredAIShellTools ?? []) : [];
     const toolOracleSuccess = requiredTools.every((name) => completedAIShellTools.includes(name));
+    const agentSuccess = execution.exitCode === 0 && !execution.timedOut;
     const record = {
       schemaVersion: "aishell.benchmark-run.v1",
       runId,
@@ -141,7 +141,7 @@ async function runOnce({ task, arm, repetition }) {
       },
       usage,
       oracle: {
-        success: oracleResult.status === 0 && toolOracleSuccess,
+        success: oracleResult.status === 0 && toolOracleSuccess && agentSuccess,
         exitCode: oracleResult.status,
         requiredTools,
         completedAIShellTools,
@@ -249,7 +249,13 @@ function listCompletedAIShellTools(events) {
     if (Array.isArray(value)) return value.forEach(visit);
     if (!value || typeof value !== "object") return;
     const name = value.name ?? value.tool_name ?? value.tool;
-    if (value.status === "completed" && names.has(name)) completed.push(name);
+    const result = value.result;
+    const toolSucceeded = value.status === "completed"
+      && value.error == null
+      && result != null
+      && result.isError !== true
+      && result.is_error !== true;
+    if (toolSucceeded && names.has(name)) completed.push(name);
     Object.values(value).forEach(visit);
   };
   events.forEach(visit);

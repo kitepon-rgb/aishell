@@ -20,7 +20,7 @@ The tools share one macOS state runtime owned below the model:
 8. The default profile contains exactly the five high-density tools. `AISHELL_TOOL_PROFILE=full` exposes the five plus the 20 legacy primitives.
 9. Executable names are resolved by AIShell through `PATH` before direct launch. Shell executables, relative paths containing `/`, and command strings remain rejected.
 10. TextContent is a concise model-facing projection. `structuredContent` remains an object-shaped metadata projection and does not duplicate large file or artifact contents.
-11. `run_check` advertises the intended local focused-check contract as non-destructive and closed-world so approval-free development runs remain usable. These MCP hints are not a security boundary: a caller-selected worker can write files, start descendants, or access the network.
+11. `run_check` truthfully advertises destructive and open-world capability because a caller-selected worker can write files, start descendants, or access the network. Formal benchmarks use Codex bypass mode only inside disposable deterministic fixtures; normal hosts may require approval.
 
 ## Rejected alternatives
 

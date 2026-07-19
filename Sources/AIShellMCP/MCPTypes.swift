@@ -101,7 +101,7 @@ enum ToolCatalog {
                 "timeout_seconds": number("timeout秒。0.1〜3600、既定120", minimum: 0.1, maximum: 3600),
                 "retention_seconds": number("完全logを保持する秒数。最小1、既定86400", minimum: 1)
             ],
-            required: ["executable"], destructive: false, idempotent: false, openWorld: false,
+            required: ["executable"], destructive: true, idempotent: false, openWorld: true,
             outputSchema: objectOutput(
                 schemaVersion: "aishell.run-check.v1",
                 required: ["schemaVersion", "requestID", "status", "summary", "exitCode", "stdoutArtifact", "stderrArtifact"],

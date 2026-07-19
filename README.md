@@ -64,7 +64,7 @@ codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
 
 full profileの`runtime_status`は設定root、自動認識したGit worktree、実効root、相対パスの基準、停止状態、次の操作を返す。停止中でも`runtime_open_manager`で管理アプリを前面化できる。許可root変更と再開は管理画面で人が行い、停止中の通常操作は引き続き拒否される。
 
-`run_check`のMCP annotationはローカルfocused checkという利用意図を表すhintであり、安全強制ではない。指定workerはfile更新・子process・network accessを行い得る。0.3のstdio serverは1 requestずつ処理し、timeout時のprocess tree終了は行うが、MCP cancellationと並列pollingは未実装である。
+`run_check`は指定workerがfile更新・子process・network accessを行い得るため、MCPへdestructive/open-world capabilityとして掲示する。host設定によっては実行承認が必要になる。0.3のstdio serverは1 requestずつ処理し、timeout時のprocess tree終了は行うが、MCP cancellationと並列pollingは未実装である。
 
 登録確認と解除は次のとおり。
 

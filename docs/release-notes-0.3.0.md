@@ -26,6 +26,6 @@ The final same-binary, same-manifest three-task sentinel is pending. Earlier exp
 
 - Initial full workspace entries are a bounded preview; `omittedEntries` reports rows outside that preview. Delta reads are cursor-paged.
 - The stdio server handles one request at a time. MCP cancellation and concurrent run polling are not implemented in 0.3.
-- `run_check` annotations describe its focused-check intent, not a security boundary. A selected worker may have filesystem or network side effects.
+- `run_check` is advertised as destructive/open-world because a selected worker may have filesystem or network side effects. Normal hosts may require approval.
 
 See [M1 benchmark evidence](evidence/aishell-efficiency-m1-benchmark.md) for conditions and retained decisions.

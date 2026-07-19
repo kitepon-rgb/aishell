@@ -18,8 +18,8 @@ final class MCPTypesTests: XCTestCase {
             $0.outputSchema?.objectValue?["type"] == .string("object")
                 && $0.outputSchema?.objectValue?["oneOf"]?.arrayValue?.count == 2
         })
-        XCTAssertEqual(tools.first { $0.name == "run_check" }?.annotations.destructiveHint, false)
-        XCTAssertEqual(tools.first { $0.name == "run_check" }?.annotations.openWorldHint, false)
+        XCTAssertEqual(tools.first { $0.name == "run_check" }?.annotations.destructiveHint, true)
+        XCTAssertEqual(tools.first { $0.name == "run_check" }?.annotations.openWorldHint, true)
         let snapshot = tools.first { $0.name == "workspace_snapshot" }
         let entryLimit = snapshot?.inputSchema.objectValue?["properties"]?.objectValue?["entry_limit"]?.objectValue
         XCTAssertEqual(entryLimit?["minimum"], .number(1))

@@ -4,7 +4,7 @@
 - Date: 2026-07-19
 - Codex: `codex-cli 0.144.6`
 - Model: `gpt-5.6-sol`, reasoning `medium`
-- Isolation: `--ephemeral --ignore-user-config --ignore-rules`, `approval_policy="never"`, `workspace-write`, per-run state directory
+- Isolation: `--ephemeral --ignore-user-config --ignore-rules`, approval/sandbox bypass inside disposable deterministic fixtures, per-run state directory
 - Primary formula: total tokens across all attempts / deterministic oracle successes
 
 ## Valid capability evidence
