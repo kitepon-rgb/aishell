@@ -28,15 +28,32 @@ public actor ChangeSetQuotaLedger {
     }
 
     public struct PreparedAbandonmentAttestation: Equatable, Sendable {
+        public struct CanonicalMaterializedBinding: Equatable, Sendable {
+            public let materialID: String
+            public let finalURL: URL
+            public let device: UInt64
+            public let inode: UInt64
+            public let bytes: Int
+            public let sha256: String
+
+            public init(materialID: String, finalURL: URL, device: UInt64, inode: UInt64, bytes: Int, sha256: String) {
+                self.materialID = materialID; self.finalURL = finalURL; self.device = device
+                self.inode = inode; self.bytes = bytes; self.sha256 = sha256
+            }
+        }
+
         public let digest: String
         public let owner: OwnerBinding
         public let admissionReferenced: Bool
         public let transactionDirectoryReferenced: Bool
         public let registryReferenced: Bool
+        public let canonicalMaterialized: CanonicalMaterializedBinding?
         public init(digest: String, owner: OwnerBinding, admissionReferenced: Bool,
-                    transactionDirectoryReferenced: Bool, registryReferenced: Bool) {
+                    transactionDirectoryReferenced: Bool, registryReferenced: Bool,
+                    canonicalMaterialized: CanonicalMaterializedBinding? = nil) {
             self.digest = digest; self.owner = owner; self.admissionReferenced = admissionReferenced
             self.transactionDirectoryReferenced = transactionDirectoryReferenced; self.registryReferenced = registryReferenced
+            self.canonicalMaterialized = canonicalMaterialized
         }
     }
 
@@ -249,6 +266,7 @@ public actor ChangeSetQuotaLedger {
         var leaseExpiresEpochMillis: String = String(repeating: "0", count: 20)
         var abandonmentState: Int = 0
         var abandonmentAttestationDigest: String = String(repeating: "0", count: 64)
+        var abandonmentCanonicalMaterialID: String = String(repeating: " ", count: 128)
     }
 
     private struct MaterialIdentity {
@@ -375,7 +393,8 @@ public actor ChangeSetQuotaLedger {
                 ownerProcessStartIdentity: Self.fixedIdentifier(ownerBinding.processStartIdentity),
                 ownerInstanceNonce: Self.fixedIdentifier(ownerBinding.instanceNonce),
                 leaseExpiresEpochMillis: Self.fixed(Self.epochMillis(ownerBinding.leaseExpiresAt)),
-                abandonmentState: 0, abandonmentAttestationDigest: Self.zeroDigest
+                abandonmentState: 0, abandonmentAttestationDigest: Self.zeroDigest,
+                abandonmentCanonicalMaterialID: Self.emptyIdentifier
             )
             let encodedCount = try Self.encode(candidate).count
             if encodedCount == ledgerBytes { break }
@@ -590,6 +609,7 @@ public actor ChangeSetQuotaLedger {
         var snapshot = try load()
         if snapshot.abandonmentState == 2 {
             guard snapshot.abandonmentAttestationDigest == attestation.digest else { throw LedgerError.corruptLedger("abandonment attestation changed") }
+            try Self.validatePersistedCanonicalAttestation(snapshot, attestation: attestation)
             return Self.abandonmentReceipt(snapshot)
         }
         if snapshot.abandonmentState == 0 {
@@ -601,16 +621,19 @@ public actor ChangeSetQuotaLedger {
             }
             let leaseExpiry = try Self.parseUInt(snapshot.leaseExpiresEpochMillis)
             guard Self.epochMillis(now) >= leaseExpiry + 600_000 else { throw LedgerError.leaseStillLive }
-            if let forbidden = snapshot.materials.first(where: { ![0, 1, 2].contains($0.status) }) {
-                throw LedgerError.abandonmentForbiddenState(forbidden.id)
-            }
-            snapshot = Self.copySnapshot(snapshot, abandonmentState: 1, abandonmentAttestationDigest: attestation.digest)
+            let canonicalID = try Self.validateAbandonmentMaterials(snapshot, attestation: attestation)
+            snapshot = Self.copySnapshot(snapshot, abandonmentState: 1,
+                                         abandonmentAttestationDigest: attestation.digest,
+                                         abandonmentCanonicalMaterialID: canonicalID.map(Self.fixedIdentifier) ?? Self.emptyIdentifier)
             try persist(snapshot)
             if lifecycleFailurePoint == .abandonmentIntentPersisted {
                 throw SimulatedLifecycleCrash(point: .abandonmentIntentPersisted)
             }
-        } else if snapshot.abandonmentAttestationDigest != attestation.digest {
-            throw LedgerError.corruptLedger("abandonment intent digest mismatch")
+        } else {
+            guard snapshot.abandonmentAttestationDigest == attestation.digest else {
+                throw LedgerError.corruptLedger("abandonment intent digest mismatch")
+            }
+            try Self.validatePersistedCanonicalAttestation(snapshot, attestation: attestation)
         }
         snapshot = try completeAbandonment(snapshot)
         return Self.abandonmentReceipt(snapshot)
@@ -751,8 +774,27 @@ public actor ChangeSetQuotaLedger {
     private func completeAbandonment(_ initial: Snapshot) throws -> Snapshot {
         var snapshot = initial
         guard snapshot.abandonmentState == 1 else { return snapshot }
+        let canonicalID = snapshot.abandonmentCanonicalMaterialID.trimmingCharacters(in: .whitespaces)
         for material in snapshot.materials {
-            guard [0, 1, 2, 6].contains(material.status) else { throw LedgerError.abandonmentForbiddenState(material.id) }
+            if material.status == 4 { continue }
+            if material.status == 3 {
+                guard material.kind == .canonicalEnvelope, material.id == canonicalID else {
+                    throw LedgerError.abandonmentForbiddenState(material.id)
+                }
+                let final = try Self.plannedFinalURL(material)
+                var info = stat()
+                if lstat(final.path, &info) == 0 {
+                    let identity = try Self.inspectMaterialized(final, expectedDevice: try Self.parseUInt(material.finalDevice),
+                                                                expectedBytes: try Self.parse(material.finalBytes),
+                                                                expectedSHA: material.finalSHA256)
+                    try Self.validateStoredIdentity(material, identity: identity)
+                    try Self.durableUnlink(final)
+                } else if errno != ENOENT {
+                    throw LedgerError.materializationIncomplete(final.path)
+                }
+            } else if ![0, 1, 2, 6].contains(material.status) {
+                throw LedgerError.abandonmentForbiddenState(material.id)
+            }
             let extent = URL(fileURLWithPath: material.extentFilePath)
             if FileManager.default.fileExists(atPath: extent.path) { try Self.durableUnlink(extent) }
         }
@@ -810,7 +852,8 @@ public actor ChangeSetQuotaLedger {
         volumes: [VolumeRecord]? = nil,
         leaseExpiresEpochMillis: String? = nil,
         abandonmentState: Int? = nil,
-        abandonmentAttestationDigest: String? = nil
+        abandonmentAttestationDigest: String? = nil,
+        abandonmentCanonicalMaterialID: String? = nil
     ) -> Snapshot {
         .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
               ledgerBytes: ledgerBytes ?? snapshot.ledgerBytes, materials: materials ?? snapshot.materials,
@@ -818,7 +861,8 @@ public actor ChangeSetQuotaLedger {
               ownerProcessStartIdentity: snapshot.ownerProcessStartIdentity, ownerInstanceNonce: snapshot.ownerInstanceNonce,
               leaseExpiresEpochMillis: leaseExpiresEpochMillis ?? snapshot.leaseExpiresEpochMillis,
               abandonmentState: abandonmentState ?? snapshot.abandonmentState,
-              abandonmentAttestationDigest: abandonmentAttestationDigest ?? snapshot.abandonmentAttestationDigest)
+              abandonmentAttestationDigest: abandonmentAttestationDigest ?? snapshot.abandonmentAttestationDigest,
+              abandonmentCanonicalMaterialID: abandonmentCanonicalMaterialID ?? snapshot.abandonmentCanonicalMaterialID)
     }
 
     private static func adopting(_ snapshot: Snapshot, materialIndex: Int, pathHex: String, pathBytes: String) -> Snapshot {
@@ -908,7 +952,8 @@ public actor ChangeSetQuotaLedger {
 
     private static func markingAbandoned(_ snapshot: Snapshot) -> Snapshot {
         let materials = snapshot.materials.map { material in
-            MaterialRecord(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+            if material.status == 4 { return material }
+            return MaterialRecord(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
                            bytes: material.bytes, actualBytes: material.actualBytes,
                            expectedSHA256: material.expectedSHA256, sha256: material.sha256,
                            volume: material.volume, extentFilePath: material.extentFilePath,
@@ -956,7 +1001,8 @@ public actor ChangeSetQuotaLedger {
     }
 
     private static func abandonmentReceipt(_ snapshot: Snapshot) -> AbandonmentReceipt {
-        .init(attestationDigest: snapshot.abandonmentAttestationDigest, abandonedMaterialIDs: Set(snapshot.materials.map(\.id)))
+        .init(attestationDigest: snapshot.abandonmentAttestationDigest,
+              abandonedMaterialIDs: Set(snapshot.materials.filter { $0.status == 6 }.map(\.id)))
     }
 
     private static func adoptedReserve(_ material: MaterialRecord) -> AdoptedReserve {
@@ -1223,6 +1269,69 @@ public actor ChangeSetQuotaLedger {
         !value.isEmpty && value.utf8.count <= 128 && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) }
     }
     private static func validDigest(_ value: String) -> Bool { value.count == 64 && value.allSatisfy(\.isHexDigit) }
+    private static func validateAbandonmentMaterials(
+        _ snapshot: Snapshot,
+        attestation: PreparedAbandonmentAttestation
+    ) throws -> String? {
+        if let forbidden = snapshot.materials.first(where: { ![0, 1, 2, 3, 4].contains($0.status) }) {
+            throw LedgerError.abandonmentForbiddenState(forbidden.id)
+        }
+        let materialized = snapshot.materials.filter { $0.status == 3 }
+        guard !materialized.isEmpty else {
+            guard attestation.canonicalMaterialized == nil else {
+                throw LedgerError.abandonmentForbiddenState(attestation.canonicalMaterialized!.materialID)
+            }
+            return nil
+        }
+        guard materialized.count == 1 else { throw LedgerError.abandonmentForbiddenState(materialized[1].id) }
+        let material = materialized[0]
+        guard material.kind == .canonicalEnvelope, let binding = attestation.canonicalMaterialized,
+              binding.materialID == material.id, validIdentifier(binding.materialID), binding.bytes >= 0,
+              validDigest(binding.sha256) else { throw LedgerError.abandonmentForbiddenState(material.id) }
+        try validateCanonicalBinding(material, binding: binding)
+        let final = try plannedFinalURL(material)
+        let identity = try inspectMaterialized(final, expectedDevice: binding.device,
+                                               expectedBytes: binding.bytes, expectedSHA: binding.sha256)
+        try validateStoredIdentity(material, identity: identity)
+        guard identity.inode == binding.inode else { throw LedgerError.materializationIncomplete(material.id) }
+        return material.id
+    }
+
+    private static func validatePersistedCanonicalAttestation(
+        _ snapshot: Snapshot,
+        attestation: PreparedAbandonmentAttestation
+    ) throws {
+        let canonicalID = snapshot.abandonmentCanonicalMaterialID.trimmingCharacters(in: .whitespaces)
+        guard !canonicalID.isEmpty else {
+            guard attestation.canonicalMaterialized == nil else {
+                throw LedgerError.corruptLedger("abandonment canonical binding changed")
+            }
+            return
+        }
+        guard let binding = attestation.canonicalMaterialized, binding.materialID == canonicalID,
+              let material = snapshot.materials.first(where: { $0.id == canonicalID }) else {
+            throw LedgerError.corruptLedger("abandonment canonical binding changed")
+        }
+        try validateCanonicalBinding(material, binding: binding)
+    }
+
+    private static func validateCanonicalBinding(
+        _ material: MaterialRecord,
+        binding: PreparedAbandonmentAttestation.CanonicalMaterializedBinding
+    ) throws {
+        guard material.kind == .canonicalEnvelope,
+              try parseUInt(material.finalDevice) == binding.device,
+              try parseUInt(material.finalInode) == binding.inode,
+              try parse(material.finalBytes) == binding.bytes,
+              material.finalSHA256 == binding.sha256 else {
+            throw LedgerError.materializationIncomplete(material.id)
+        }
+        let attestedFinal = try canonicalPlannedFinal(binding.finalURL)
+        guard try plannedFinalURL(material).path == attestedFinal.path else {
+            throw LedgerError.finalPathMismatch(material.id)
+        }
+    }
+
     private static func requireOwner(_ snapshot: Snapshot, owner: OwnerBinding) throws {
         guard try decodeIdentifier(snapshot.ownerBootID) == owner.bootID,
               try decodeIdentifier(snapshot.ownerProcessStartIdentity) == owner.processStartIdentity,

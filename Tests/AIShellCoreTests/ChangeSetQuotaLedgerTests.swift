@@ -236,6 +236,147 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
             .contains { $0.pathExtension == "extent" && $0.lastPathComponent.contains("abandon") })
     }
 
+    func testAbandonPreparedAllowsOnlyAttestedCanonicalMaterializedFinalAndResumesIntent() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let now = Date()
+        let owner = ChangeSetQuotaLedger.OwnerBinding(
+            bootID: "canonical-boot", processStartIdentity: "canonical-process", instanceNonce: "canonical-instance",
+            leaseExpiresAt: now.addingTimeInterval(-601)
+        )
+        let final = fixture.directory.appendingPathComponent("canonical-final")
+        let globalFinal = fixture.directory.appendingPathComponent("global-state-final")
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "canonical-abandon",
+                                              ownerBinding: owner, lifecycleFailurePoint: .abandonmentIntentPersisted)
+        _ = try await ledger.prepareCapacity([
+            .init(id: "canonical", idempotencyKey: "canonical-key", kind: .canonicalEnvelope,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+            .init(id: "stage", idempotencyKey: "stage-key", kind: .afterStage,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+            .init(id: "global-state", idempotencyKey: "global-key", kind: .stateSnapshot,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        let receipt = try await Self.materialize(
+            ledger, materialID: "canonical", key: "canonical-key", data: Data("canonical-body".utf8), final: final
+        )
+        _ = try await Self.materialize(
+            ledger, materialID: "global-state", key: "global-key", data: Data("global-state".utf8), final: globalFinal
+        )
+        try await ledger.releaseMaterial(materialID: "global-state", idempotencyKey: "global-key")
+        let attestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "d", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false,
+            canonicalMaterialized: Self.canonicalBinding(receipt)
+        )
+
+        await XCTAssertThrowsErrorAsync(try await ledger.abandonPrepared(attestation: attestation, now: now)) {
+            XCTAssertEqual(($0 as? ChangeSetQuotaLedger.SimulatedLifecycleCrash)?.point, .abandonmentIntentPersisted)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: final.path))
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "canonical-abandon", ownerBinding: owner)
+        _ = try await restarted.reconcile()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: final.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: globalFinal.path))
+        let replay = try await restarted.abandonPrepared(attestation: attestation, now: now)
+        XCTAssertEqual(replay.abandonedMaterialIDs, ["canonical", "stage"])
+        let abandonedView = try await restarted.currentView()
+        XCTAssertEqual(abandonedView.materialStates["canonical"], .abandoned)
+        XCTAssertEqual(abandonedView.materialStates["global-state"], .released)
+    }
+
+    func testCanonicalMaterializedAbandonmentRejectsOtherKindAndIdentityPathTampering() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let now = Date()
+        let owner = ChangeSetQuotaLedger.OwnerBinding(
+            bootID: "reject-boot", processStartIdentity: "reject-process", instanceNonce: "reject-instance",
+            leaseExpiresAt: now.addingTimeInterval(-601)
+        )
+
+        let foreignFinal = fixture.directory.appendingPathComponent("foreign-final")
+        let foreignLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "foreign-identity", ownerBinding: owner)
+        _ = try await foreignLedger.prepareCapacity([
+            .init(id: "canonical", idempotencyKey: "canonical-key", kind: .canonicalEnvelope,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        let foreignReceipt = try await Self.materialize(
+            foreignLedger, materialID: "canonical", key: "canonical-key", data: Data("foreign-body".utf8), final: foreignFinal
+        )
+        let foreignBinding = ChangeSetQuotaLedger.PreparedAbandonmentAttestation.CanonicalMaterializedBinding(
+            materialID: foreignReceipt.materialID, finalURL: foreignReceipt.finalURL, device: foreignReceipt.device,
+            inode: foreignReceipt.inode + 1, bytes: foreignReceipt.bytes, sha256: foreignReceipt.sha256
+        )
+        let foreignAttestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "e", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false, canonicalMaterialized: foreignBinding
+        )
+        await XCTAssertThrowsErrorAsync(try await foreignLedger.abandonPrepared(attestation: foreignAttestation, now: now)) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .materializationIncomplete("canonical"))
+        }
+
+        let tamperFinal = fixture.directory.appendingPathComponent("tamper-final")
+        let tamperLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "content-tamper", ownerBinding: owner)
+        _ = try await tamperLedger.prepareCapacity([
+            .init(id: "canonical", idempotencyKey: "canonical-key", kind: .canonicalEnvelope,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        let tamperData = Data("tamper-body".utf8)
+        let tamperReceipt = try await Self.materialize(
+            tamperLedger, materialID: "canonical", key: "canonical-key", data: tamperData, final: tamperFinal
+        )
+        try Data(repeating: 0x78, count: tamperData.count).write(to: tamperFinal)
+        let tamperAttestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "f", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false,
+            canonicalMaterialized: Self.canonicalBinding(tamperReceipt)
+        )
+        await XCTAssertThrowsErrorAsync(try await tamperLedger.abandonPrepared(attestation: tamperAttestation, now: now)) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .contentMismatch(tamperFinal.path))
+        }
+
+        let symlinkFinal = fixture.directory.appendingPathComponent("symlink-final")
+        let symlinkLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "symlink-tamper", ownerBinding: owner)
+        _ = try await symlinkLedger.prepareCapacity([
+            .init(id: "canonical", idempotencyKey: "canonical-key", kind: .canonicalEnvelope,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        let symlinkReceipt = try await Self.materialize(
+            symlinkLedger, materialID: "canonical", key: "canonical-key", data: Data("symlink-body".utf8), final: symlinkFinal
+        )
+        try FileManager.default.removeItem(at: symlinkFinal)
+        let symlinkTarget = fixture.directory.appendingPathComponent("symlink-target")
+        try Data("symlink-body".utf8).write(to: symlinkTarget)
+        XCTAssertEqual(symlink(symlinkTarget.path, symlinkFinal.path), 0)
+        let symlinkAttestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "1", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false,
+            canonicalMaterialized: Self.canonicalBinding(symlinkReceipt)
+        )
+        await XCTAssertThrowsErrorAsync(try await symlinkLedger.abandonPrepared(attestation: symlinkAttestation, now: now)) { error in
+            guard case .materializationIncomplete = error as? ChangeSetQuotaLedger.LedgerError else {
+                return XCTFail("symlinkをfail-closedしませんでした: \(error)")
+            }
+        }
+
+        let otherFinal = fixture.directory.appendingPathComponent("other-kind-final")
+        let otherLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "other-kind", ownerBinding: owner)
+        _ = try await otherLedger.prepareCapacity([
+            .init(id: "evidence", idempotencyKey: "evidence-key", kind: .evidenceData,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        let otherReceipt = try await Self.materialize(
+            otherLedger, materialID: "evidence", key: "evidence-key", data: Data("evidence-body".utf8), final: otherFinal
+        )
+        let otherAttestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "2", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false,
+            canonicalMaterialized: Self.canonicalBinding(otherReceipt)
+        )
+        await XCTAssertThrowsErrorAsync(try await otherLedger.abandonPrepared(attestation: otherAttestation, now: now)) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .abandonmentForbiddenState("evidence"))
+        }
+    }
+
     func testRecycleReleasedRequiresRetentionAndGenerationCASAndRejectsOldKey() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
@@ -390,6 +531,27 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
     private static func write(_ data: Data, toExtent url: URL) throws {
         let handle = try FileHandle(forWritingTo: url)
         try handle.write(contentsOf: data); try handle.synchronize(); try handle.close()
+    }
+
+    private static func materialize(
+        _ ledger: ChangeSetQuotaLedger,
+        materialID: String,
+        key: String,
+        data: Data,
+        final: URL
+    ) async throws -> ChangeSetQuotaLedger.MaterializationReceipt {
+        let reserve = try await ledger.adoptReserve(materialID: materialID, idempotencyKey: key, finalURL: final)
+        _ = try await ledger.authorizeActual(materialID: materialID, idempotencyKey: key, data: data)
+        try write(data, toExtent: reserve.extentURL)
+        try FileManager.default.moveItem(at: reserve.extentURL, to: final)
+        return try await ledger.commitMaterialization(materialID: materialID, idempotencyKey: key, finalURL: final)
+    }
+
+    private static func canonicalBinding(
+        _ receipt: ChangeSetQuotaLedger.MaterializationReceipt
+    ) -> ChangeSetQuotaLedger.PreparedAbandonmentAttestation.CanonicalMaterializedBinding {
+        .init(materialID: receipt.materialID, finalURL: receipt.finalURL, device: receipt.device,
+              inode: receipt.inode, bytes: receipt.bytes, sha256: receipt.sha256)
     }
 
 }
