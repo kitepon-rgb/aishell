@@ -1,21 +1,35 @@
 import AIShellCore
+import CryptoKit
 import Foundation
 
 final class MCPServer {
     private let store: RuntimeStore
     private let toolProfile: String
+    private let capabilitySet: String?
     private lazy var files = NativeFileService(store: store)
     private lazy var processes = NativeProcessService(store: store)
     private lazy var development = DevelopmentRuntimeService(runtimeStore: store)
+    private var changeSetServices: [String: ApplyChangeSetService] = [:]
 
-    init(runtimeStore: RuntimeStore = RuntimeStore(), toolProfile: String? = nil) {
+    init(
+        runtimeStore: RuntimeStore = RuntimeStore(),
+        toolProfile: String? = nil,
+        capabilitySet: String? = ProcessInfo.processInfo.environment["AISHELL_CAPABILITY_SET"]
+    ) {
         store = runtimeStore
         self.toolProfile = toolProfile
             ?? ProcessInfo.processInfo.environment["AISHELL_TOOL_PROFILE"]
             ?? "development"
+        self.capabilitySet = capabilitySet
     }
 
     func run() async {
+        do {
+            try validateStartup()
+        } catch {
+            try? write(.failure(id: .null, code: -32000, message: error.localizedDescription))
+            return
+        }
         while let line = readLine() {
             guard let data = line.data(using: .utf8) else { continue }
 
@@ -66,7 +80,9 @@ final class MCPServer {
         case "tools/list":
             do {
                 return .success(id: id, result: .object([
-                    "tools": try .from(ToolCatalog.listedTools(profile: toolProfile))
+                    "tools": try .from(ToolCatalog.listedTools(
+                        profile: toolProfile, capabilitySet: capabilitySet
+                    ))
                 ]))
             } catch {
                 return .failure(id: id, code: -32603, message: error.localizedDescription)
@@ -85,7 +101,13 @@ final class MCPServer {
               let name = params["name"]?.stringValue else {
             return .failure(id: id, code: -32602, message: "tools/callにはnameが必要です。")
         }
-        guard ToolCatalog.listedTools(profile: toolProfile).contains(where: { $0.name == name }) else {
+        let listedTools: [MCPTool]
+        do {
+            listedTools = try ToolCatalog.listedTools(profile: toolProfile, capabilitySet: capabilitySet)
+        } catch {
+            return .failure(id: id, code: -32000, message: error.localizedDescription)
+        }
+        guard listedTools.contains(where: { $0.name == name }) else {
             return .failure(id: id, code: -32602, message: "未定義のtoolです: \(name)")
         }
         let arguments: [String: JSONValue]
@@ -119,14 +141,15 @@ final class MCPServer {
                 ])]),
                 "structuredContent": .object([
                     "schemaVersion": .string("aishell.error.v1"),
-                    "error": .object([
-                        "code": .string(stableError.code),
-                        "message": .string(stableError.message)
-                    ])
+                    "error": structuredError(error, stable: stableError)
                 ]),
                 "isError": .bool(true)
             ]))
         }
+    }
+
+    func validateStartup() throws {
+        _ = try ToolCatalog.listedTools(profile: toolProfile, capabilitySet: capabilitySet)
     }
 
     private func invoke(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
@@ -238,6 +261,14 @@ final class MCPServer {
             return try await .from(development.searchContextV2(
                 request: try searchContextRequest(arguments)
             ))
+        case "apply_change_set":
+            try validateKeys(arguments, allowed: [
+                "client_id", "client_epoch", "request_sequence", "cursor", "changes",
+                "diff_byte_budget", "retention_seconds"
+            ])
+            let request = try applyChangeSetRequest(arguments)
+            let service = try await changeSetService(rootPath: request.cursor.root)
+            return applyChangeSetJSON(try await service.apply(request))
         case "runtime_status":
             return try await runtimeStatus()
         case "runtime_open_manager":
@@ -548,6 +579,240 @@ final class MCPServer {
         )
     }
 
+    private func applyChangeSetRequest(_ arguments: [String: JSONValue]) throws -> ApplyChangeSetRequest {
+        let cursorObject = try requiredObject("cursor", in: arguments)
+        try validateKeys(cursorObject, allowed: ["root", "generation", "sequence"])
+        let cursor = ApplyChangeSetCursor(
+            root: try requiredString("root", in: cursorObject),
+            generation: try requiredString("generation", in: cursorObject),
+            sequence: UInt64(try boundedInt(
+                "sequence", in: cursorObject, default: -1, minimum: 0, maximum: Int.max
+            ))
+        )
+        guard let values = arguments["changes"]?.arrayValue, (1...128).contains(values.count) else {
+            throw AIShellError.invalidArgument("changesは1〜128件の配列である必要があります。")
+        }
+        var identifiers = Set<String>()
+        let changes = try values.map { value -> ApplyChangeSetChange in
+            guard let change = value.objectValue else {
+                throw AIShellError.invalidArgument("changesの各要素はobjectである必要があります。")
+            }
+            try validateKeys(change, allowed: [
+                "change_id", "operation", "path", "source", "destination", "expected",
+                "source_expected", "destination_expected", "content"
+            ])
+            let identifier = try requiredString("change_id", in: change)
+            guard identifiers.insert(identifier).inserted else {
+                throw AIShellError.invalidArgument("change_idはrequest内で一意である必要があります。")
+            }
+            switch try requiredString("operation", in: change) {
+            case "create":
+                try requireExactKeys(change, required: ["change_id", "operation", "path", "expected", "content"])
+                return .create(
+                    id: identifier,
+                    path: try requiredString("path", in: change),
+                    expected: try expectedState("expected", in: change),
+                    content: try changeSetContent("content", in: change)
+                )
+            case "write":
+                try requireExactKeys(change, required: ["change_id", "operation", "path", "expected", "content"])
+                return .write(
+                    id: identifier,
+                    path: try requiredString("path", in: change),
+                    expected: try expectedState("expected", in: change),
+                    content: try changeSetContent("content", in: change)
+                )
+            case "delete":
+                try requireExactKeys(change, required: ["change_id", "operation", "path", "expected"])
+                return .delete(
+                    id: identifier,
+                    path: try requiredString("path", in: change),
+                    expected: try expectedState("expected", in: change)
+                )
+            case "rename":
+                try requireExactKeys(change, required: [
+                    "change_id", "operation", "source", "source_expected", "destination", "destination_expected"
+                ])
+                return .rename(
+                    id: identifier,
+                    source: try requiredString("source", in: change),
+                    sourceExpected: try expectedState("source_expected", in: change),
+                    destination: try requiredString("destination", in: change),
+                    destinationExpected: try expectedState("destination_expected", in: change)
+                )
+            default:
+                throw AIShellError.invalidArgument("operationはcreate、write、delete、renameのいずれかです。")
+            }
+        }
+        return ApplyChangeSetRequest(
+            clientID: try requiredString("client_id", in: arguments),
+            clientEpoch: try boundedInt(
+                "client_epoch", in: arguments, default: 0, minimum: 1, maximum: 9_007_199_254_740_991
+            ),
+            requestSequence: try boundedInt(
+                "request_sequence", in: arguments, default: 0, minimum: 1, maximum: 9_007_199_254_740_991
+            ),
+            cursor: cursor,
+            changes: changes,
+            diffByteBudget: try boundedInt(
+                "diff_byte_budget", in: arguments, default: 65_536, minimum: 1, maximum: 1_048_576
+            ),
+            retentionSeconds: try boundedInt(
+                "retention_seconds", in: arguments, default: 86_400, minimum: 1, maximum: 604_800
+            )
+        )
+    }
+
+    private func requiredObject(_ key: String, in object: [String: JSONValue]) throws -> [String: JSONValue] {
+        guard let value = object[key]?.objectValue else {
+            throw AIShellError.invalidArgument("\(key)にはobjectが必要です。")
+        }
+        return value
+    }
+
+    private func requireExactKeys(_ object: [String: JSONValue], required: Set<String>) throws {
+        guard Set(object.keys) == required else {
+            throw AIShellError.invalidArgument("operation固有fieldが不足または余分です。")
+        }
+    }
+
+    private func expectedState(_ key: String, in object: [String: JSONValue]) throws -> ApplyChangeSetExpected {
+        let expected = try requiredObject(key, in: object)
+        try validateKeys(expected, allowed: ["state", "sha256"])
+        switch try requiredString("state", in: expected) {
+        case "absent":
+            guard Set(expected.keys) == ["state"] else {
+                throw AIShellError.invalidArgument("state=absentへsha256は指定できません。")
+            }
+            return .absent
+        case "file":
+            guard Set(expected.keys) == ["state", "sha256"] else {
+                throw AIShellError.invalidArgument("state=fileにはsha256が必要です。")
+            }
+            let sha256 = try requiredString("sha256", in: expected)
+            guard sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else {
+                throw AIShellError.invalidArgument("sha256は64桁のlowercase hexadecimalである必要があります。")
+            }
+            return .file(sha256)
+        default:
+            throw AIShellError.invalidArgument("expected.stateはabsentまたはfileである必要があります。")
+        }
+    }
+
+    private func changeSetContent(_ key: String, in object: [String: JSONValue]) throws -> ApplyChangeSetContent {
+        let content = try requiredObject(key, in: object)
+        guard Set(content.keys) == ["encoding", "data"] else {
+            throw AIShellError.invalidArgument("contentにはencodingとdataだけが必要です。")
+        }
+        let data = try requiredStringAllowingEmpty("data", in: content)
+        switch try requiredString("encoding", in: content) {
+        case "utf8": return .utf8(data)
+        case "base64":
+            guard Data(base64Encoded: data) != nil else {
+                throw AIShellError.invalidArgument("content.dataは有効なbase64である必要があります。")
+            }
+            return .base64(data)
+        default:
+            throw AIShellError.invalidArgument("content.encodingはutf8またはbase64である必要があります。")
+        }
+    }
+
+    private func changeSetService(rootPath: String) async throws -> ApplyChangeSetService {
+        let configuration = try await store.loadConfiguration()
+        guard !configuration.isPaused else { throw AIShellError.paused }
+        let resolver = try AllowedPathResolver(rootPaths: configuration.allowedRootPaths)
+        let root = URL(fileURLWithPath: rootPath, isDirectory: true)
+            .standardizedFileURL.resolvingSymlinksInPath()
+        guard resolver.rootURLs.contains(root) else { throw AIShellError.outsideAllowedRoot(root.path) }
+        if let service = changeSetServices[root.path] { return service }
+        let digest = SHA256.hash(data: Data(root.path.utf8)).map { String(format: "%02x", $0) }.joined()
+        let stateDirectory = store.baseDirectory
+            .appendingPathComponent("apply-change-set", isDirectory: true)
+            .appendingPathComponent(digest, isDirectory: true)
+        let service = try await ApplyChangeSetService.production(
+            runtimeStore: store, root: root, stateDirectory: stateDirectory
+        )
+        changeSetServices[root.path] = service
+        return service
+    }
+
+    func applyChangeSetJSON(_ result: ApplyChangeSetResult) -> JSONValue {
+        let status: String
+        switch result.status {
+        case .committed: status = "committed"
+        case .abortedBeforeSideEffect: status = "aborted_before_side_effect"
+        case .recoveryRequired: status = "recovery_required"
+        }
+        let changes = result.changes.map { change -> JSONValue in
+            .object([
+                "change_id": jsonString(change.changeID),
+                "kind": jsonString(change.kind),
+                "before_path": jsonString(change.beforePath),
+                "after_path": jsonString(change.afterPath),
+                "before_identity": jsonString(change.beforeIdentity),
+                "after_identity": jsonString(change.afterIdentity),
+                "before_sha256": jsonString(change.beforeSHA256),
+                "after_sha256": jsonString(change.afterSHA256),
+                "before_size_bytes": jsonInt(change.beforeSizeBytes),
+                "after_size_bytes": jsonInt(change.afterSizeBytes),
+                "before_metadata": change.beforeMetadata.map { .object(["mode": .number(Double($0.mode))]) } ?? .null,
+                "after_metadata": change.afterMetadata.map { .object(["mode": .number(Double($0.mode))]) } ?? .null,
+                "result": jsonString(change.result),
+                "trash_path": jsonString(change.trashPath)
+            ])
+        }
+        let summary = result.summary.map { value in
+            JSONValue.object([
+                "create_count": .number(Double(value.createCount)),
+                "write_count": .number(Double(value.writeCount)),
+                "delete_count": .number(Double(value.deleteCount)),
+                "rename_count": .number(Double(value.renameCount)),
+                "before_bytes": .number(Double(value.beforeBytes)),
+                "after_bytes": .number(Double(value.afterBytes))
+            ])
+        } ?? .null
+        let expiresAt = result.diffArtifact.expiresAt.map {
+            JSONValue.string(ISO8601DateFormatter().string(from: $0))
+        } ?? .null
+        return .object([
+            "schemaVersion": .string("aishell.apply-change-set.v1"),
+            "transaction_id": jsonString(result.transactionID),
+            "client_id": jsonString(result.clientID),
+            "client_epoch": jsonInt(result.clientEpoch),
+            "request_sequence": .number(Double(result.requestSequence)),
+            "status": .string(status),
+            "visibility": .string("aishell_serialized_recoverable"),
+            "root": jsonString(result.root),
+            "from_cursor": changeSetCursorJSON(result.fromCursor),
+            "cursor": changeSetCursorJSON(result.cursor),
+            "changes": .array(changes),
+            "changed_paths": .array(result.changedPaths.map(JSONValue.string)),
+            "transaction_cursor_advanced": .bool(result.transactionCursorAdvanced),
+            "summary": summary,
+            "diff_preview": jsonString(result.diffPreview),
+            "returned_diff_bytes": .number(Double(result.returnedDiffBytes)),
+            "omitted_diff_bytes": .number(Double(result.omittedDiffBytes)),
+            "has_more": result.hasMore.map(JSONValue.bool) ?? .null,
+            "diff_artifact": .object([
+                "handle": .string(result.diffArtifact.handle),
+                "sha256": .string(result.diffArtifact.sha256),
+                "size_bytes": .number(Double(result.diffArtifact.sizeBytes)),
+                "expires_at": expiresAt
+            ])
+        ])
+    }
+
+    private func changeSetCursorJSON(_ cursor: ApplyChangeSetCursor) -> JSONValue {
+        .object([
+            "root": .string(cursor.root),
+            "generation": .string(cursor.generation),
+            "sequence": .number(Double(cursor.sequence))
+        ])
+    }
+
+    private func jsonString(_ value: String?) -> JSONValue { value.map(JSONValue.string) ?? .null }
+    private func jsonInt(_ value: Int?) -> JSONValue { value.map { .number(Double($0)) } ?? .null }
+
     private func strictOptionalBool(_ key: String, in arguments: [String: JSONValue]) throws -> Bool? {
         guard let value = arguments[key] else { return nil }
         guard let result = value.boolValue else {
@@ -563,7 +828,44 @@ final class MCPServer {
         }
     }
 
-    private func stableError(_ error: Error) -> (code: String, message: String) {
+    func stableError(_ error: Error) -> (code: String, message: String) {
+        if let error = error as? ApplyChangeSetError {
+            let code: String
+            switch error.code {
+            case .invalidArgument: code = "INVALID_ARGUMENT"
+            case .contentChanged: code = "CONTENT_CHANGED"
+            case .expectedAbsenceViolated: code = "EXPECTED_ABSENCE_VIOLATED"
+            case .workspaceChanged: code = "WORKSPACE_CHANGED"
+            case .rootMismatch: code = "ROOT_MISMATCH"
+            case .transactionVolumeMismatch: code = "TRANSACTION_VOLUME_MISMATCH"
+            case .unsupportedChangeTarget: code = "UNSUPPORTED_CHANGE_TARGET"
+            case .changeSetConflict: code = "CHANGE_SET_CONFLICT"
+            case .transactionCapabilityUnavailable: code = "TRANSACTION_CAPABILITY_UNAVAILABLE"
+            case .reservedNamespaceConflict: code = "RESERVED_NAMESPACE_CONFLICT"
+            case .externalConflictDuringCommit: code = "EXTERNAL_CONFLICT_DURING_COMMIT"
+            case .changeSetStoreCorrupt: code = "CHANGE_SET_STORE_CORRUPT"
+            case .changeSetRecoveryRequired: code = "CHANGE_SET_RECOVERY_REQUIRED"
+            case .changeSetLimitExceeded: code = "CHANGE_SET_LIMIT_EXCEEDED"
+            case .changeSetClientNotRegistered: code = "CHANGE_SET_CLIENT_NOT_REGISTERED"
+            case .changeSetExpired: code = "CHANGE_SET_EXPIRED"
+            case .changeSetClientEpochAhead: code = "CHANGE_SET_CLIENT_EPOCH_AHEAD"
+            case .changeSetSequenceGap: code = "CHANGE_SET_SEQUENCE_GAP"
+            case .changeSetSequenceConflict: code = "CHANGE_SET_SEQUENCE_CONFLICT"
+            case .changeSetPreviousPending: code = "CHANGE_SET_PREVIOUS_PENDING"
+            case .changeSetClientCapacityExceeded: code = "CHANGE_SET_CLIENT_CAPACITY_EXCEEDED"
+            case .clientOwnerProofInvalid: code = "CLIENT_OWNER_PROOF_INVALID"
+            case .clientRotationBlocked: code = "CLIENT_ROTATION_BLOCKED"
+            case .clientRetireBlocked: code = "CLIENT_RETIRE_BLOCKED"
+            case .clientRegistryReinitializeBlocked: code = "CLIENT_REGISTRY_REINITIALIZE_BLOCKED"
+            case .clientControlCapacityExceeded: code = "CLIENT_CONTROL_CAPACITY_EXCEEDED"
+            case .changeSetReservationCorrupt: code = "CHANGE_SET_RESERVATION_CORRUPT"
+            case .changeSetSecretStoreUnavailable: code = "CHANGE_SET_SECRET_STORE_UNAVAILABLE"
+            case .clientEpochChanged: code = "CLIENT_EPOCH_CHANGED"
+            case .clientControlExpired: code = "CLIENT_CONTROL_EXPIRED"
+            case .clientEpochExhausted: code = "CLIENT_EPOCH_EXHAUSTED"
+            }
+            return (code, error.message.isEmpty ? code : error.message)
+        }
         if let error = error as? SearchContextServiceError {
             switch error {
             case .invalidArgument: return ("INVALID_ARGUMENT", String(describing: error))
@@ -629,6 +931,25 @@ final class MCPServer {
         }
     }
 
+    func structuredError(_ error: Error, stable: (code: String, message: String)) -> JSONValue {
+        var object: [String: JSONValue] = [
+            "code": .string(stable.code),
+            "message": .string(stable.message)
+        ]
+        if let context = (error as? ApplyChangeSetError)?.context {
+            object["transaction_id"] = .string(context.transactionID)
+            object["client_id"] = .string(context.clientID)
+            object["client_epoch"] = .number(Double(context.clientEpoch))
+            object["request_sequence"] = .number(Double(context.requestSequence))
+            object["changed_paths"] = .array(context.changedPaths.map(JSONValue.string))
+            object["rollback_state"] = .string(context.rollbackState)
+            object["recovery_state"] = .string(context.recoveryState)
+            object["evidence_handle"] = jsonString(context.evidenceHandle)
+            object["next_action"] = .string(context.nextAction)
+        }
+        return .object(object)
+    }
+
     private func resultText(name: String, result: JSONValue) throws -> String {
         if name == "run_check", let summary = result.objectValue?["summary"]?.stringValue {
             return summary
@@ -668,6 +989,13 @@ final class MCPServer {
                       let text = object["text"]?.stringValue else { return nil }
                 return "\(path):\(line): \(text)"
             }.joined(separator: "\n")
+        }
+        if name == "apply_change_set", let object = result.objectValue {
+            let status = object["status"]?.stringValue ?? "unknown"
+            let changed = object["changed_paths"]?.arrayValue?.count ?? 0
+            let transaction = object["transaction_id"]?.stringValue ?? "unassigned"
+            let artifact = object["diff_artifact"]?.objectValue?["handle"]?.stringValue ?? "none"
+            return "change set \(status): transaction=\(transaction) changed=\(changed) diff=\(artifact)"
         }
         let data = try JSONEncoder.aishell.encode(result)
         return String(decoding: data, as: UTF8.self)

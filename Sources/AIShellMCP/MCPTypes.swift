@@ -51,17 +51,27 @@ enum ToolCatalog {
     static let developmentToolNames: Set<String> = [
         "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context"
     ]
+    static let implementedExpandedToolNames: Set<String> = ["apply_change_set"]
     static let controlToolNames: Set<String> = [
         "runtime_status", "runtime_open_manager"
     ]
     static let defaultToolNames = developmentToolNames.union(controlToolNames)
 
-    static func listedTools(profile: String?) -> [MCPTool] {
+    static func listedTools(profile: String?, capabilitySet: String? = nil) throws -> [MCPTool] {
+        let expanded: Bool
+        switch capabilitySet {
+        case nil: expanded = false
+        case "expanded-v1": expanded = true
+        case let value?: throw MCPStartupError.invalidCapabilitySet(value)
+        }
+        let visibleNames = expanded
+            ? defaultToolNames.union(implementedExpandedToolNames)
+            : defaultToolNames
         switch profile {
         case "full", "legacy":
-            tools
+            return expanded ? tools : tools.filter { !implementedExpandedToolNames.contains($0.name) }
         default:
-            tools.filter { defaultToolNames.contains($0.name) }.map(compactTool)
+            return tools.filter { visibleNames.contains($0.name) }.map(compactTool)
         }
     }
 
@@ -71,7 +81,8 @@ enum ToolCatalog {
             "artifact_read": "artifactをrange、tail、pattern周辺でbudget読取する。",
             "workspace_snapshot": "初回状態のbounded previewと埋込context、以後のFSEvents deltaを返す。",
             "read_context": "複数fileを共有byte budgetとcontinuationで読む。",
-            "search_context": "rg workerで変更近接性付きbounded検索を行う。"
+            "search_context": "rg workerで変更近接性付きbounded検索を行う。",
+            "apply_change_set": "複数file変更を一つのdurable transactionとして適用する。"
         ]
         return MCPTool(
             name: tool.name,
@@ -255,6 +266,54 @@ enum ToolCatalog {
                     "freshness": .object(["oneOf": .array([
                         enumType(["filesystem-current"]), type("object")
                     ])])
+                ]
+            )
+        ),
+        tool(
+            "apply_change_set", "複数fileを原子的に変更", "一つの許可root内のcreate、write、delete、renameをexpected SHAとworkspace cursorで固定し、durable transactionとして適用します。途中失敗を部分成功へ丸めず、完全diff artifactと更新後cursorを返します。",
+            properties: [
+                "client_id": string("管理appで割り当てたcanonical lowercase UUID v4"),
+                "client_epoch": integer("owner承認済みclient epoch", minimum: 1, maximum: 9_007_199_254_740_991),
+                "request_sequence": integer("client epoch内の連続sequence", minimum: 1, maximum: 9_007_199_254_740_991),
+                "cursor": .object([
+                    "type": .string("object"),
+                    "required": .array([.string("root"), .string("generation"), .string("sequence")]),
+                    "properties": .object([
+                        "root": string("対象canonical root"),
+                        "generation": string("workspace generation"),
+                        "sequence": integer("workspace journal sequence", minimum: 0)
+                    ]),
+                    "additionalProperties": .bool(false)
+                ]),
+                "changes": .object([
+                    "type": .string("array"), "minItems": .number(1), "maxItems": .number(128),
+                    "items": .object([
+                        "oneOf": .array([
+                            changeVariantSchema(operation: "create", content: true),
+                            changeVariantSchema(operation: "write", content: true),
+                            changeVariantSchema(operation: "delete", content: false),
+                            renameVariantSchema
+                        ])
+                    ])
+                ]),
+                "diff_byte_budget": integer("通常resultへ含めるitem単位preview budget", minimum: 1, maximum: 1_048_576),
+                "retention_seconds": integer("完全diff artifactの保持秒", minimum: 1, maximum: 604_800)
+            ],
+            required: ["client_id", "client_epoch", "request_sequence", "cursor", "changes"],
+            destructive: true, idempotent: true,
+            outputSchema: objectOutput(
+                schemaVersion: "aishell.apply-change-set.v1",
+                required: ["schemaVersion", "transaction_id", "client_id", "client_epoch", "request_sequence", "status", "visibility", "root", "from_cursor", "cursor", "changes", "changed_paths", "transaction_cursor_advanced", "summary", "diff_preview", "returned_diff_bytes", "omitted_diff_bytes", "has_more", "diff_artifact"],
+                properties: [
+                    "transaction_id": nullableType("string"), "client_id": nullableType("string"),
+                    "client_epoch": nullableType("integer"), "request_sequence": type("integer"),
+                    "status": enumType(["committed", "aborted_before_side_effect", "recovery_required"]),
+                    "visibility": enumType(["aishell_serialized_recoverable"]), "root": nullableType("string"),
+                    "from_cursor": type("object"), "cursor": type("object"), "changes": type("array"),
+                    "changed_paths": type("array"), "transaction_cursor_advanced": type("boolean"),
+                    "summary": nullableType("object"), "diff_preview": nullableType("string"),
+                    "returned_diff_bytes": type("integer"), "omitted_diff_bytes": type("integer"),
+                    "has_more": nullableType("boolean"), "diff_artifact": type("object")
                 ]
             )
         ),
@@ -446,6 +505,63 @@ enum ToolCatalog {
         .object(["type": .string("string"), "description": .string(description)])
     }
 
+    private static let expectedStateSchema: JSONValue = .object([
+        "type": .string("object"),
+        "required": .array([.string("state")]),
+        "properties": .object([
+            "state": enumString(["absent", "file"], "期待する開始状態"),
+            "sha256": string("state=fileで必須のlowercase SHA-256")
+        ]),
+        "additionalProperties": .bool(false)
+    ])
+
+    private static let contentSchema: JSONValue = .object([
+        "type": .string("object"),
+        "required": .array([.string("encoding"), .string("data")]),
+        "properties": .object([
+            "encoding": enumString(["utf8", "base64"], "content encoding"),
+            "data": string("正規化しないcontent")
+        ]),
+        "additionalProperties": .bool(false)
+    ])
+
+    private static func changeVariantSchema(operation: String, content: Bool) -> JSONValue {
+        var properties: [String: JSONValue] = [
+            "change_id": string("request内で一意のID"),
+            "operation": .object(["const": .string(operation)]),
+            "path": string("対象のroot相対path"),
+            "expected": expectedStateSchema
+        ]
+        var required = ["change_id", "operation", "path", "expected"]
+        if content {
+            properties["content"] = contentSchema
+            required.append("content")
+        }
+        return .object([
+            "type": .string("object"),
+            "required": .array(required.map(JSONValue.string)),
+            "properties": .object(properties),
+            "additionalProperties": .bool(false)
+        ])
+    }
+
+    private static let renameVariantSchema: JSONValue = .object([
+        "type": .string("object"),
+        "required": .array([
+            .string("change_id"), .string("operation"), .string("source"),
+            .string("source_expected"), .string("destination"), .string("destination_expected")
+        ]),
+        "properties": .object([
+            "change_id": string("request内で一意のID"),
+            "operation": .object(["const": .string("rename")]),
+            "source": string("rename元のroot相対path"),
+            "source_expected": expectedStateSchema,
+            "destination": string("rename先のroot相対path"),
+            "destination_expected": expectedStateSchema
+        ]),
+        "additionalProperties": .bool(false)
+    ])
+
     private static func integer(
         _ description: String, minimum: Int? = nil, maximum: Int? = nil
     ) -> JSONValue {
@@ -577,5 +693,16 @@ enum ToolCatalog {
                 ])
             ])
         ])
+    }
+}
+
+enum MCPStartupError: LocalizedError, Equatable {
+    case invalidCapabilitySet(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .invalidCapabilitySet(value):
+            "INVALID_CAPABILITY_SET: AISHELL_CAPABILITY_SETは未指定またはexpanded-v1だけを受理します: \(value)"
+        }
     }
 }

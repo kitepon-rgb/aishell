@@ -124,7 +124,7 @@ final class MCPContextV2WireTests: XCTestCase {
     }
 
     func testToolSchemasAdvertiseNestedV2ContextWithoutRemovingV1Fields() throws {
-        let tools = ToolCatalog.listedTools(profile: nil)
+        let tools = try ToolCatalog.listedTools(profile: nil)
         let workspace = try XCTUnwrap(tools.first { $0.name == "workspace_snapshot" })
         let workspaceProperties = try XCTUnwrap(workspace.inputSchema.objectValue?["properties"]?.objectValue)
         XCTAssertNotNil(workspaceProperties["git_diff"])

@@ -3,7 +3,7 @@ import XCTest
 
 final class MCPTypesTests: XCTestCase {
     func testDevelopmentProfileListsHighDensitySurfaceAndRecoveryControls() {
-        let tools = ToolCatalog.listedTools(profile: nil)
+        let tools = try! ToolCatalog.listedTools(profile: nil)
         XCTAssertEqual(
             Set(tools.map(\.name)),
             [
@@ -37,12 +37,68 @@ final class MCPTypesTests: XCTestCase {
     }
 
     func testFullProfileRetainsLegacyDiscoveryCompatibility() {
-        let names = Set(ToolCatalog.listedTools(profile: "full").map(\.name))
+        let names = Set(try! ToolCatalog.listedTools(profile: "full").map(\.name))
         XCTAssertEqual(names.count, 25)
         XCTAssertTrue(names.contains("process_run"))
         XCTAssertTrue(names.contains("files_read_text"))
         XCTAssertTrue(names.isSuperset(of: ToolCatalog.developmentToolNames))
         XCTAssertTrue(names.isSuperset(of: ToolCatalog.controlToolNames))
+    }
+
+    func testCapabilityGatePreservesBaselineAndAddsOnlyImplementedExpandedTools() throws {
+        let baselineDefault = try ToolCatalog.listedTools(profile: nil, capabilitySet: nil)
+        let baselineFull = try ToolCatalog.listedTools(profile: "full", capabilitySet: nil)
+        let expandedDefault = try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1")
+        let expandedFull = try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1")
+
+        XCTAssertEqual(baselineDefault.map(\.name), [
+            "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
+            "runtime_status", "runtime_open_manager"
+        ])
+        XCTAssertEqual(baselineFull.count, 25)
+        XCTAssertFalse(baselineFull.map(\.name).contains("apply_change_set"))
+        XCTAssertEqual(expandedDefault.map(\.name), [
+            "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
+            "apply_change_set", "runtime_status", "runtime_open_manager"
+        ])
+        XCTAssertEqual(expandedFull.count, 26)
+        XCTAssertEqual(expandedFull.filter { $0.name == "apply_change_set" }.count, 1)
+
+        let first = try JSONEncoder.aishell.encode(expandedFull)
+        let second = try JSONEncoder.aishell.encode(
+            ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1")
+        )
+        XCTAssertEqual(first, second)
+    }
+
+    func testInvalidCapabilitySetIsTypedStartupFailureWithoutFallback() async throws {
+        XCTAssertThrowsError(try ToolCatalog.listedTools(profile: nil, capabilitySet: "future")) { error in
+            XCTAssertEqual(error as? MCPStartupError, .invalidCapabilitySet("future"))
+            XCTAssertTrue(error.localizedDescription.contains("INVALID_CAPABILITY_SET"))
+        }
+        XCTAssertThrowsError(try ToolCatalog.listedTools(profile: nil, capabilitySet: "")) { error in
+            XCTAssertEqual(error as? MCPStartupError, .invalidCapabilitySet(""))
+        }
+        let server = MCPServer(capabilitySet: "future")
+        XCTAssertThrowsError(try server.validateStartup()) { error in
+            XCTAssertEqual(error as? MCPStartupError, .invalidCapabilitySet("future"))
+        }
+        let response = await server.callTool(id: .number(1), params: .object([
+            "name": .string("runtime_status"), "arguments": .object([:])
+        ]))
+        XCTAssertNil(response.result)
+        XCTAssertEqual(response.error?.code, -32000)
+        XCTAssertTrue(response.error?.message.contains("INVALID_CAPABILITY_SET") == true)
+    }
+
+    func testDefaultServerCannotCallExpandedTool() async {
+        let response = await MCPServer(capabilitySet: nil).callTool(
+            id: .number(2),
+            params: .object(["name": .string("apply_change_set"), "arguments": .object([:])])
+        )
+        XCTAssertNil(response.result)
+        XCTAssertEqual(response.error?.code, -32602)
+        XCTAssertTrue(response.error?.message.contains("未定義のtool") == true)
     }
 
     func testArtifactStructuredProjectionDoesNotDuplicatePayload() {
