@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "212b2ca69276a08eff4c36c1487db60d8a57faeb5081603e9a70f821a4fc8afa",
+  "evidence_id": "ace-022-search-context-contract-20260721",
+  "git_blob_oid": "574f56dca57de6211763adfe554ff8c942f7d6da",
+  "media_type": "text/markdown",
+  "path": "docs/adr/0010-search-context-v2-contract.md",
+  "repo_id": "self"
+}
