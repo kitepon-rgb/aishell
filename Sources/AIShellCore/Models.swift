@@ -392,6 +392,11 @@ public enum AIShellError: LocalizedError, Equatable, Sendable {
     case handleNotFound(String)
     case handleExpired(String)
     case evidenceQuotaExceeded(Int)
+    case checkpointCorrupt(String)
+    case checkpointUnsupported(String)
+    case checkpointMigrationFailed(String)
+    case checkpointQuotaExceeded(Int)
+    case checkpointWriteFailed(String)
     case cursorExpired(String)
     case rescanRequired(String)
     case workerUnavailable(String)
@@ -431,6 +436,16 @@ public enum AIShellError: LocalizedError, Equatable, Sendable {
             "HANDLE_EXPIRED: retention期限を過ぎています: \(handle)"
         case let .evidenceQuotaExceeded(limit):
             "EVIDENCE_QUOTA_EXCEEDED: evidence容量上限（\(limit) bytes）を超えます。"
+        case let .checkpointCorrupt(reason):
+            "CHECKPOINT_CORRUPT: \(reason)"
+        case let .checkpointUnsupported(schema):
+            "CHECKPOINT_UNSUPPORTED: schemaを読み取れません: \(schema)"
+        case let .checkpointMigrationFailed(reason):
+            "CHECKPOINT_MIGRATION_FAILED: \(reason)"
+        case let .checkpointQuotaExceeded(limit):
+            "CHECKPOINT_QUOTA_EXCEEDED: checkpoint上限（\(limit) bytes）を超えます。"
+        case let .checkpointWriteFailed(reason):
+            "CHECKPOINT_WRITE_FAILED: \(reason)"
         case let .cursorExpired(cursor):
             "CURSOR_EXPIRED: cursorを継続できません: \(cursor)"
         case let .rescanRequired(reason):

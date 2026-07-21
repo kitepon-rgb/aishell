@@ -1,0 +1,233 @@
+import Foundation
+import XCTest
+@testable import AIShellCore
+
+final class WorkspaceCheckpointStoreTests: XCTestCase {
+    func testSaveAndWarmLoadRoundTripUsesDeterministicEntryOrder() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let store = WorkspaceCheckpointStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        let checkpoint = makeCheckpoint(entries: [
+            makeFile(path: "Z.swift", digest: String(repeating: "f", count: 64)),
+            makeFile(path: "A.swift", digest: String(repeating: "a", count: 64)),
+        ])
+
+        let url = try await store.save(checkpoint)
+        let loaded = try await store.load(rootDigest: checkpoint.rootDigest)
+        let restored = try XCTUnwrap(loaded)
+
+        XCTAssertEqual(restored.entries.map(\.path), ["A.swift", "Z.swift"])
+        XCTAssertEqual(restored.generation, checkpoint.generation)
+        XCTAssertEqual(restored.lastEventID, 42)
+        XCTAssertEqual(restored.payloadSHA256?.count, 64)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func testCorruptPayloadFailsClosedAndIsPreserved() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.base.appendingPathComponent("runtime")
+        let store = WorkspaceCheckpointStore(baseDirectory: runtime)
+        let checkpoint = makeCheckpoint()
+        let url = try await store.save(checkpoint)
+        var data = try Data(contentsOf: url)
+        data[data.index(before: data.endIndex)] = 0x20
+        try data.write(to: url)
+
+        do {
+            _ = try await store.load(rootDigest: checkpoint.rootDigest)
+            XCTFail("corrupt checkpointを復元できました。")
+        } catch {
+            guard case AIShellError.checkpointCorrupt = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(try Data(contentsOf: url), data)
+    }
+
+    func testUnsupportedSchemaIsTypedAndPreserved() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.base.appendingPathComponent("runtime")
+        let digest = String(repeating: "a", count: 64)
+        let directory = runtime.appendingPathComponent("workspaces/\(digest)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("checkpoint.json")
+        let data = Data(#"{"schema":"aishell.workspace-checkpoint.v999"}"#.utf8)
+        try data.write(to: url)
+        let store = WorkspaceCheckpointStore(baseDirectory: runtime)
+
+        do {
+            _ = try await store.load(rootDigest: digest)
+            XCTFail("未知schemaを復元できました。")
+        } catch {
+            XCTAssertEqual(error as? AIShellError, .checkpointUnsupported("aishell.workspace-checkpoint.v999"))
+        }
+        XCTAssertEqual(try Data(contentsOf: url), data)
+    }
+
+    func testQuotaPreflightDoesNotReplacePreviousCheckpoint() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.base.appendingPathComponent("runtime")
+        let checkpoint = makeCheckpoint()
+        let normalStore = WorkspaceCheckpointStore(baseDirectory: runtime)
+        let url = try await normalStore.save(checkpoint)
+        let original = try Data(contentsOf: url)
+        let limitedStore = WorkspaceCheckpointStore(
+            baseDirectory: runtime,
+            quota: WorkspaceCheckpointQuota(
+                maximumRoots: 8,
+                maximumEntriesPerRoot: 500_000,
+                maximumBytesPerRoot: 1,
+                maximumTotalBytes: 512 * 1_024 * 1_024
+            )
+        )
+
+        do {
+            _ = try await limitedStore.save(makeCheckpoint(generation: "replacement"))
+            XCTFail("quota超過checkpointを保存できました。")
+        } catch {
+            guard case AIShellError.checkpointQuotaExceeded = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: url), original)
+        let restored = try await normalStore.load(rootDigest: checkpoint.rootDigest)
+        XCTAssertEqual(restored?.generation, checkpoint.generation)
+    }
+
+    func testCommitFailureDoesNotReplacePreviousCheckpoint() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.base.appendingPathComponent("runtime")
+        let checkpoint = makeCheckpoint()
+        let normalStore = WorkspaceCheckpointStore(baseDirectory: runtime)
+        let url = try await normalStore.save(checkpoint)
+        let original = try Data(contentsOf: url)
+        let failingStore = WorkspaceCheckpointStore(baseDirectory: runtime) {
+            throw AIShellError.checkpointWriteFailed("injected before atomic replace")
+        }
+
+        do {
+            _ = try await failingStore.save(makeCheckpoint(generation: "replacement"))
+            XCTFail("commit失敗を成功扱いしました。")
+        } catch {
+            guard case AIShellError.checkpointWriteFailed = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: url), original)
+        let restored = try await normalStore.load(rootDigest: checkpoint.rootDigest)
+        XCTAssertEqual(restored?.generation, checkpoint.generation)
+    }
+
+    func testRootQuotaEvictsOnlyInactiveLeastRecentlyUsedCheckpoint() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let store = WorkspaceCheckpointStore(
+            baseDirectory: fixture.base.appendingPathComponent("runtime"),
+            quota: WorkspaceCheckpointQuota(
+                maximumRoots: 1,
+                maximumEntriesPerRoot: 500_000,
+                maximumBytesPerRoot: 128 * 1_024 * 1_024,
+                maximumTotalBytes: 512 * 1_024 * 1_024
+            )
+        )
+        let first = makeCheckpoint(rootDigest: String(repeating: "a", count: 64))
+        let second = makeCheckpoint(rootDigest: String(repeating: "b", count: 64))
+        _ = try await store.save(first)
+
+        _ = try await store.save(second)
+
+        let evicted = try await store.load(rootDigest: first.rootDigest)
+        let retained = try await store.load(rootDigest: second.rootDigest)
+        XCTAssertNil(evicted)
+        XCTAssertEqual(retained?.rootDigest, second.rootDigest)
+    }
+
+    func testRootQuotaDoesNotEvictActiveCheckpoint() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let store = WorkspaceCheckpointStore(
+            baseDirectory: fixture.base.appendingPathComponent("runtime"),
+            quota: WorkspaceCheckpointQuota(
+                maximumRoots: 1,
+                maximumEntriesPerRoot: 500_000,
+                maximumBytesPerRoot: 128 * 1_024 * 1_024,
+                maximumTotalBytes: 512 * 1_024 * 1_024
+            )
+        )
+        let first = makeCheckpoint(rootDigest: String(repeating: "a", count: 64))
+        let second = makeCheckpoint(rootDigest: String(repeating: "b", count: 64))
+        _ = try await store.save(first)
+
+        do {
+            _ = try await store.save(second, activeRootDigests: [first.rootDigest])
+            XCTFail("active checkpointをevictしてquota超過保存を成功扱いしました。")
+        } catch {
+            guard case AIShellError.checkpointQuotaExceeded = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        let retained = try await store.load(rootDigest: first.rootDigest)
+        let absent = try await store.load(rootDigest: second.rootDigest)
+        XCTAssertEqual(retained?.rootDigest, first.rootDigest)
+        XCTAssertNil(absent)
+    }
+
+    func testSafetyNetFixtureKeepsAllRequiredFailClosedCases() throws {
+        let fixtureURL = try XCTUnwrap(
+            Bundle.module.url(
+                forResource: "workspace-checkpoint-cases.v1",
+                withExtension: "json",
+                subdirectory: "Fixtures"
+            )
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any]
+        )
+        let cases = try XCTUnwrap(object["cases"] as? [[String: Any]])
+        XCTAssertEqual(cases.count, 12)
+        let stopped = cases.filter {
+            ($0["expected"] as? [String: Any])?["decision"] as? String == "stop"
+        }
+        XCTAssertEqual(stopped.count, 7)
+        XCTAssertTrue(stopped.allSatisfy {
+            let expected = $0["expected"] as? [String: Any]
+            return expected?["typed_error"] as? String != nil
+                && expected?["reuse_entries"] as? Bool == false
+        })
+    }
+
+    private func makeCheckpoint(
+        generation: String = "generation-1",
+        rootDigest: String = String(repeating: "a", count: 64),
+        entries: [WorkspaceCheckpointEntry] = []
+    ) -> WorkspaceCheckpoint {
+        WorkspaceCheckpoint(
+            rootPath: "/fixture/workspace",
+            rootIdentity: "1:2",
+            rootDigest: rootDigest,
+            exclusionDigest: String(repeating: "b", count: 64),
+            generation: generation,
+            lastEventID: 42,
+            entries: entries,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            lastAccessedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+    }
+
+    private func makeFile(path: String, digest: String) -> WorkspaceCheckpointEntry {
+        WorkspaceCheckpointEntry(
+            path: path,
+            identity: "1:\(path.hashValue)",
+            kind: .file,
+            sizeBytes: 12,
+            modifiedAtNanoseconds: 1_700_000_000_000_000_000,
+            sha256: digest,
+            hashState: .hashed
+        )
+    }
+}

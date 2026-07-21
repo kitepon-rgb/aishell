@@ -30,7 +30,8 @@ let package = Package(
         .testTarget(
             name: "AIShellCoreTests",
             dependencies: ["AIShellCore"],
-            path: "Tests/AIShellCoreTests"
+            path: "Tests/AIShellCoreTests",
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "AIShellMCPTests",
