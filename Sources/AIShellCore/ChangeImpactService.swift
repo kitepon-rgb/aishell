@@ -1,0 +1,1434 @@
+import CryptoKit
+import Darwin
+import Foundation
+
+public enum ChangeImpactOperation: String, Codable, Equatable, Sendable {
+    case analyze
+    case recommend
+}
+
+public struct ChangeImpactChangedPath: Codable, Equatable, Sendable {
+    public let path: String
+    public let contentSHA256: String?
+    public let expectedAbsent: Bool
+
+    public init(path: String, contentSHA256: String? = nil, expectedAbsent: Bool = false) {
+        self.path = path
+        self.contentSHA256 = contentSHA256
+        self.expectedAbsent = expectedAbsent
+    }
+}
+
+public struct ChangeImpactChangedSymbol: Codable, Equatable, Sendable {
+    public let path: String
+    public let contentSHA256: String
+    public let name: String
+    public let startOffset: Int
+    public let endOffset: Int
+    public let stableID: String?
+
+    public init(
+        path: String,
+        contentSHA256: String,
+        name: String,
+        startOffset: Int,
+        endOffset: Int,
+        stableID: String? = nil
+    ) {
+        self.path = path
+        self.contentSHA256 = contentSHA256
+        self.name = name
+        self.startOffset = startOffset
+        self.endOffset = endOffset
+        self.stableID = stableID
+    }
+}
+
+public struct ChangeImpactRequest: Codable, Equatable, Sendable {
+    public let operation: ChangeImpactOperation?
+    public let root: String?
+    public let workspaceCursor: String?
+    public let changedPaths: [ChangeImpactChangedPath]
+    public let changedSymbols: [ChangeImpactChangedSymbol]
+    public let requiredProviders: [String]
+    public let byteBudget: Int?
+    public let continuation: String?
+
+    public init(
+        operation: ChangeImpactOperation? = .analyze,
+        root: String? = nil,
+        workspaceCursor: String? = nil,
+        changedPaths: [ChangeImpactChangedPath] = [],
+        changedSymbols: [ChangeImpactChangedSymbol] = [],
+        requiredProviders: [String] = [],
+        byteBudget: Int? = nil,
+        continuation: String? = nil
+    ) {
+        self.operation = operation
+        self.root = root
+        self.workspaceCursor = workspaceCursor
+        self.changedPaths = changedPaths
+        self.changedSymbols = changedSymbols
+        self.requiredProviders = requiredProviders
+        self.byteBudget = byteBudget
+        self.continuation = continuation
+    }
+}
+
+public enum ChangeImpactCategory: String, Codable, CaseIterable, Equatable, Sendable {
+    case references
+    case dependencies
+    case relatedTests = "related_tests"
+    case buildTargets = "build_targets"
+}
+
+public enum ChangeImpactSubjectKind: String, Codable, CaseIterable, Equatable, Sendable {
+    case path
+    case symbol
+    case resource
+    case module
+    case package
+    case test
+    case target
+}
+
+public struct ChangeImpactSubject: Codable, Equatable, Sendable {
+    public let kind: ChangeImpactSubjectKind
+    public let path: String?
+    public let name: String?
+    public let startOffset: Int?
+    public let endOffset: Int?
+    public let stableID: String?
+    public let ecosystemID: String?
+    public let profileIdentity: String?
+    public let manifestPath: String?
+    public let declaredID: String?
+
+    public init(
+        kind: ChangeImpactSubjectKind,
+        path: String? = nil,
+        name: String? = nil,
+        startOffset: Int? = nil,
+        endOffset: Int? = nil,
+        stableID: String? = nil,
+        ecosystemID: String? = nil,
+        profileIdentity: String? = nil,
+        manifestPath: String? = nil,
+        declaredID: String? = nil
+    ) {
+        self.kind = kind
+        self.path = path
+        self.name = name
+        self.startOffset = startOffset
+        self.endOffset = endOffset
+        self.stableID = stableID
+        self.ecosystemID = ecosystemID
+        self.profileIdentity = profileIdentity
+        self.manifestPath = manifestPath
+        self.declaredID = declaredID
+    }
+
+    public static func path(_ path: String) -> Self { .init(kind: .path, path: path) }
+    public static func test(path: String) -> Self { .init(kind: .test, path: path) }
+    public static func target(
+        ecosystemID: String,
+        profileIdentity: String,
+        manifestPath: String,
+        declaredID: String
+    ) -> Self {
+        .init(
+            kind: .target,
+            ecosystemID: ecosystemID,
+            profileIdentity: profileIdentity,
+            manifestPath: manifestPath,
+            declaredID: declaredID
+        )
+    }
+}
+
+public enum ChangeImpactProviderKind: String, Codable, Equatable, Sendable {
+    case workspaceIndex = "workspace_index"
+    case projectProfile = "project_profile"
+    case lexicalSearch = "lexical_search"
+    case sourceKit = "sourcekit"
+    case depfile
+    case buildGraph = "build_graph"
+    case custom
+}
+
+public enum ChangeImpactProviderStatus: String, Codable, Equatable, Sendable {
+    case fresh
+    case stale
+    case unavailable
+    case unsupported
+}
+
+public struct ChangeImpactProviderDescriptor: Codable, Equatable, Sendable {
+    public let providerID: String
+    public let kind: ChangeImpactProviderKind
+    public let version: String
+
+    public init(providerID: String, kind: ChangeImpactProviderKind, version: String) {
+        self.providerID = providerID
+        self.kind = kind
+        self.version = version
+    }
+}
+
+public struct ChangeImpactProviderReport: Codable, Equatable, Sendable {
+    public let descriptor: ChangeImpactProviderDescriptor
+    public let status: ChangeImpactProviderStatus
+    public let inputDigest: String
+    public let observedAtCursor: String
+    public let reasonCode: String?
+    public let nextAction: String?
+
+    public init(
+        descriptor: ChangeImpactProviderDescriptor,
+        status: ChangeImpactProviderStatus,
+        inputDigest: String,
+        observedAtCursor: String,
+        reasonCode: String? = nil,
+        nextAction: String? = nil
+    ) {
+        self.descriptor = descriptor
+        self.status = status
+        self.inputDigest = inputDigest
+        self.observedAtCursor = observedAtCursor
+        self.reasonCode = reasonCode
+        self.nextAction = nextAction
+    }
+}
+
+public enum ChangeImpactRelation: String, Codable, Equatable, Sendable {
+    case lexicalReference = "lexical_reference"
+    case declaredDependency = "declared_dependency"
+    case containsSource = "contains_source"
+    case containsTest = "contains_test"
+    case namingHeuristic = "naming_heuristic"
+}
+
+public enum ChangeImpactEvidenceStrength: String, Codable, Equatable, Sendable {
+    case heuristic
+    case lexicalMatch = "lexical_match"
+    case declaredEdge = "declared_edge"
+}
+
+public struct ChangeImpactEvidenceLocator: Codable, Equatable, Sendable {
+    public let path: String
+    public let contentSHA256: String
+    public let startOffset: Int?
+    public let endOffset: Int?
+    public let edgeID: String?
+
+    public init(
+        path: String,
+        contentSHA256: String,
+        startOffset: Int? = nil,
+        endOffset: Int? = nil,
+        edgeID: String? = nil
+    ) {
+        self.path = path
+        self.contentSHA256 = contentSHA256
+        self.startOffset = startOffset
+        self.endOffset = endOffset
+        self.edgeID = edgeID
+    }
+}
+
+public struct ChangeImpactCandidateSeed: Codable, Equatable, Sendable {
+    public let category: ChangeImpactCategory
+    public let subject: ChangeImpactSubject
+
+    public init(category: ChangeImpactCategory, subject: ChangeImpactSubject) {
+        self.category = category
+        self.subject = subject
+    }
+}
+
+public struct ChangeImpactEvidenceSeed: Codable, Equatable, Sendable {
+    public let inputIdentity: String
+    public let candidate: ChangeImpactCandidateSeed
+    public let relation: ChangeImpactRelation
+    public let locator: ChangeImpactEvidenceLocator
+    public let strength: ChangeImpactEvidenceStrength
+    public let summary: String
+
+    public init(
+        inputIdentity: String,
+        candidate: ChangeImpactCandidateSeed,
+        relation: ChangeImpactRelation,
+        locator: ChangeImpactEvidenceLocator,
+        strength: ChangeImpactEvidenceStrength,
+        summary: String
+    ) {
+        self.inputIdentity = inputIdentity
+        self.candidate = candidate
+        self.relation = relation
+        self.locator = locator
+        self.strength = strength
+        self.summary = summary
+    }
+}
+
+public struct ChangeImpactFreshnessBinding: Codable, Equatable, Sendable {
+    public enum Role: String, Codable, Equatable, Sendable {
+        case input
+        case analysis
+    }
+
+    public let role: Role
+    public let path: String
+    public let contentSHA256: String?
+    public let expectedAbsent: Bool
+
+    public init(role: Role, path: String, contentSHA256: String?, expectedAbsent: Bool = false) {
+        self.role = role
+        self.path = path
+        self.contentSHA256 = contentSHA256
+        self.expectedAbsent = expectedAbsent
+    }
+}
+
+public struct ChangeImpactCoverageGap: Codable, Equatable, Sendable {
+    public let category: ChangeImpactCategory
+    public let reasonCode: String
+    public let providerID: String?
+    public let subject: ChangeImpactSubject?
+    public let nextAction: String
+
+    public init(
+        category: ChangeImpactCategory,
+        reasonCode: String,
+        providerID: String? = nil,
+        subject: ChangeImpactSubject? = nil,
+        nextAction: String
+    ) {
+        self.category = category
+        self.reasonCode = reasonCode
+        self.providerID = providerID
+        self.subject = subject
+        self.nextAction = nextAction
+    }
+}
+
+public struct ChangeImpactProviderInput: Sendable {
+    public let root: URL
+    public let workspaceCursor: String
+    public let changedPaths: [ChangeImpactChangedPath]
+    public let changedSymbols: [ChangeImpactChangedSymbol]
+
+    public init(
+        root: URL,
+        workspaceCursor: String,
+        changedPaths: [ChangeImpactChangedPath],
+        changedSymbols: [ChangeImpactChangedSymbol]
+    ) {
+        self.root = root
+        self.workspaceCursor = workspaceCursor
+        self.changedPaths = changedPaths
+        self.changedSymbols = changedSymbols
+    }
+}
+
+public struct ChangeImpactProviderOutput: Sendable {
+    public let report: ChangeImpactProviderReport
+    public let evidence: [ChangeImpactEvidenceSeed]
+    public let freshnessBindings: [ChangeImpactFreshnessBinding]
+    public let coverageGaps: [ChangeImpactCoverageGap]
+
+    public init(
+        report: ChangeImpactProviderReport,
+        evidence: [ChangeImpactEvidenceSeed] = [],
+        freshnessBindings: [ChangeImpactFreshnessBinding] = [],
+        coverageGaps: [ChangeImpactCoverageGap] = []
+    ) {
+        self.report = report
+        self.evidence = evidence
+        self.freshnessBindings = freshnessBindings
+        self.coverageGaps = coverageGaps
+    }
+}
+
+public protocol ChangeImpactProvider: Sendable {
+    var descriptor: ChangeImpactProviderDescriptor { get }
+    func analyze(_ input: ChangeImpactProviderInput) async throws -> ChangeImpactProviderOutput
+}
+
+/// Phase 3の直接OS provider。indexやLSPへfallbackせず、現在のfile bytesだけから
+/// lexical referenceと配置規約上のtest/target候補を生成する。
+public struct FileSystemChangeImpactProvider: ChangeImpactProvider {
+    public let descriptor = ChangeImpactProviderDescriptor(
+        providerID: "aishell.filesystem-impact",
+        kind: .lexicalSearch,
+        version: "1"
+    )
+
+    public init() {}
+
+    public func analyze(_ input: ChangeImpactProviderInput) async throws -> ChangeImpactProviderOutput {
+        let files = try regularFiles(in: input.root)
+        var bindings: [ChangeImpactFreshnessBinding] = []
+        var evidence: [ChangeImpactEvidenceSeed] = []
+        let changedPaths = Set(input.changedPaths.map(\.path))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+
+        for file in files {
+            let relative = relativePath(file, root: input.root)
+            guard !changedPaths.contains(relative),
+                  let data = try? Data(contentsOf: file, options: .mappedIfSafe),
+                  data.count <= 4 * 1_024 * 1_024,
+                  String(data: data, encoding: .utf8) != nil else { continue }
+            let sha = sha256(data)
+            for symbol in input.changedSymbols {
+                for range in lexicalRanges(of: Data(symbol.name.utf8), in: data) {
+                    let candidate = ChangeImpactCandidateSeed(category: .references, subject: .path(relative))
+                    evidence.append(ChangeImpactEvidenceSeed(
+                        inputIdentity: symbolIdentity(symbol),
+                        candidate: candidate,
+                        relation: .lexicalReference,
+                        locator: .init(
+                            path: relative,
+                            contentSHA256: sha,
+                            startOffset: range.lowerBound,
+                            endOffset: range.upperBound
+                        ),
+                        strength: .lexicalMatch,
+                        summary: "\(symbol.name)のUTF-8 token一致"
+                    ))
+                }
+            }
+            let lowerName = file.deletingPathExtension().lastPathComponent.lowercased()
+            let isTest = relative.hasPrefix("Tests/") || relative.contains("/Tests/")
+                || relative.lowercased().contains(".test.")
+            if isTest {
+                for changed in input.changedPaths {
+                    let changedStem = URL(fileURLWithPath: changed.path).deletingPathExtension()
+                        .lastPathComponent.lowercased()
+                    guard !changedStem.isEmpty, lowerName.contains(changedStem) else { continue }
+                    let candidate = ChangeImpactCandidateSeed(category: .relatedTests, subject: .test(path: relative))
+                    evidence.append(ChangeImpactEvidenceSeed(
+                        inputIdentity: pathIdentity(changed),
+                        candidate: candidate,
+                        relation: .namingHeuristic,
+                        locator: .init(path: relative, contentSHA256: sha),
+                        strength: .heuristic,
+                        summary: "test file名が変更file名を含む"
+                    ))
+                }
+            }
+            // 非一致を判定するために読んだfileもprovider inputである。候補を生成したfileだけへ
+            // bindingを狭めると、解析中の編集で新しい一致が生じた時にfalse-freshになる。
+            bindings.append(.init(role: .analysis, path: relative, contentSHA256: sha))
+        }
+
+        for changed in input.changedPaths {
+            let components = changed.path.split(separator: "/").map(String.init)
+            guard components.count >= 2,
+                  components[0] == "Sources" || components[0] == "Tests" else { continue }
+            let manifest = input.root.appendingPathComponent("Package.swift")
+            guard let manifestData = try? Data(contentsOf: manifest), !manifestData.isEmpty else { continue }
+            let manifestSHA = sha256(manifestData)
+            let targetID = components[1]
+            let candidate = ChangeImpactCandidateSeed(
+                category: .buildTargets,
+                subject: .target(
+                    ecosystemID: "swift-package-manager",
+                    profileIdentity: manifestSHA,
+                    manifestPath: "Package.swift",
+                    declaredID: targetID
+                )
+            )
+            evidence.append(ChangeImpactEvidenceSeed(
+                inputIdentity: pathIdentity(changed),
+                candidate: candidate,
+                relation: components[0] == "Tests" ? .containsTest : .containsSource,
+                locator: .init(
+                    path: "Package.swift",
+                    contentSHA256: manifestSHA,
+                    edgeID: "\(components[0]):\(targetID)"
+                ),
+                strength: .declaredEdge,
+                summary: "SwiftPM標準配置\(components[0])/\(targetID)"
+            ))
+            bindings.append(.init(role: .analysis, path: "Package.swift", contentSHA256: manifestSHA))
+        }
+
+        let bindingData = try encoder.encode(bindings)
+        let inputDigest = sha256(try encoder.encode(input.changedPaths))
+            + sha256(try encoder.encode(input.changedSymbols))
+            + sha256(bindingData)
+        return ChangeImpactProviderOutput(
+            report: .init(
+                descriptor: descriptor,
+                status: .fresh,
+                inputDigest: sha256(Data(inputDigest.utf8)),
+                observedAtCursor: input.workspaceCursor
+            ),
+            evidence: evidence,
+            freshnessBindings: bindings
+        )
+    }
+
+    private func regularFiles(in root: URL) throws -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
+            options: []
+        ) else { throw AIShellError.invalidPath(root.path) }
+        var result: [URL] = []
+        while let url = enumerator.nextObject() as? URL {
+            let relative = relativePath(url, root: root)
+            let components = relative.split(separator: "/")
+            if components.contains(where: { [".git", ".build", "node_modules"].contains(String($0)) }) {
+                if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+            guard values.isSymbolicLink != true,
+                  values.isRegularFile == true,
+                  (values.fileSize ?? 0) <= 4 * 1_024 * 1_024 else { continue }
+            result.append(url)
+        }
+        return result.sorted { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
+    }
+
+    private func lexicalRanges(of token: Data, in data: Data) -> [Range<Int>] {
+        guard !token.isEmpty, token.count <= data.count else { return [] }
+        var result: [Range<Int>] = []
+        var searchStart = data.startIndex
+        while searchStart < data.endIndex,
+              let range = data.range(of: token, options: [], in: searchStart..<data.endIndex) {
+            let left = range.lowerBound == data.startIndex ? nil : data[data.index(before: range.lowerBound)]
+            let right = range.upperBound == data.endIndex ? nil : data[range.upperBound]
+            if !isIdentifierByte(left), !isIdentifierByte(right) {
+                result.append(range.lowerBound..<range.upperBound)
+            }
+            searchStart = range.upperBound
+        }
+        return result
+    }
+
+    private func isIdentifierByte(_ byte: UInt8?) -> Bool {
+        guard let byte else { return false }
+        return (byte >= 0x30 && byte <= 0x39)
+            || (byte >= 0x41 && byte <= 0x5A)
+            || (byte >= 0x61 && byte <= 0x7A)
+            || byte == 0x5F
+            || byte >= 0x80
+    }
+
+    private func relativePath(_ url: URL, root: URL) -> String {
+        let canonicalURL = url.standardizedFileURL.resolvingSymlinksInPath()
+        let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+        return canonicalURL.pathComponents.dropFirst(canonicalRoot.pathComponents.count).joined(separator: "/")
+    }
+
+    private func pathIdentity(_ value: ChangeImpactChangedPath) -> String {
+        tuple(["input_path", value.path, value.expectedAbsent ? "1" : "0", value.contentSHA256 ?? ""])
+    }
+
+    private func symbolIdentity(_ value: ChangeImpactChangedSymbol) -> String {
+        tuple([
+            "input_symbol", value.path, String(value.startOffset), String(value.endOffset),
+            value.name, value.stableID ?? "", value.contentSHA256
+        ])
+    }
+
+    private func tuple(_ values: [String]) -> String {
+        values.map { "\(Data($0.utf8).count):\($0)" }.joined()
+    }
+
+    private func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+public enum ChangeImpactItemKind: String, Codable, Equatable, Sendable {
+    case inputPath = "input_path"
+    case inputSymbol = "input_symbol"
+    case requiredProvider = "required_provider"
+    case freshnessBinding = "freshness_binding"
+    case providerReport = "provider_report"
+    case coverageGap = "coverage_gap"
+    case candidate
+    case evidence
+    case candidateEvidence = "candidate_evidence"
+}
+
+public struct ChangeImpactItem: Codable, Equatable, Sendable {
+    public let kind: ChangeImpactItemKind
+    public let itemID: String
+    public let changedPath: ChangeImpactChangedPath?
+    public let changedSymbol: ChangeImpactChangedSymbol?
+    public let providerID: String?
+    public let freshnessBinding: ChangeImpactFreshnessBinding?
+    public let providerReport: ChangeImpactProviderReport?
+    public let coverageGap: ChangeImpactCoverageGap?
+    public let candidateID: String?
+    public let category: ChangeImpactCategory?
+    public let subject: ChangeImpactSubject?
+    public let evidenceID: String?
+    public let inputIdentity: String?
+    public let relation: ChangeImpactRelation?
+    public let locator: ChangeImpactEvidenceLocator?
+    public let evidenceStrength: ChangeImpactEvidenceStrength?
+    public let summary: String?
+
+    init(
+        kind: ChangeImpactItemKind,
+        itemID: String,
+        changedPath: ChangeImpactChangedPath? = nil,
+        changedSymbol: ChangeImpactChangedSymbol? = nil,
+        providerID: String? = nil,
+        freshnessBinding: ChangeImpactFreshnessBinding? = nil,
+        providerReport: ChangeImpactProviderReport? = nil,
+        coverageGap: ChangeImpactCoverageGap? = nil,
+        candidateID: String? = nil,
+        category: ChangeImpactCategory? = nil,
+        subject: ChangeImpactSubject? = nil,
+        evidenceID: String? = nil,
+        inputIdentity: String? = nil,
+        relation: ChangeImpactRelation? = nil,
+        locator: ChangeImpactEvidenceLocator? = nil,
+        evidenceStrength: ChangeImpactEvidenceStrength? = nil,
+        summary: String? = nil
+    ) {
+        self.kind = kind
+        self.itemID = itemID
+        self.changedPath = changedPath
+        self.changedSymbol = changedSymbol
+        self.providerID = providerID
+        self.freshnessBinding = freshnessBinding
+        self.providerReport = providerReport
+        self.coverageGap = coverageGap
+        self.candidateID = candidateID
+        self.category = category
+        self.subject = subject
+        self.evidenceID = evidenceID
+        self.inputIdentity = inputIdentity
+        self.relation = relation
+        self.locator = locator
+        self.evidenceStrength = evidenceStrength
+        self.summary = summary
+    }
+}
+
+public struct ChangeImpactFreshness: Codable, Equatable, Sendable {
+    public let rootIdentity: String
+    public let workspaceGeneration: String
+    public let inputCursor: String
+    public let observedCursor: String
+    public let bindingDigest: String
+    public let bindingCount: Int
+}
+
+public struct ChangeImpactCounts: Codable, Equatable, Sendable {
+    public let references: Int
+    public let dependencies: Int
+    public let relatedTests: Int
+    public let buildTargets: Int
+}
+
+public struct ChangeImpactResult: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let operation: ChangeImpactOperation
+    public let coverage: String
+    public let freshness: ChangeImpactFreshness
+    public let counts: ChangeImpactCounts
+    public let items: [ChangeImpactItem]
+    public let returnedBytes: Int
+    public let omittedBytes: Int
+    public let hasMore: Bool
+    public let continuation: String?
+    public let artifact: ArtifactMetadata
+}
+
+public enum ChangeImpactError: Error, Equatable, Sendable {
+    case invalidOperation
+    case notReady(operation: ChangeImpactOperation, ownerTask: String)
+    case invalidRequest(String)
+    case requestTooLarge(String)
+    case contentChanged(String)
+    case requiredProviderNotFresh([String])
+    case providerFailure(String)
+    case resultItemTooLarge(Int)
+    case byteBudgetTooSmall(requiredMinimumBytes: Int, continuation: String)
+    case invalidContinuation
+    case invalidContinuationRequest
+    case continuationExpired
+    case evidenceIDCollision(String)
+}
+
+public actor ChangeImpactService {
+    public static let schemaVersion = "aishell.change-impact.v2"
+    public static let defaultByteBudget = 65_536
+    public static let maximumByteBudget = 1_048_576
+
+    private struct AnalysisState: Sendable {
+        let semanticDigest: String
+        let operation: ChangeImpactOperation
+        let root: URL
+        let rootIdentity: String
+        let generation: String
+        let inputCursor: String
+        let observedCursor: String
+        let bindings: [ChangeImpactFreshnessBinding]
+        let items: [ChangeImpactItem]
+        let itemData: [Data]
+        let stream: Data
+        let artifact: ArtifactMetadata
+        let coverage: String
+        let counts: ChangeImpactCounts
+        let expiresAt: Date
+    }
+
+    private struct ContinuationState: Sendable {
+        let analysis: AnalysisState
+        let offset: Int
+        let previousBudget: Int
+    }
+
+    private struct EvidenceRecord {
+        let providerID: String
+        let candidateID: String
+        let candidate: ChangeImpactCandidateSeed
+        let evidenceID: String
+        let seed: ChangeImpactEvidenceSeed
+    }
+
+    private let runtimeStore: RuntimeStore
+    private let workspaceRuntime: WorkspaceStateRuntime
+    private let evidenceStore: EvidenceStore
+    private let providers: [any ChangeImpactProvider]
+    private let clock: @Sendable () -> Date
+    private let identifierHash: @Sendable (Data) -> String
+    private let beforeFinalFreshnessCheck: (@Sendable () async throws -> Void)?
+    private var continuations: [String: ContinuationState] = [:]
+
+    public init(
+        runtimeStore: RuntimeStore = RuntimeStore(),
+        workspaceRuntime: WorkspaceStateRuntime? = nil,
+        evidenceStore: EvidenceStore? = nil,
+        providers: [any ChangeImpactProvider]? = nil,
+        clock: @escaping @Sendable () -> Date = Date.init,
+        identifierHash: @escaping @Sendable (Data) -> String = { data in
+            SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        },
+        beforeFinalFreshnessCheck: (@Sendable () async throws -> Void)? = nil
+    ) {
+        self.runtimeStore = runtimeStore
+        self.workspaceRuntime = workspaceRuntime ?? WorkspaceStateRuntime(runtimeStore: runtimeStore)
+        self.evidenceStore = evidenceStore ?? EvidenceStore(
+            baseDirectory: runtimeStore.baseDirectory.appendingPathComponent("evidence", isDirectory: true)
+        )
+        self.providers = providers ?? [FileSystemChangeImpactProvider()]
+        self.clock = clock
+        self.identifierHash = identifierHash
+        self.beforeFinalFreshnessCheck = beforeFinalFreshnessCheck
+    }
+
+    public func analyze(_ request: ChangeImpactRequest) async throws -> ChangeImpactResult {
+        if let token = request.continuation {
+            return try await continueAnalysis(request, token: token)
+        }
+        guard let operation = request.operation else { throw ChangeImpactError.invalidOperation }
+        guard operation == .analyze else { throw ChangeImpactError.notReady(operation: operation, ownerTask: "ACE-033") }
+        guard let workspaceCursor = request.workspaceCursor, !workspaceCursor.isEmpty else {
+            throw ChangeImpactError.invalidRequest("workspace_cursor is required")
+        }
+        guard !request.changedPaths.isEmpty || !request.changedSymbols.isEmpty else {
+            throw ChangeImpactError.invalidRequest("changed_paths or changed_symbols is required")
+        }
+        try validateRequestLimits(request)
+        let budget = try validatedBudget(request.byteBudget ?? Self.defaultByteBudget)
+        let resolver = try await activeResolver()
+        let root = try resolveRoot(request.root, resolver: resolver)
+        let normalizedPaths = try normalizeChangedPaths(request.changedPaths, root: root, resolver: resolver)
+        let normalizedSymbols = try normalizeChangedSymbols(request.changedSymbols, root: root, resolver: resolver)
+        let requiredProviders = sortedUnique(request.requiredProviders)
+        let observed = try await validateCursor(root: root, cursor: workspaceCursor)
+        let cursorParts = try parseCursor(observed.cursor)
+        let rootIdentity = try fileIdentity(root)
+
+        var inputBindings: [ChangeImpactFreshnessBinding] = []
+        for changed in normalizedPaths {
+            inputBindings.append(.init(
+                role: .input,
+                path: changed.path,
+                contentSHA256: changed.contentSHA256,
+                expectedAbsent: changed.expectedAbsent
+            ))
+        }
+        for symbol in normalizedSymbols {
+            inputBindings.append(.init(role: .input, path: symbol.path, contentSHA256: symbol.contentSHA256))
+        }
+        try validateCurrent(bindings: inputBindings, root: root)
+
+        let providerInput = ChangeImpactProviderInput(
+            root: root,
+            workspaceCursor: observed.cursor,
+            changedPaths: normalizedPaths,
+            changedSymbols: normalizedSymbols
+        )
+        var outputs: [ChangeImpactProviderOutput] = []
+        var seenProviderIDs: Set<String> = []
+        for provider in providers.sorted(by: { utf8Less($0.descriptor.providerID, $1.descriptor.providerID) }) {
+            guard seenProviderIDs.insert(provider.descriptor.providerID).inserted else {
+                throw ChangeImpactError.invalidRequest("duplicate provider ID: \(provider.descriptor.providerID)")
+            }
+            do {
+                let output = try await provider.analyze(providerInput)
+                guard output.report.descriptor == provider.descriptor else {
+                    throw ChangeImpactError.providerFailure("provider report descriptor mismatch: \(provider.descriptor.providerID)")
+                }
+                guard output.report.inputDigest.count == 64,
+                      output.report.inputDigest.allSatisfy(\.isHexDigit) else {
+                    throw ChangeImpactError.providerFailure("provider input digest is invalid: \(provider.descriptor.providerID)")
+                }
+                outputs.append(output)
+            } catch {
+                if let impactError = error as? ChangeImpactError { throw impactError }
+                throw ChangeImpactError.providerFailure("\(provider.descriptor.providerID): \(error)")
+            }
+        }
+        let reportsByID = Dictionary(uniqueKeysWithValues: outputs.map { ($0.report.descriptor.providerID, $0.report) })
+        let missingRequired = requiredProviders.filter { reportsByID[$0]?.status != .fresh }
+        if !missingRequired.isEmpty {
+            throw ChangeImpactError.requiredProviderNotFresh(missingRequired)
+        }
+
+        var bindings = deduplicatedBindings(inputBindings + outputs.flatMap(\.freshnessBindings))
+        if let beforeFinalFreshnessCheck { try await beforeFinalFreshnessCheck() }
+        try validateCurrent(bindings: bindings, root: root)
+        let finalObserved = try await validateCursor(root: root, cursor: observed.cursor)
+        if finalObserved.cursor != observed.cursor {
+            throw ChangeImpactError.contentChanged("workspace cursor advanced during analysis")
+        }
+        bindings = deduplicatedBindings(bindings)
+
+        let built = try buildItems(
+            changedPaths: normalizedPaths,
+            changedSymbols: normalizedSymbols,
+            requiredProviders: requiredProviders,
+            bindings: bindings,
+            outputs: outputs
+        )
+        let encoded = try encodeItems(built.items)
+        let stream = encoded.reduce(into: Data()) { result, item in
+            result.append(item)
+            result.append(0x0A)
+        }
+        let artifact = try await evidenceStore.store(
+            data: stream,
+            kind: "change-impact-jsonl",
+            producer: "change_impact"
+        )
+        let semanticDigest = try canonicalDigest(ChangeImpactRequest(
+            operation: operation,
+            root: root.path,
+            workspaceCursor: workspaceCursor,
+            changedPaths: normalizedPaths,
+            changedSymbols: normalizedSymbols,
+            requiredProviders: requiredProviders,
+            byteBudget: nil,
+            continuation: nil
+        ))
+        let analysis = AnalysisState(
+            semanticDigest: semanticDigest,
+            operation: operation,
+            root: root,
+            rootIdentity: rootIdentity,
+            generation: cursorParts.generation,
+            inputCursor: workspaceCursor,
+            observedCursor: finalObserved.cursor,
+            bindings: bindings,
+            items: built.items,
+            itemData: encoded,
+            stream: stream,
+            artifact: artifact,
+            coverage: built.coverage,
+            counts: built.counts,
+            expiresAt: artifact.expiresAt
+        )
+        return try page(analysis: analysis, offset: 0, budget: budget)
+    }
+
+    private func continueAnalysis(_ request: ChangeImpactRequest, token: String) async throws -> ChangeImpactResult {
+        guard request.operation == nil,
+              request.root == nil,
+              request.workspaceCursor == nil,
+              request.changedPaths.isEmpty,
+              request.changedSymbols.isEmpty,
+              request.requiredProviders.isEmpty else {
+            throw ChangeImpactError.invalidContinuationRequest
+        }
+        guard let saved = continuations.removeValue(forKey: token) else {
+            throw ChangeImpactError.invalidContinuation
+        }
+        guard clock() <= saved.analysis.expiresAt else { throw ChangeImpactError.continuationExpired }
+        let budget = try validatedBudget(request.byteBudget ?? saved.previousBudget)
+        guard budget >= saved.previousBudget else { throw ChangeImpactError.invalidContinuationRequest }
+        guard try fileIdentity(saved.analysis.root) == saved.analysis.rootIdentity else {
+            throw ChangeImpactError.contentChanged("workspace root identity changed")
+        }
+        try validateCurrent(bindings: saved.analysis.bindings, root: saved.analysis.root)
+        let observed = try await validateCursor(root: saved.analysis.root, cursor: saved.analysis.observedCursor)
+        guard observed.cursor == saved.analysis.observedCursor else {
+            throw ChangeImpactError.contentChanged("workspace cursor advanced between pages")
+        }
+        return try page(analysis: saved.analysis, offset: saved.offset, budget: budget)
+    }
+
+    private func page(analysis: AnalysisState, offset: Int, budget: Int) throws -> ChangeImpactResult {
+        var items: [ChangeImpactItem] = []
+        var returned = 0
+        var index = offset
+        while index < analysis.items.count {
+            let bytes = analysis.itemData[index].count + 1
+            if bytes > budget, items.isEmpty {
+                let token = saveContinuation(analysis: analysis, offset: index, budget: budget)
+                throw ChangeImpactError.byteBudgetTooSmall(requiredMinimumBytes: bytes, continuation: token)
+            }
+            guard returned + bytes <= budget else { break }
+            items.append(analysis.items[index])
+            returned += bytes
+            index += 1
+            guard items.count < 4_096 else { break }
+        }
+        let hasMore = index < analysis.items.count
+        let continuation = hasMore ? saveContinuation(analysis: analysis, offset: index, budget: budget) : nil
+        let omitted = analysis.itemData[index...].reduce(0) { $0 + $1.count + 1 }
+        return ChangeImpactResult(
+            schemaVersion: Self.schemaVersion,
+            operation: analysis.operation,
+            coverage: analysis.coverage,
+            freshness: ChangeImpactFreshness(
+                rootIdentity: analysis.rootIdentity,
+                workspaceGeneration: analysis.generation,
+                inputCursor: analysis.inputCursor,
+                observedCursor: analysis.observedCursor,
+                bindingDigest: bindingDigest(analysis.bindings),
+                bindingCount: analysis.bindings.count
+            ),
+            counts: analysis.counts,
+            items: items,
+            returnedBytes: returned,
+            omittedBytes: omitted,
+            hasMore: hasMore,
+            continuation: continuation,
+            artifact: analysis.artifact
+        )
+    }
+
+    private func saveContinuation(analysis: AnalysisState, offset: Int, budget: Int) -> String {
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let material = "\(nonce):\(analysis.semanticDigest):\(offset):\(budget)"
+        let token = "ci2:\(nonce):\(Self.sha256(Data(material.utf8)))"
+        continuations[token] = ContinuationState(analysis: analysis, offset: offset, previousBudget: budget)
+        return token
+    }
+
+    private func buildItems(
+        changedPaths: [ChangeImpactChangedPath],
+        changedSymbols: [ChangeImpactChangedSymbol],
+        requiredProviders: [String],
+        bindings: [ChangeImpactFreshnessBinding],
+        outputs: [ChangeImpactProviderOutput]
+    ) throws -> (items: [ChangeImpactItem], coverage: String, counts: ChangeImpactCounts) {
+        var items: [ChangeImpactItem] = []
+        for changed in changedPaths {
+            items.append(.init(kind: .inputPath, itemID: "input-path:\(inputPathIdentity(changed))", changedPath: changed))
+        }
+        for symbol in changedSymbols {
+            items.append(.init(kind: .inputSymbol, itemID: "input-symbol:\(inputSymbolIdentity(symbol))", changedSymbol: symbol))
+        }
+        for providerID in requiredProviders {
+            items.append(.init(kind: .requiredProvider, itemID: "required-provider:\(providerID)", providerID: providerID))
+        }
+        for binding in bindings {
+            items.append(.init(
+                kind: .freshnessBinding,
+                itemID: "freshness:\(bindingIdentity(binding))",
+                freshnessBinding: binding
+            ))
+        }
+        let reports = outputs.map(\.report).sorted { reportSortKey($0) < reportSortKey($1) }
+        for report in reports {
+            items.append(.init(
+                kind: .providerReport,
+                itemID: "provider:\(report.descriptor.providerID)",
+                providerID: report.descriptor.providerID,
+                providerReport: report
+            ))
+        }
+        var gaps = outputs.flatMap(\.coverageGaps)
+        if reports.isEmpty {
+            for category in ChangeImpactCategory.allCases {
+                gaps.append(ChangeImpactCoverageGap(
+                    category: category,
+                    reasonCode: "NO_PROVIDER_ATTEMPTED",
+                    nextAction: "対応providerを有効にして再解析してください。"
+                ))
+            }
+        }
+        for report in reports where report.status != .fresh {
+            for category in ChangeImpactCategory.allCases {
+                gaps.append(ChangeImpactCoverageGap(
+                    category: category,
+                    reasonCode: report.reasonCode ?? "PROVIDER_NOT_FRESH",
+                    providerID: report.descriptor.providerID,
+                    nextAction: report.nextAction ?? "provider状態を解消して再解析してください。"
+                ))
+            }
+        }
+        gaps = unique(gaps).sorted { gapSortKey($0) < gapSortKey($1) }
+        for (index, gap) in gaps.enumerated() {
+            items.append(.init(kind: .coverageGap, itemID: "gap:\(index):\(gapSortKey(gap))", coverageGap: gap))
+        }
+
+        var candidates: [String: ChangeImpactCandidateSeed] = [:]
+        var evidenceByID: [String: EvidenceRecord] = [:]
+        for output in outputs where output.report.status == .fresh {
+            let providerID = output.report.descriptor.providerID
+            for seed in output.evidence {
+                try validateEvidence(seed, rootBindings: bindings)
+                let candidateIdentity = subjectIdentity(seed.candidate.subject)
+                let candidateID = identifierHash(Data(tuple([
+                    seed.candidate.category.rawValue, candidateIdentity
+                ]).utf8))
+                if let existing = candidates[candidateID], existing != seed.candidate {
+                    throw ChangeImpactError.evidenceIDCollision(candidateID)
+                }
+                candidates[candidateID] = seed.candidate
+                let canonical = tuple([
+                    providerID,
+                    seed.inputIdentity,
+                    candidateIdentity,
+                    seed.relation.rawValue,
+                    locatorIdentity(seed.locator),
+                    seed.strength.rawValue,
+                    seed.summary
+                ])
+                let evidenceID = identifierHash(Data(canonical.utf8))
+                let record = EvidenceRecord(
+                    providerID: providerID,
+                    candidateID: candidateID,
+                    candidate: seed.candidate,
+                    evidenceID: evidenceID,
+                    seed: seed
+                )
+                if let existing = evidenceByID[evidenceID] {
+                    let previous = try canonicalDigest(existing.seed)
+                    let current = try canonicalDigest(seed)
+                    if previous != current || existing.providerID != providerID {
+                        throw ChangeImpactError.evidenceIDCollision(evidenceID)
+                    }
+                } else {
+                    evidenceByID[evidenceID] = record
+                }
+            }
+        }
+        let sortedCandidates = candidates.map { (id: $0.key, seed: $0.value) }.sorted {
+            candidateSortKey($0.seed, id: $0.id) < candidateSortKey($1.seed, id: $1.id)
+        }
+        for candidate in sortedCandidates {
+            items.append(.init(
+                kind: .candidate,
+                itemID: "candidate:\(candidate.id)",
+                candidateID: candidate.id,
+                category: candidate.seed.category,
+                subject: candidate.seed.subject
+            ))
+        }
+        let sortedEvidence = evidenceByID.values.sorted { evidenceSortKey($0) < evidenceSortKey($1) }
+        for record in sortedEvidence {
+            items.append(.init(
+                kind: .evidence,
+                itemID: "evidence:\(record.evidenceID)",
+                providerID: record.providerID,
+                category: record.candidate.category,
+                subject: record.candidate.subject,
+                evidenceID: record.evidenceID,
+                inputIdentity: record.seed.inputIdentity,
+                relation: record.seed.relation,
+                locator: record.seed.locator,
+                evidenceStrength: record.seed.strength,
+                summary: record.seed.summary
+            ))
+        }
+        let edges = sortedEvidence.map { (candidateID: $0.candidateID, evidenceID: $0.evidenceID) }
+            .sorted { tuple([$0.candidateID, $0.evidenceID]) < tuple([$1.candidateID, $1.evidenceID]) }
+        for edge in edges {
+            items.append(.init(
+                kind: .candidateEvidence,
+                itemID: "edge:\(edge.candidateID):\(edge.evidenceID)",
+                candidateID: edge.candidateID,
+                evidenceID: edge.evidenceID
+            ))
+        }
+        guard items.count <= 4_096 else { throw ChangeImpactError.requestTooLarge("items exceed 4096") }
+        let count = { (category: ChangeImpactCategory) in
+            sortedCandidates.filter { $0.seed.category == category }.count
+        }
+        return (
+            items,
+            gaps.isEmpty ? "complete" : "partial",
+            ChangeImpactCounts(
+                references: count(.references),
+                dependencies: count(.dependencies),
+                relatedTests: count(.relatedTests),
+                buildTargets: count(.buildTargets)
+            )
+        )
+    }
+
+    private func encodeItems(_ items: [ChangeImpactItem]) throws -> [Data] {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try items.map { item in
+            let data = try encoder.encode(item)
+            guard data.count + 1 <= 16_384 else { throw ChangeImpactError.resultItemTooLarge(data.count + 1) }
+            return data
+        }
+    }
+
+    private func validateEvidence(
+        _ seed: ChangeImpactEvidenceSeed,
+        rootBindings: [ChangeImpactFreshnessBinding]
+    ) throws {
+        guard !seed.inputIdentity.isEmpty,
+              !seed.summary.isEmpty,
+              Data(seed.summary.utf8).count <= 4_096 else {
+            throw ChangeImpactError.invalidRequest("invalid provider evidence")
+        }
+        guard rootBindings.contains(where: {
+            $0.path == seed.locator.path && $0.contentSHA256 == seed.locator.contentSHA256
+        }) else {
+            throw ChangeImpactError.contentChanged("evidence locator is not freshness-bound: \(seed.locator.path)")
+        }
+    }
+
+    private func normalizeChangedPaths(
+        _ values: [ChangeImpactChangedPath],
+        root: URL,
+        resolver: AllowedPathResolver
+    ) throws -> [ChangeImpactChangedPath] {
+        var result: [String: ChangeImpactChangedPath] = [:]
+        for value in values {
+            guard value.expectedAbsent != (value.contentSHA256 != nil) else {
+                throw ChangeImpactError.invalidRequest("each changed path requires exactly one of content_sha256 or expected_absent")
+            }
+            let path = try normalizePath(value.path, expectedAbsent: value.expectedAbsent, root: root, resolver: resolver)
+            let sha = try value.contentSHA256.map(normalizedSHA)
+            let normalized = ChangeImpactChangedPath(path: path, contentSHA256: sha, expectedAbsent: value.expectedAbsent)
+            if let existing = result[path], existing != normalized {
+                throw ChangeImpactError.invalidRequest("conflicting changed path: \(path)")
+            }
+            result[path] = normalized
+        }
+        return result.values.sorted { utf8Less($0.path, $1.path) }
+    }
+
+    private func normalizeChangedSymbols(
+        _ values: [ChangeImpactChangedSymbol],
+        root: URL,
+        resolver: AllowedPathResolver
+    ) throws -> [ChangeImpactChangedSymbol] {
+        var result: [String: ChangeImpactChangedSymbol] = [:]
+        for value in values {
+            guard !value.name.isEmpty,
+                  value.startOffset >= 0,
+                  value.endOffset > value.startOffset else {
+                throw ChangeImpactError.invalidRequest("invalid changed symbol range")
+            }
+            let path = try normalizePath(value.path, expectedAbsent: false, root: root, resolver: resolver)
+            let normalized = ChangeImpactChangedSymbol(
+                path: path,
+                contentSHA256: try normalizedSHA(value.contentSHA256),
+                name: value.name,
+                startOffset: value.startOffset,
+                endOffset: value.endOffset,
+                stableID: value.stableID
+            )
+            let bytes = try Data(contentsOf: root.appendingPathComponent(path), options: .mappedIfSafe)
+            guard normalized.endOffset <= bytes.count,
+                  bytes[normalized.startOffset..<normalized.endOffset] == Data(normalized.name.utf8) else {
+                throw ChangeImpactError.invalidRequest("changed symbol range does not identify name bytes: \(path)")
+            }
+            let key = inputSymbolIdentity(normalized)
+            result[key] = normalized
+        }
+        return result.values.sorted { inputSymbolIdentity($0) < inputSymbolIdentity($1) }
+    }
+
+    private func normalizePath(
+        _ path: String,
+        expectedAbsent: Bool,
+        root: URL,
+        resolver: AllowedPathResolver
+    ) throws -> String {
+        guard !path.isEmpty, Data(path.utf8).count <= 4_096 else {
+            throw ChangeImpactError.requestTooLarge("path exceeds limit")
+        }
+        let url = expectedAbsent ? try resolver.resolveDestination(path) : try resolver.resolveExisting(path)
+        let rootComponents = root.pathComponents
+        let components = url.pathComponents
+        guard components.count > rootComponents.count,
+              Array(components.prefix(rootComponents.count)) == rootComponents else {
+            throw AIShellError.outsideAllowedRoot(url.path)
+        }
+        return components.dropFirst(rootComponents.count).joined(separator: "/")
+    }
+
+    private func validateCurrent(bindings: [ChangeImpactFreshnessBinding], root: URL) throws {
+        for binding in bindings {
+            let url = root.appendingPathComponent(binding.path)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            if binding.expectedAbsent {
+                guard !exists else { throw ChangeImpactError.contentChanged("expected absent: \(binding.path)") }
+                continue
+            }
+            guard exists, !isDirectory.boolValue, let expected = binding.contentSHA256 else {
+                throw ChangeImpactError.contentChanged("missing analysis input: \(binding.path)")
+            }
+            let current = try Self.fileSHA256(url)
+            guard current == expected else { throw ChangeImpactError.contentChanged(binding.path) }
+        }
+    }
+
+    private func validateCursor(root: URL, cursor: String) async throws -> WorkspaceSnapshot {
+        do {
+            return try await workspaceRuntime.snapshot(
+                path: root.path,
+                sinceCursor: cursor,
+                entryLimit: 1,
+                contextBudget: 0
+            )
+        } catch let error as AIShellError {
+            switch error {
+            case .cursorExpired: throw error
+            case .rescanRequired: throw error
+            default: throw error
+            }
+        }
+    }
+
+    private func activeResolver() async throws -> AllowedPathResolver {
+        let configuration = try await runtimeStore.loadConfiguration()
+        guard !configuration.isPaused else { throw AIShellError.paused }
+        return try AllowedPathResolver(rootPaths: configuration.allowedRootPaths)
+    }
+
+    private func resolveRoot(_ path: String?, resolver: AllowedPathResolver) throws -> URL {
+        let root = try resolver.resolveExisting(path)
+        guard resolver.isAllowedRoot(root) else { throw AIShellError.invalidPath(root.path) }
+        return root
+    }
+
+    private func validateRequestLimits(_ request: ChangeImpactRequest) throws {
+        guard request.changedPaths.count <= 4_096,
+              request.changedSymbols.count <= 4_096,
+              request.requiredProviders.count <= 64 else {
+            throw ChangeImpactError.requestTooLarge("request item count exceeds limit")
+        }
+        for symbol in request.changedSymbols {
+            guard Data(symbol.name.utf8).count <= 1_024,
+                  symbol.stableID.map({ Data($0.utf8).count <= 4_096 }) ?? true else {
+                throw ChangeImpactError.requestTooLarge("symbol field exceeds limit")
+            }
+        }
+        for provider in request.requiredProviders where provider.isEmpty || Data(provider.utf8).count > 256 {
+            throw ChangeImpactError.requestTooLarge("provider ID exceeds limit")
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard try encoder.encode(request).count <= 4_194_304 else {
+            throw ChangeImpactError.requestTooLarge("canonical request exceeds 4194304 bytes")
+        }
+    }
+
+    private func validatedBudget(_ value: Int) throws -> Int {
+        guard (1...Self.maximumByteBudget).contains(value) else {
+            throw ChangeImpactError.invalidRequest("byte_budget must be 1...1048576")
+        }
+        return value
+    }
+
+    private func parseCursor(_ cursor: String) throws -> (rootDigest: String, generation: String) {
+        let parts = cursor.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 5, parts[0] == "ws2", UInt64(parts[4]) != nil else {
+            throw AIShellError.cursorExpired(cursor)
+        }
+        return (String(parts[1]), String(parts[3]))
+    }
+
+    private func deduplicatedBindings(
+        _ values: [ChangeImpactFreshnessBinding]
+    ) -> [ChangeImpactFreshnessBinding] {
+        var map: [String: ChangeImpactFreshnessBinding] = [:]
+        for value in values { map[bindingIdentity(value)] = value }
+        return map.values.sorted { bindingSortKey($0) < bindingSortKey($1) }
+    }
+
+    private func bindingDigest(_ bindings: [ChangeImpactFreshnessBinding]) -> String {
+        Self.sha256(Data(bindings.map(bindingIdentity).joined(separator: "\n").utf8))
+    }
+
+    private func bindingIdentity(_ binding: ChangeImpactFreshnessBinding) -> String {
+        tuple([
+            binding.role.rawValue,
+            binding.path,
+            binding.contentSHA256 ?? "",
+            binding.expectedAbsent ? "1" : "0"
+        ])
+    }
+
+    private func bindingSortKey(_ binding: ChangeImpactFreshnessBinding) -> String {
+        let role = binding.role == .input ? "0" : "1"
+        return tuple([role, binding.path, binding.contentSHA256 ?? "", binding.expectedAbsent ? "1" : "0"])
+    }
+
+    private func inputPathIdentity(_ path: ChangeImpactChangedPath) -> String {
+        tuple(["input_path", path.path, path.expectedAbsent ? "1" : "0", path.contentSHA256 ?? ""])
+    }
+
+    private func inputSymbolIdentity(_ symbol: ChangeImpactChangedSymbol) -> String {
+        tuple([
+            "input_symbol", symbol.path, String(symbol.startOffset), String(symbol.endOffset),
+            symbol.name, symbol.stableID ?? "", symbol.contentSHA256
+        ])
+    }
+
+    private func subjectIdentity(_ subject: ChangeImpactSubject) -> String {
+        tuple([
+            subject.kind.rawValue, subject.path ?? "", subject.name ?? "",
+            subject.startOffset.map(String.init) ?? "", subject.endOffset.map(String.init) ?? "",
+            subject.stableID ?? "", subject.ecosystemID ?? "", subject.profileIdentity ?? "",
+            subject.manifestPath ?? "", subject.declaredID ?? ""
+        ])
+    }
+
+    private func locatorIdentity(_ locator: ChangeImpactEvidenceLocator) -> String {
+        tuple([
+            locator.path, locator.contentSHA256, locator.startOffset.map(String.init) ?? "",
+            locator.endOffset.map(String.init) ?? "", locator.edgeID ?? ""
+        ])
+    }
+
+    private func candidateSortKey(_ seed: ChangeImpactCandidateSeed, id: String) -> String {
+        tuple([
+            String(categoryOrder(seed.category)),
+            String(subjectOrder(seed.subject.kind)),
+            subjectIdentity(seed.subject),
+            id
+        ])
+    }
+
+    private func evidenceSortKey(_ record: EvidenceRecord) -> String {
+        let providerID = record.providerID
+        let evidenceID = record.evidenceID
+        let seed = record.seed
+        return tuple([
+            providerID, seed.inputIdentity, subjectIdentity(seed.candidate.subject),
+            String(relationOrder(seed.relation)), locatorIdentity(seed.locator),
+            String(strengthOrder(seed.strength)), seed.summary, evidenceID
+        ])
+    }
+
+    private func reportSortKey(_ report: ChangeImpactProviderReport) -> String {
+        tuple([
+            report.descriptor.providerID,
+            report.descriptor.kind.rawValue,
+            report.descriptor.version,
+            report.status.rawValue
+        ])
+    }
+
+    private func gapSortKey(_ gap: ChangeImpactCoverageGap) -> String {
+        tuple([
+            String(categoryOrder(gap.category)), gap.reasonCode,
+            gap.providerID ?? "", gap.subject.map(subjectIdentity) ?? ""
+        ])
+    }
+
+    private func categoryOrder(_ value: ChangeImpactCategory) -> Int {
+        ChangeImpactCategory.allCases.firstIndex(of: value) ?? Int.max
+    }
+
+    private func subjectOrder(_ value: ChangeImpactSubjectKind) -> Int {
+        ChangeImpactSubjectKind.allCases.firstIndex(of: value) ?? Int.max
+    }
+
+    private func relationOrder(_ value: ChangeImpactRelation) -> Int {
+        switch value {
+        case .declaredDependency: 0
+        case .containsSource: 1
+        case .containsTest: 2
+        case .lexicalReference: 3
+        case .namingHeuristic: 4
+        }
+    }
+
+    private func strengthOrder(_ value: ChangeImpactEvidenceStrength) -> Int {
+        switch value {
+        case .heuristic: 0
+        case .lexicalMatch: 1
+        case .declaredEdge: 2
+        }
+    }
+
+    private func sortedUnique(_ values: [String]) -> [String] {
+        Array(Set(values)).sorted(by: utf8Less)
+    }
+
+    private func unique<T: Codable & Equatable>(_ values: [T]) -> [T] {
+        var result: [T] = []
+        for value in values where !result.contains(value) { result.append(value) }
+        return result
+    }
+
+    private func canonicalDigest<T: Encodable>(_ value: T) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return Self.sha256(try encoder.encode(value))
+    }
+
+    private func normalizedSHA(_ value: String) throws -> String {
+        let lower = value.lowercased()
+        guard lower.count == 64, lower.allSatisfy({ $0.isHexDigit }) else {
+            throw ChangeImpactError.invalidRequest("SHA-256 must be 64 lowercase hexadecimal characters")
+        }
+        return lower
+    }
+
+    private func tuple(_ values: [String]) -> String {
+        values.map { "\(Data($0.utf8).count):\($0)" }.joined()
+    }
+
+    private func utf8Less(_ lhs: String, _ rhs: String) -> Bool {
+        lhs.utf8.lexicographicallyPrecedes(rhs.utf8)
+    }
+
+    private func fileIdentity(_ url: URL) throws -> String {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { throw AIShellError.invalidPath(url.path) }
+        return "\(info.st_dev):\(info.st_ino)"
+    }
+
+    private static func fileSHA256(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while let data = try handle.read(upToCount: 1_048_576), !data.isEmpty { hash.update(data: data) }
+        return hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+}
