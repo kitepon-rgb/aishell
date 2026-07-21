@@ -139,6 +139,42 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
         XCTAssertEqual(try adopted.extentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, 3)
     }
 
+    func testRenameCrashRecoversOnlyAtPlannedFinalAndReleaseEndsVerification() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let final = fixture.directory.appendingPathComponent("evidence-final.json")
+        let wrong = fixture.directory.appendingPathComponent("redirect.json")
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "materialize")
+        _ = try await ledger.prepareCapacity([
+            .init(id: "evidence", idempotencyKey: "evidence-key", kind: .evidenceData,
+                  maximumEncodedBytes: 256, allocationDirectory: fixture.directory)
+        ])
+        let adopted = try await ledger.adoptReserve(materialID: "evidence", idempotencyKey: "evidence-key", finalURL: final)
+        let actual = Data("durable evidence".utf8)
+        _ = try await ledger.authorizeActual(materialID: "evidence", idempotencyKey: "evidence-key", data: actual)
+        let extentHandle = try FileHandle(forWritingTo: adopted.extentURL)
+        try extentHandle.write(contentsOf: actual)
+        try extentHandle.synchronize()
+        try extentHandle.close()
+        try FileManager.default.moveItem(at: adopted.extentURL, to: final)
+
+        // rename後・ledger更新前のcrash: planned final完全一致だけからmaterializedへ収束する。
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "materialize")
+        _ = try await restarted.reconcile()
+        await XCTAssertThrowsErrorAsync(
+            try await restarted.commitMaterialization(materialID: "evidence", idempotencyKey: "evidence-key", finalURL: wrong)
+        ) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .finalPathMismatch("evidence"))
+        }
+        let first = try await restarted.commitMaterialization(materialID: "evidence", idempotencyKey: "evidence-key", finalURL: final)
+        let replay = try await restarted.commitMaterialization(materialID: "evidence", idempotencyKey: "evidence-key", finalURL: final)
+        XCTAssertEqual(first, replay)
+
+        try await restarted.releaseMaterial(materialID: "evidence", idempotencyKey: "evidence-key")
+        try Data("product now owns this path".utf8).write(to: final)
+        _ = try await restarted.reconcile()
+    }
+
 }
 
 private struct Fixture {

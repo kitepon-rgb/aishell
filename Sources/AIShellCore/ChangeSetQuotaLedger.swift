@@ -62,6 +62,17 @@ public actor ChangeSetQuotaLedger {
         public let idempotencyKey: String
         public let extentURL: URL
         public let capacityBytes: Int
+        public let plannedFinalURL: URL
+    }
+
+    public struct MaterializationReceipt: Equatable, Sendable {
+        public let materialID: String
+        public let idempotencyKey: String
+        public let finalURL: URL
+        public let device: UInt64
+        public let inode: UInt64
+        public let bytes: Int
+        public let sha256: String
     }
 
     public struct Receipt: Codable, Equatable, Sendable {
@@ -101,6 +112,8 @@ public actor ChangeSetQuotaLedger {
         case durableWriteFailed(String)
         case corruptLedger(String)
         case physicalReservationNotConverged(volume: UInt64)
+        case finalPathMismatch(String)
+        case materializationIncomplete(String)
     }
 
     private struct MaterialRecord: Codable, Equatable {
@@ -113,6 +126,12 @@ public actor ChangeSetQuotaLedger {
         let sha256: String
         let volume: String
         let extentFilePath: String
+        let plannedFinalPathHex: String
+        let plannedFinalPathBytes: String
+        let finalDevice: String
+        let finalInode: String
+        let finalBytes: String
+        let finalSHA256: String
         let status: Int
     }
 
@@ -133,8 +152,16 @@ public actor ChangeSetQuotaLedger {
         let volumes: [VolumeRecord]
     }
 
+    private struct MaterialIdentity {
+        let device: UInt64
+        let inode: UInt64
+        let bytes: Int
+        let sha256: String
+    }
+
     private static let schema = "aishell.change-set-quota-ledger.v1"
     private static let numberWidth = 20
+    private static let maximumPathBytes = 4_096
 
     private let ledgerDirectory: URL
     private let reservationID: String
@@ -198,6 +225,10 @@ public actor ChangeSetQuotaLedger {
                 sha256: Self.zeroDigest,
                 volume: Self.fixed(device),
                 extentFilePath: directory.appendingPathComponent(".aishell-quota-\(reservationID)-material-\(input.id).extent").path,
+                plannedFinalPathHex: Self.emptyPathHex,
+                plannedFinalPathBytes: Self.fixed(0),
+                finalDevice: Self.fixed(0), finalInode: Self.fixed(0), finalBytes: Self.fixed(0),
+                finalSHA256: Self.zeroDigest,
                 status: 0
             ))
         }
@@ -274,15 +305,29 @@ public actor ChangeSetQuotaLedger {
     /// `prepareCapacity` が確保したextentを後続materialの所有物としてdurableに採用する。
     /// extentは同一volume上でcallerが直接writeし、最終pathへatomic renameできる。
     public func adoptReserve(materialID: String, idempotencyKey: String) throws -> AdoptedReserve {
+        let snapshot = try load()
+        guard let material = snapshot.materials.first(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
+        return try adoptReserve(materialID: materialID, idempotencyKey: idempotencyKey,
+                                finalURL: URL(fileURLWithPath: material.extentFilePath))
+    }
+
+    public func adoptReserve(materialID: String, idempotencyKey: String, finalURL: URL) throws -> AdoptedReserve {
         var snapshot = try load()
         guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
         let material = snapshot.materials[index]
         guard material.idempotencyKey == idempotencyKey else { throw LedgerError.idempotencyMismatch(materialID) }
-        if material.status >= 1 { return Self.adoptedReserve(material) }
+        let canonicalFinal = try Self.canonicalPlannedFinal(finalURL)
+        let planned = try Self.encodePath(canonicalFinal.path)
+        let device = try Self.parseUInt(material.volume)
+        guard try Self.device(ofExistingDirectory: canonicalFinal.deletingLastPathComponent()) == device else { throw LedgerError.differentLedgerVolume }
+        if material.status >= 1 {
+            guard try Self.plannedFinalURL(material).path == canonicalFinal.path else { throw LedgerError.finalPathMismatch(materialID) }
+            return Self.adoptedReserve(material)
+        }
         let extent = URL(fileURLWithPath: material.extentFilePath)
         let capacity = try Self.parse(material.bytes)
-        try Self.requireExtent(extent, device: try Self.parseUInt(material.volume), size: capacity)
-        snapshot = Self.settingStatus(snapshot, materialIndex: index, status: 1)
+        try Self.requireExtent(extent, device: device, size: capacity)
+        snapshot = Self.adopting(snapshot, materialIndex: index, pathHex: planned.hex, pathBytes: planned.bytes)
         let encoded = try Self.encode(snapshot)
         let expectedLedgerBytes = try Self.parse(snapshot.ledgerBytes)
         guard encoded.count == expectedLedgerBytes else { throw LedgerError.corruptLedger("ledger encoded size is not invariant") }
@@ -327,6 +372,43 @@ public actor ChangeSetQuotaLedger {
         return Self.receipt(snapshot.materials[index], snapshot: snapshot)
     }
 
+    /// extentを予定final pathへatomic renameした後、そのinodeをledgerの新しい照合正本にする。
+    public func commitMaterialization(materialID: String, idempotencyKey: String, finalURL: URL) throws -> MaterializationReceipt {
+        var snapshot = try load()
+        guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
+        let material = snapshot.materials[index]
+        guard material.idempotencyKey == idempotencyKey else { throw LedgerError.idempotencyMismatch(materialID) }
+        guard material.status == 2 || material.status == 3 else { throw LedgerError.materializationIncomplete(materialID) }
+        let canonical = try Self.canonicalPlannedFinal(finalURL)
+        let plannedFinal = try Self.plannedFinalURL(material)
+        guard canonical.path == plannedFinal.path else { throw LedgerError.finalPathMismatch(materialID) }
+        let identity = try Self.inspectMaterialized(canonical, expectedDevice: try Self.parseUInt(material.volume),
+                                                    expectedBytes: try Self.parse(material.actualBytes), expectedSHA: material.sha256)
+        if material.status == 3 {
+            try Self.validateStoredIdentity(material, identity: identity)
+            return Self.materializationReceipt(material, identity: identity)
+        }
+        snapshot = Self.materializing(snapshot, materialIndex: index, identity: identity)
+        try persist(snapshot)
+        return Self.materializationReceipt(snapshot.materials[index], identity: identity)
+    }
+
+    /// terminal replayがdurableになった後、ledgerのextent/final検証責務を明示的に終了する。
+    /// final material自体は削除しない。
+    public func releaseMaterial(materialID: String, idempotencyKey: String) throws {
+        var snapshot = try load()
+        guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
+        let material = snapshot.materials[index]
+        guard material.idempotencyKey == idempotencyKey else { throw LedgerError.idempotencyMismatch(materialID) }
+        if material.status == 4 { return }
+        guard material.status == 3 else { throw LedgerError.materializationIncomplete(materialID) }
+        let extent = URL(fileURLWithPath: material.extentFilePath)
+        let final = try Self.plannedFinalURL(material)
+        if extent.path != final.path, FileManager.default.fileExists(atPath: extent.path) { try FileManager.default.removeItem(at: extent) }
+        snapshot = Self.settingTerminalReleased(snapshot, materialIndex: index)
+        try persist(snapshot)
+    }
+
     /// crash後、durable ledgerを正本として全 volume の物理予約sizeを収束させる。
     @discardableResult
     public func reconcile() throws -> View {
@@ -336,6 +418,13 @@ public actor ChangeSetQuotaLedger {
     }
 
     public func currentView() throws -> View { Self.view(try load()) }
+
+    private func persist(_ snapshot: Snapshot) throws {
+        let encoded = try Self.encode(snapshot)
+        let expectedLedgerBytes = try Self.parse(snapshot.ledgerBytes)
+        guard encoded.count == expectedLedgerBytes else { throw LedgerError.corruptLedger("ledger encoded size is not invariant") }
+        try Self.atomicDurableWrite(encoded, to: ledgerURL)
+    }
 
     private func load() throws -> Snapshot {
         guard FileManager.default.fileExists(atPath: ledgerURL.path) else { throw LedgerError.notPrepared }
@@ -350,7 +439,8 @@ public actor ChangeSetQuotaLedger {
         catch { throw LedgerError.corruptLedger(String(describing: error)) }
     }
 
-    private func reconcile(snapshot: Snapshot) throws {
+    private func reconcile(snapshot initial: Snapshot) throws {
+        var snapshot = initial
         let ledgerDevice = try Self.device(ofExistingDirectory: ledgerDirectory)
         let expectedLedgerDevice = try Self.parseUInt(snapshot.ledgerDevice)
         guard ledgerDevice == expectedLedgerDevice else { throw LedgerError.differentLedgerVolume }
@@ -362,10 +452,25 @@ public actor ChangeSetQuotaLedger {
                 try Self.resizeAndSync(URL(fileURLWithPath: volume.reserveFilePath), bytes: 0)
             }
         }
-        for material in snapshot.materials {
+        for index in snapshot.materials.indices {
+            let material = snapshot.materials[index]
+            if material.status == 4 { continue }
             let device = try Self.parseUInt(material.volume)
-            let expectedSize = material.status == 2 ? try Self.parse(material.actualBytes) : try Self.parse(material.bytes)
             let extent = URL(fileURLWithPath: material.extentFilePath)
+            if material.status == 3 {
+                let identity = try Self.inspectMaterialized(try Self.plannedFinalURL(material), expectedDevice: device,
+                                                            expectedBytes: try Self.parse(material.actualBytes), expectedSHA: material.sha256)
+                try Self.validateStoredIdentity(material, identity: identity)
+                continue
+            }
+            if material.status == 2, !FileManager.default.fileExists(atPath: extent.path) {
+                let identity = try Self.inspectMaterialized(try Self.plannedFinalURL(material), expectedDevice: device,
+                                                            expectedBytes: try Self.parse(material.actualBytes), expectedSHA: material.sha256)
+                snapshot = Self.materializing(snapshot, materialIndex: index, identity: identity)
+                try persist(snapshot)
+                continue
+            }
+            let expectedSize = material.status == 2 ? try Self.parse(material.actualBytes) : try Self.parse(material.bytes)
             do { try Self.resizeAndSync(extent, bytes: expectedSize, expectedDevice: device) }
             catch { throw LedgerError.physicalReservationNotConverged(volume: device) }
         }
@@ -383,13 +488,16 @@ public actor ChangeSetQuotaLedger {
                      ledgerBytes: fixed(ledgerBytes), materials: snapshot.materials, volumes: volumes)
     }
 
-    private static func settingStatus(_ snapshot: Snapshot, materialIndex: Int, status: Int) -> Snapshot {
+    private static func adopting(_ snapshot: Snapshot, materialIndex: Int, pathHex: String, pathBytes: String) -> Snapshot {
         var materials = snapshot.materials
         let material = materials[materialIndex]
         materials[materialIndex] = .init(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
                                          bytes: material.bytes, actualBytes: material.actualBytes,
                                          expectedSHA256: material.expectedSHA256, sha256: material.sha256,
-                                         volume: material.volume, extentFilePath: material.extentFilePath, status: status)
+                                         volume: material.volume, extentFilePath: material.extentFilePath,
+                                         plannedFinalPathHex: pathHex, plannedFinalPathBytes: pathBytes,
+                                         finalDevice: material.finalDevice, finalInode: material.finalInode,
+                                         finalBytes: material.finalBytes, finalSHA256: material.finalSHA256, status: 1)
         return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
                      ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
     }
@@ -399,13 +507,46 @@ public actor ChangeSetQuotaLedger {
         let material = materials[materialIndex]
         materials[materialIndex] = .init(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
                                          bytes: material.bytes, actualBytes: fixed(actualBytes), expectedSHA256: material.expectedSHA256,
-                                         sha256: digest, volume: material.volume, extentFilePath: material.extentFilePath, status: 2)
+                                         sha256: digest, volume: material.volume, extentFilePath: material.extentFilePath,
+                                         plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
+                                         finalDevice: material.finalDevice, finalInode: material.finalInode,
+                                         finalBytes: material.finalBytes, finalSHA256: material.finalSHA256, status: 2)
         let volume = volumes[volumeIndex]
         let remaining = (try! parse(volume.remainingBytes)) - (try! parse(material.bytes))
         volumes[volumeIndex] = .init(device: volume.device, directoryPath: volume.directoryPath, reserveFilePath: volume.reserveFilePath,
                                      totalBytes: volume.totalBytes, remainingBytes: fixed(remaining))
         return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
                      ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: volumes)
+    }
+
+    private static func materializing(_ snapshot: Snapshot, materialIndex: Int, identity: MaterialIdentity) -> Snapshot {
+        var materials = snapshot.materials
+        let material = materials[materialIndex]
+        materials[materialIndex] = .init(
+            id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+            bytes: material.bytes, actualBytes: material.actualBytes, expectedSHA256: material.expectedSHA256,
+            sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
+            plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
+            finalDevice: fixed(identity.device), finalInode: fixed(identity.inode), finalBytes: fixed(identity.bytes),
+            finalSHA256: identity.sha256, status: 3
+        )
+        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
+                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+    }
+
+    private static func settingTerminalReleased(_ snapshot: Snapshot, materialIndex: Int) -> Snapshot {
+        var materials = snapshot.materials
+        let material = materials[materialIndex]
+        materials[materialIndex] = .init(
+            id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+            bytes: material.bytes, actualBytes: material.actualBytes, expectedSHA256: material.expectedSHA256,
+            sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
+            plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
+            finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
+            finalSHA256: material.finalSHA256, status: 4
+        )
+        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
+                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
     }
 
     private static func receipt(_ material: MaterialRecord, snapshot: Snapshot) -> Receipt {
@@ -416,7 +557,8 @@ public actor ChangeSetQuotaLedger {
 
     private static func adoptedReserve(_ material: MaterialRecord) -> AdoptedReserve {
         .init(materialID: material.id, idempotencyKey: material.idempotencyKey,
-              extentURL: URL(fileURLWithPath: material.extentFilePath), capacityBytes: try! parse(material.bytes))
+              extentURL: URL(fileURLWithPath: material.extentFilePath), capacityBytes: try! parse(material.bytes),
+              plannedFinalURL: try! plannedFinalURL(material))
     }
 
     private static func view(_ snapshot: Snapshot) -> View {
@@ -433,7 +575,9 @@ public actor ChangeSetQuotaLedger {
         let normalizedMaterials = lhs.materials.map {
             MaterialRecord(id: $0.id, idempotencyKey: $0.idempotencyKey, kind: $0.kind,
                            bytes: $0.bytes, actualBytes: fixed(0), expectedSHA256: $0.expectedSHA256,
-                           sha256: zeroDigest, volume: $0.volume, extentFilePath: $0.extentFilePath, status: 0)
+                           sha256: zeroDigest, volume: $0.volume, extentFilePath: $0.extentFilePath,
+                           plannedFinalPathHex: emptyPathHex, plannedFinalPathBytes: fixed(0),
+                           finalDevice: fixed(0), finalInode: fixed(0), finalBytes: fixed(0), finalSHA256: zeroDigest, status: 0)
         }
         guard normalizedMaterials == rhs.materials, lhs.volumes.count == rhs.volumes.count else { return false }
         return zip(lhs.volumes, rhs.volumes).allSatisfy {
@@ -517,11 +661,66 @@ public actor ChangeSetQuotaLedger {
         return UInt64(info.st_dev)
     }
 
+    private static func canonicalPlannedFinal(_ url: URL) throws -> URL {
+        let parent = url.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath()
+        _ = try device(ofExistingDirectory: parent)
+        let leaf = url.lastPathComponent
+        guard !leaf.isEmpty, leaf != ".", leaf != ".." else { throw LedgerError.finalPathMismatch(url.path) }
+        return parent.appendingPathComponent(leaf).standardizedFileURL
+    }
+
+    private static func encodePath(_ path: String) throws -> (hex: String, bytes: String) {
+        let data = Data(path.utf8)
+        guard data.count <= maximumPathBytes else { throw LedgerError.finalPathMismatch(path) }
+        let hex = data.map { String(format: "%02x", $0) }.joined()
+        return (hex + String(repeating: "0", count: maximumPathBytes * 2 - hex.count), fixed(data.count))
+    }
+
+    private static func plannedFinalURL(_ material: MaterialRecord) throws -> URL {
+        let count = try parse(material.plannedFinalPathBytes)
+        guard count > 0, material.plannedFinalPathHex.count == maximumPathBytes * 2 else { throw LedgerError.finalPathMismatch(material.id) }
+        var data = Data(); data.reserveCapacity(count)
+        let prefix = material.plannedFinalPathHex.prefix(count * 2)
+        var index = prefix.startIndex
+        for _ in 0..<count {
+            let next = prefix.index(index, offsetBy: 2)
+            guard let byte = UInt8(prefix[index..<next], radix: 16) else { throw LedgerError.corruptLedger("invalid planned path") }
+            data.append(byte); index = next
+        }
+        guard let path = String(data: data, encoding: .utf8) else { throw LedgerError.corruptLedger("planned path is not UTF-8") }
+        return URL(fileURLWithPath: path)
+    }
+
+    private static func inspectMaterialized(_ url: URL, expectedDevice: UInt64, expectedBytes: Int, expectedSHA: String) throws -> MaterialIdentity {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              UInt64(info.st_dev) == expectedDevice, Int(info.st_size) == expectedBytes else {
+            throw LedgerError.materializationIncomplete(url.path)
+        }
+        let digest = sha256(try Data(contentsOf: url, options: [.mappedIfSafe]))
+        guard digest == expectedSHA else { throw LedgerError.contentMismatch(url.path) }
+        return .init(device: UInt64(info.st_dev), inode: UInt64(info.st_ino), bytes: Int(info.st_size), sha256: digest)
+    }
+
+    private static func validateStoredIdentity(_ material: MaterialRecord, identity: MaterialIdentity) throws {
+        guard try parseUInt(material.finalDevice) == identity.device,
+              try parseUInt(material.finalInode) == identity.inode,
+              try parse(material.finalBytes) == identity.bytes,
+              material.finalSHA256 == identity.sha256 else { throw LedgerError.materializationIncomplete(material.id) }
+    }
+
+    private static func materializationReceipt(_ material: MaterialRecord, identity: MaterialIdentity) -> MaterializationReceipt {
+        .init(materialID: material.id, idempotencyKey: material.idempotencyKey,
+              finalURL: try! plannedFinalURL(material), device: identity.device, inode: identity.inode,
+              bytes: identity.bytes, sha256: identity.sha256)
+    }
+
     private static func encode(_ snapshot: Snapshot) throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(snapshot)
     }
     private static let zeroDigest = String(repeating: "0", count: 64)
+    private static let emptyPathHex = String(repeating: "0", count: maximumPathBytes * 2)
     private static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     private static func validIdentifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 128 && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) }
