@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "c0dee710dab337ce1fcfa70c3cf71a3b894f41c89e788f92056b14d8d13f078a",
+  "evidence_id": "ace-023b-project-profile-20260721",
+  "git_blob_oid": "cbc68eabcfbf263270fdde75c3c36fe37f0c608c",
+  "media_type": "text/x-swift",
+  "path": "Sources/AIShellCore/ProjectProfileService.swift",
+  "repo_id": "self"
+}
