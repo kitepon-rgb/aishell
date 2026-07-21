@@ -10,7 +10,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
 
         let registry = try fixture.open()
         let initial = await registry.snapshot()
-        XCTAssertEqual(initial.generation, 1)
+        XCTAssertEqual(initial.generation, 0)
         XCTAssertEqual(initial.slots.count, 64)
         XCTAssertEqual(Set(initial.slots.map(\.clientID)).count, 64)
         XCTAssertTrue(initial.slots.allSatisfy { $0.allocationState == .free && $0.currentEpoch == 0 })
@@ -27,14 +27,14 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
             expectedRegistryGeneration: initial.generation
         )
-        XCTAssertEqual(receipt.registryGeneration, 2)
+        XCTAssertEqual(receipt.registryGeneration, 1)
         XCTAssertEqual(receipt.slotIndex, 0)
         XCTAssertEqual(receipt.clientID, initial.slots[0].clientID)
         XCTAssertEqual(try fixture.fileSize("registry-b.bank"), ChangeSetClientRegistry.bankByteCount)
 
         let restarted = try fixture.open()
         let restartedSnapshot = await restarted.snapshot()
-        XCTAssertEqual(restartedSnapshot.generation, 2)
+        XCTAssertEqual(restartedSnapshot.generation, 1)
         XCTAssertEqual(restartedSnapshot.slots.filter { $0.allocationState == .active }.count, 1)
         let replayedReceipt = try await restarted.allocate(
             controlRequestID: fixture.uuid(1),
@@ -55,13 +55,13 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             controlRequestID: fixture.uuid(2),
             proofIDDigest: fixture.digest(2),
             proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
-            expectedRegistryGeneration: 1
+            expectedRegistryGeneration: 0
         )
 
         try fixture.corrupt("registry-b.bank")
         let recovered = try fixture.open()
         let recoveredSnapshot = await recovered.snapshot()
-        XCTAssertEqual(recoveredSnapshot.generation, 1)
+        XCTAssertEqual(recoveredSnapshot.generation, 0)
         XCTAssertTrue(recoveredSnapshot.slots.allSatisfy { $0.allocationState == .free })
 
         try fixture.corrupt("registry-a.bank")
@@ -78,8 +78,8 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         let proof = fixture.digest(3)
         let expiry = fixture.clock.now().addingTimeInterval(300)
 
-        let first = try await registry.allocate(controlRequestID: requestID, proofIDDigest: proof, proofExpiresAt: expiry, expectedRegistryGeneration: 1)
-        let replay = try await registry.allocate(controlRequestID: requestID, proofIDDigest: proof, proofExpiresAt: expiry, expectedRegistryGeneration: 1)
+        let first = try await registry.allocate(controlRequestID: requestID, proofIDDigest: proof, proofExpiresAt: expiry, expectedRegistryGeneration: 0)
+        let replay = try await registry.allocate(controlRequestID: requestID, proofIDDigest: proof, proofExpiresAt: expiry, expectedRegistryGeneration: 0)
         XCTAssertEqual(replay, first)
 
         await XCTAssertRegistryError(.ownerProofConsumed) {
@@ -95,7 +95,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
                 controlRequestID: fixture.uuid(5),
                 proofIDDigest: fixture.digest(5),
                 proofExpiresAt: expiry,
-                expectedRegistryGeneration: 1
+                expectedRegistryGeneration: 0
             )
         }
     }
@@ -108,7 +108,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             controlRequestID: fixture.uuid(6),
             proofIDDigest: fixture.digest(6),
             proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
-            expectedRegistryGeneration: 1
+            expectedRegistryGeneration: 0
         )
         let allocatedSnapshot = await registry.snapshot()
         let client = try XCTUnwrap(allocatedSnapshot.slots.first { $0.allocationState == .active })
@@ -122,7 +122,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             sequence: 1,
             requestDigest: requestDigest,
             transactionID: "tx-1",
-            expectedRegistryGeneration: 2
+            expectedRegistryGeneration: 1
         )
         guard case let .pending(pending) = try await registry.lookup(clientID: client.clientID, epoch: client.currentEpoch, sequence: 1, requestDigest: requestDigest) else {
             return XCTFail("admitted request must be pending")
@@ -170,7 +170,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             controlRequestID: fixture.uuid(7),
             proofIDDigest: fixture.digest(7),
             proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
-            expectedRegistryGeneration: 1
+            expectedRegistryGeneration: 0
         )
         let initialSnapshot = await registry.snapshot()
         let first = try XCTUnwrap(initialSnapshot.slots.first { $0.allocationState == .active })
@@ -181,7 +181,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             clientID: first.clientID,
             expectedEpoch: first.currentEpoch,
             nextEpoch: first.currentEpoch + 1,
-            expectedRegistryGeneration: 2
+            expectedRegistryGeneration: 1
         )
         await XCTAssertRegistryError(.clientExpired) {
             try await registry.lookup(clientID: first.clientID, epoch: first.currentEpoch, sequence: 1, requestDigest: fixture.digest(30))
@@ -222,7 +222,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             controlRequestID: fixture.uuid(40),
             proofIDDigest: fixture.digest(40),
             proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
-            expectedRegistryGeneration: 1
+            expectedRegistryGeneration: 0
         )
         let secondReceipt = try await registry.allocate(
             controlRequestID: fixture.uuid(41),
@@ -278,6 +278,145 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         XCTAssertNil(Mirror(reflecting: references[0]).children.first { $0.label == "fullResult" })
         XCTAssertLessThanOrEqual(references.count, ChangeSetClientRegistry.slotCount * ChangeSetClientRegistry.replayCapacity)
     }
+
+    func testLegacyCutoverIsLosslessRestartableAndExactlyReplayable() async throws {
+        let fixture = try RegistryFixture()
+        defer { fixture.cleanup() }
+        let registry = try fixture.open()
+        let pristine = await registry.snapshot()
+        let legacy = fixture.legacySnapshot(from: pristine)
+
+        let imported = try await registry.initializeFromLegacy(legacySnapshot: legacy)
+        XCTAssertEqual(imported.registryGeneration, legacy.registryGeneration)
+        XCTAssertEqual(imported.snapshotDigest.count, 64)
+        let importedSnapshot = await registry.snapshot()
+        XCTAssertEqual(importedSnapshot.generation, legacy.registryGeneration)
+        XCTAssertEqual(importedSnapshot.controlReceiptCount, 1)
+        XCTAssertEqual(importedSnapshot.slots[0].clientID, legacy.slots[0].clientID)
+        XCTAssertEqual(importedSnapshot.slots[0].slotGeneration, legacy.slots[0].slotGeneration)
+        XCTAssertEqual(importedSnapshot.slots[0].highWater, 2)
+
+        let references = await registry.replayReferences()
+        XCTAssertEqual(references.map(\.sequence), [1, 2])
+        XCTAssertEqual(references.map(\.transactionID), ["legacy-tx-1", "legacy-tx-2"])
+        XCTAssertEqual(references[0].terminalResponseDigest, fixture.digest(61))
+        XCTAssertEqual(references[0].artifactHandle, "legacy-artifact")
+        XCTAssertEqual(references[1].state, .recoveryRequired)
+
+        let restarted = try fixture.open()
+        let replayed = try await restarted.initializeFromLegacy(legacySnapshot: legacy)
+        XCTAssertEqual(replayed, imported)
+        let restartedReferences = await restarted.replayReferences()
+        XCTAssertEqual(restartedReferences, references)
+        await XCTAssertRegistryError(.ownerProofConsumed) {
+            try await restarted.allocate(
+                controlRequestID: fixture.uuid(62),
+                proofIDDigest: fixture.digest(60),
+                proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+                expectedRegistryGeneration: legacy.registryGeneration
+            )
+        }
+    }
+
+    func testLegacyCutoverRejectsDifferentRetryAndNonPristineStore() async throws {
+        let fixture = try RegistryFixture()
+        defer { fixture.cleanup() }
+        let registry = try fixture.open()
+        let pristine = await registry.snapshot()
+        let legacy = fixture.legacySnapshot(from: pristine)
+        _ = try await registry.initializeFromLegacy(legacySnapshot: legacy)
+
+        var changedSlots = legacy.slots
+        let first = changedSlots[0]
+        changedSlots[0] = ChangeSetLegacyClientSlot(
+            number: first.number,
+            clientID: first.clientID,
+            slotGeneration: first.slotGeneration + 1,
+            allocationState: first.allocationState,
+            currentEpoch: first.currentEpoch,
+            highWater: first.highWater,
+            replay: first.replay
+        )
+        let changed = ChangeSetLegacyRegistrySnapshot(
+            rootIdentityDigest: legacy.rootIdentityDigest,
+            registryGeneration: legacy.registryGeneration,
+            slots: changedSlots,
+            controlReceipts: legacy.controlReceipts
+        )
+        await XCTAssertRegistryError(.legacyImportConflict) {
+            try await registry.initializeFromLegacy(legacySnapshot: changed)
+        }
+
+        let other = try RegistryFixture()
+        defer { other.cleanup() }
+        let nonPristine = try other.open()
+        _ = try await nonPristine.allocate(
+            controlRequestID: other.uuid(70),
+            proofIDDigest: other.digest(70),
+            proofExpiresAt: other.clock.now().addingTimeInterval(300),
+            expectedRegistryGeneration: 0
+        )
+        await XCTAssertRegistryError(.legacyImportNotPristine) {
+            try await nonPristine.initializeFromLegacy(
+                expectedPristineGeneration: 1,
+                legacySnapshot: other.legacySnapshot(from: await nonPristine.snapshot(), generation: 8)
+            )
+        }
+    }
+
+    func testLegacyCutoverRejectsMissingReplayAndDuplicateClientWithoutMutation() async throws {
+        let fixture = try RegistryFixture()
+        defer { fixture.cleanup() }
+        let registry = try fixture.open()
+        let pristine = await registry.snapshot()
+        let valid = fixture.legacySnapshot(from: pristine)
+
+        var missingReplaySlots = valid.slots
+        let first = missingReplaySlots[0]
+        missingReplaySlots[0] = ChangeSetLegacyClientSlot(
+            number: first.number,
+            clientID: first.clientID,
+            slotGeneration: first.slotGeneration,
+            allocationState: first.allocationState,
+            currentEpoch: first.currentEpoch,
+            highWater: first.highWater,
+            replay: Array(repeating: nil, count: ChangeSetClientRegistry.replayCapacity)
+        )
+        let missingReplay = ChangeSetLegacyRegistrySnapshot(
+            rootIdentityDigest: valid.rootIdentityDigest,
+            registryGeneration: valid.registryGeneration,
+            slots: missingReplaySlots,
+            controlReceipts: valid.controlReceipts
+        )
+        await XCTAssertRegistryError(.storeCorrupt) {
+            try await registry.initializeFromLegacy(legacySnapshot: missingReplay)
+        }
+        let afterMissingReplay = await registry.snapshot()
+        XCTAssertEqual(afterMissingReplay.generation, 0)
+
+        var duplicateSlots = valid.slots
+        let second = duplicateSlots[1]
+        duplicateSlots[1] = ChangeSetLegacyClientSlot(
+            number: second.number,
+            clientID: duplicateSlots[0].clientID,
+            slotGeneration: second.slotGeneration,
+            allocationState: second.allocationState,
+            currentEpoch: second.currentEpoch,
+            highWater: second.highWater,
+            replay: second.replay
+        )
+        let duplicate = ChangeSetLegacyRegistrySnapshot(
+            rootIdentityDigest: valid.rootIdentityDigest,
+            registryGeneration: valid.registryGeneration,
+            slots: duplicateSlots,
+            controlReceipts: valid.controlReceipts
+        )
+        await XCTAssertRegistryError(.storeCorrupt) {
+            try await registry.initializeFromLegacy(legacySnapshot: duplicate)
+        }
+        let afterDuplicate = await registry.snapshot()
+        XCTAssertEqual(afterDuplicate.generation, 0)
+    }
 }
 
 private final class RegistryClock: @unchecked Sendable {
@@ -317,6 +456,64 @@ private struct RegistryFixture {
         try handle.write(contentsOf: Data([0xff]))
         try handle.synchronize()
         try handle.close()
+    }
+
+    func legacySnapshot(from pristine: ChangeSetClientRegistrySnapshot, generation: UInt64 = 7) -> ChangeSetLegacyRegistrySnapshot {
+        var slots = pristine.slots.map {
+            ChangeSetLegacyClientSlot(
+                number: $0.number,
+                clientID: $0.clientID,
+                slotGeneration: $0.slotGeneration,
+                allocationState: $0.allocationState,
+                currentEpoch: $0.currentEpoch,
+                highWater: $0.highWater,
+                replay: Array(repeating: nil, count: ChangeSetClientRegistry.replayCapacity)
+            )
+        }
+        var replay = Array<ChangeSetReplayEnvelope?>(repeating: nil, count: ChangeSetClientRegistry.replayCapacity)
+        replay[0] = ChangeSetReplayEnvelope(
+            sequence: 1,
+            requestDigest: digest(51),
+            transactionID: "legacy-tx-1",
+            state: .committed,
+            terminalResponseDigest: digest(61),
+            artifact: ChangeSetReplayArtifact(handle: "legacy-artifact", expiresAt: clock.now().addingTimeInterval(600)),
+            retentionExpiresAt: clock.now().addingTimeInterval(600)
+        )
+        replay[1] = ChangeSetReplayEnvelope(
+            sequence: 2,
+            requestDigest: digest(52),
+            transactionID: "legacy-tx-2",
+            state: .recoveryRequired
+        )
+        slots[0] = ChangeSetLegacyClientSlot(
+            number: 0,
+            clientID: slots[0].clientID,
+            slotGeneration: 9,
+            allocationState: .active,
+            currentEpoch: 3,
+            highWater: 2,
+            replay: replay
+        )
+        var receipts = Array<ChangeSetClientControlReceipt?>(repeating: nil, count: ChangeSetClientRegistry.controlReceiptCapacity)
+        receipts[0] = ChangeSetClientControlReceipt(
+            controlRequestID: uuid(60),
+            proofIDDigest: digest(60),
+            action: .allocate,
+            resultDigest: digest(63),
+            registryGeneration: generation,
+            clientID: slots[0].clientID,
+            slotIndex: 0,
+            slotGeneration: 9,
+            currentEpoch: 3,
+            expiresAt: clock.now().addingTimeInterval(300)
+        )
+        return ChangeSetLegacyRegistrySnapshot(
+            rootIdentityDigest: digest(250),
+            registryGeneration: generation,
+            slots: slots,
+            controlReceipts: receipts
+        )
     }
 }
 

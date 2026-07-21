@@ -88,6 +88,30 @@ public struct ChangeSetClientControlReceipt: Codable, Equatable, Sendable {
     public let slotGeneration: UInt64?
     public let currentEpoch: UInt64?
     public let expiresAt: Date
+
+    public init(
+        controlRequestID: String,
+        proofIDDigest: String,
+        action: ChangeSetClientControlAction,
+        resultDigest: String,
+        registryGeneration: UInt64,
+        clientID: String?,
+        slotIndex: Int?,
+        slotGeneration: UInt64?,
+        currentEpoch: UInt64?,
+        expiresAt: Date
+    ) {
+        self.controlRequestID = controlRequestID
+        self.proofIDDigest = proofIDDigest
+        self.action = action
+        self.resultDigest = resultDigest
+        self.registryGeneration = registryGeneration
+        self.clientID = clientID
+        self.slotIndex = slotIndex
+        self.slotGeneration = slotGeneration
+        self.currentEpoch = currentEpoch
+        self.expiresAt = expiresAt
+    }
 }
 
 public struct ChangeSetClientRegistrySnapshot: Equatable, Sendable {
@@ -116,6 +140,63 @@ public struct ChangeSetReplayReference: Equatable, Sendable {
     public let artifactExpiresAt: Date?
 }
 
+public struct ChangeSetLegacyClientSlot: Codable, Equatable, Sendable {
+    public let number: Int
+    public let clientID: String
+    public let slotGeneration: UInt64
+    public let allocationState: ChangeSetClientAllocationState
+    public let currentEpoch: UInt64
+    public let highWater: UInt64
+    public let replay: [ChangeSetReplayEnvelope?]
+
+    public init(
+        number: Int,
+        clientID: String,
+        slotGeneration: UInt64,
+        allocationState: ChangeSetClientAllocationState,
+        currentEpoch: UInt64,
+        highWater: UInt64,
+        replay: [ChangeSetReplayEnvelope?]
+    ) {
+        self.number = number
+        self.clientID = clientID
+        self.slotGeneration = slotGeneration
+        self.allocationState = allocationState
+        self.currentEpoch = currentEpoch
+        self.highWater = highWater
+        self.replay = replay
+    }
+}
+
+public struct ChangeSetLegacyRegistrySnapshot: Codable, Equatable, Sendable {
+    public let rootIdentityDigest: String
+    public let registryGeneration: UInt64
+    public let slots: [ChangeSetLegacyClientSlot]
+    public let controlReceipts: [ChangeSetClientControlReceipt?]
+
+    public init(
+        rootIdentityDigest: String,
+        registryGeneration: UInt64,
+        slots: [ChangeSetLegacyClientSlot],
+        controlReceipts: [ChangeSetClientControlReceipt?]
+    ) {
+        self.rootIdentityDigest = rootIdentityDigest
+        self.registryGeneration = registryGeneration
+        self.slots = slots
+        self.controlReceipts = controlReceipts
+    }
+}
+
+public struct ChangeSetLegacyImportReceipt: Codable, Equatable, Sendable {
+    public let snapshotDigest: String
+    public let registryGeneration: UInt64
+
+    public init(snapshotDigest: String, registryGeneration: UInt64) {
+        self.snapshotDigest = snapshotDigest
+        self.registryGeneration = registryGeneration
+    }
+}
+
 public struct ChangeSetClientRegistryError: Error, Equatable, Sendable {
     public enum Code: String, Codable, Sendable {
         case storeCorrupt = "CHANGE_SET_STORE_CORRUPT"
@@ -138,6 +219,8 @@ public struct ChangeSetClientRegistryError: Error, Equatable, Sendable {
         case controlExpired = "CLIENT_CONTROL_EXPIRED"
         case controlRequestConflict = "CLIENT_CONTROL_REQUEST_CONFLICT"
         case invalidEnvelope = "INVALID_ARGUMENT"
+        case legacyImportNotPristine = "CLIENT_REGISTRY_IMPORT_NOT_PRISTINE"
+        case legacyImportConflict = "CLIENT_REGISTRY_IMPORT_CONFLICT"
     }
 
     public let code: Code
@@ -202,7 +285,7 @@ public actor ChangeSetClientRegistry {
             let slots = (0..<Self.slotCount).map {
                 ClientSlot(number: $0, clientID: UUID().uuidString.lowercased(), slotGeneration: 0, allocationState: .free, currentEpoch: 0, highWater: 0, replay: Array(repeating: nil, count: Self.replayCapacity))
             }
-            image = RegistryImage(schema: "aishell.change-set-client-registry.v1", rootIdentityDigest: rootIdentityDigest, generation: 1, slots: slots, receipts: Array(repeating: nil, count: Self.controlReceiptCapacity))
+            image = RegistryImage(schema: "aishell.change-set-client-registry.v1", rootIdentityDigest: rootIdentityDigest, generation: 0, slots: slots, receipts: Array(repeating: nil, count: Self.controlReceiptCapacity), legacyImportReceipt: nil)
             activeBank = .a
             try Self.writeBank(image, bank: .a, directory: self.directory, key: self.hmacKey)
             try Self.writeBank(image, bank: .b, directory: self.directory, key: self.hmacKey)
@@ -247,6 +330,48 @@ public actor ChangeSetClientRegistry {
                         )
                     }
             }
+    }
+
+    /// 旧encrypted snapshotをpristine A/B bankへ一度だけlossless cutoverする。
+    /// import receiptも同じbank imageへ含めるため、response喪失後は同digestだけをreplayできる。
+    public func initializeFromLegacy(
+        expectedPristineGeneration: UInt64 = 0,
+        legacySnapshot: ChangeSetLegacyRegistrySnapshot
+    ) throws -> ChangeSetLegacyImportReceipt {
+        let digest = try Self.legacySnapshotDigest(legacySnapshot)
+        if let receipt = image.legacyImportReceipt {
+            guard receipt.snapshotDigest == digest else {
+                throw ChangeSetClientRegistryError(.legacyImportConflict, "a different legacy snapshot was already imported")
+            }
+            return receipt
+        }
+        guard image.generation == expectedPristineGeneration, Self.isPristine(image),
+              legacySnapshot.rootIdentityDigest == image.rootIdentityDigest,
+              legacySnapshot.registryGeneration > expectedPristineGeneration else {
+            throw ChangeSetClientRegistryError(.legacyImportNotPristine)
+        }
+        let importedSlots = legacySnapshot.slots.map {
+            ClientSlot(
+                number: $0.number,
+                clientID: $0.clientID,
+                slotGeneration: $0.slotGeneration,
+                allocationState: $0.allocationState,
+                currentEpoch: $0.currentEpoch,
+                highWater: $0.highWater,
+                replay: $0.replay
+            )
+        }
+        let receipt = ChangeSetLegacyImportReceipt(snapshotDigest: digest, registryGeneration: legacySnapshot.registryGeneration)
+        let next = RegistryImage(
+            schema: image.schema,
+            rootIdentityDigest: image.rootIdentityDigest,
+            generation: legacySnapshot.registryGeneration,
+            slots: importedSlots,
+            receipts: legacySnapshot.controlReceipts,
+            legacyImportReceipt: receipt
+        )
+        try persist(next)
+        return receipt
     }
 
     public func lookup(clientID: String, epoch: UInt64, sequence: UInt64, requestDigest: String) throws -> ChangeSetClientLookup {
@@ -561,15 +686,17 @@ private extension ChangeSetClientRegistry {
         var generation: UInt64
         var slots: [ClientSlot]
         var receipts: [ChangeSetClientControlReceipt?]
+        var legacyImportReceipt: ChangeSetLegacyImportReceipt?
     }
 
     static func validate(_ image: RegistryImage) throws {
         guard image.schema == "aishell.change-set-client-registry.v1",
-              isSHA256(image.rootIdentityDigest), image.generation > 0,
+              isSHA256(image.rootIdentityDigest), image.generation <= maximumEpoch,
               image.slots.count == slotCount,
               image.receipts.count == controlReceiptCapacity,
               image.slots.enumerated().allSatisfy({ offset, slot in
-                  slot.number == offset && isCanonicalUUID(slot.clientID) && slot.replay.count == replayCapacity && slot.currentEpoch <= maximumEpoch
+                  slot.number == offset && isCanonicalUUID(slot.clientID) && slot.replay.count == replayCapacity &&
+                      slot.slotGeneration <= maximumEpoch && slot.currentEpoch <= maximumEpoch && slot.highWater <= maximumEpoch
               }),
               Set(image.slots.map(\.clientID)).count == slotCount else {
             throw ChangeSetClientRegistryError(.storeCorrupt, "registry shape is invalid")
@@ -603,11 +730,31 @@ private extension ChangeSetClientRegistry {
                   receipt.registryGeneration <= image.generation,
                   receipt.clientID.map(isCanonicalUUID) ?? true,
                   receipt.slotIndex.map({ (0..<slotCount).contains($0) }) ?? true,
+                  receipt.slotGeneration.map({ $0 <= maximumEpoch }) ?? true,
+                  receipt.currentEpoch.map({ $0 <= maximumEpoch }) ?? true,
                   (receipt.clientID == nil) == (receipt.slotIndex == nil),
                   (receipt.action == .reinitializeRegistry) == (receipt.clientID == nil) else {
                 throw ChangeSetClientRegistryError(.storeCorrupt, "control receipt is invalid")
             }
         }
+        if let receipt = image.legacyImportReceipt {
+            guard isSHA256(receipt.snapshotDigest), receipt.registryGeneration == image.generation else {
+                throw ChangeSetClientRegistryError(.storeCorrupt, "legacy import receipt is invalid")
+            }
+        }
+    }
+
+    static func isPristine(_ image: RegistryImage) -> Bool {
+        image.legacyImportReceipt == nil && image.receipts.allSatisfy { $0 == nil } && image.slots.allSatisfy {
+            $0.allocationState == .free && $0.slotGeneration == 0 && $0.currentEpoch == 0 &&
+                $0.highWater == 0 && $0.replay.allSatisfy { $0 == nil }
+        }
+    }
+
+    static func legacySnapshotDigest(_ snapshot: ChangeSetLegacyRegistrySnapshot) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return sha256(try encoder.encode(snapshot))
     }
 
     static func prepareDirectory(_ directory: URL) throws {
