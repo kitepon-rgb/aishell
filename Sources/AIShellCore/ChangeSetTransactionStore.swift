@@ -98,6 +98,9 @@ public actor ChangeSetTransactionStore {
         case corrupt(String)
         case orphan(String)
         case referenceCapacityExceeded(Int)
+        case migrationInProgress(String)
+        case migrationConflict
+        case simulatedMigrationCrash(Int)
         case io(String)
     }
 
@@ -134,11 +137,25 @@ public actor ChangeSetTransactionStore {
         let referenceDigest: String?
     }
 
-    private enum JournalKind: String, Codable, Equatable, Sendable { case stateTransition, snapshotUpdate }
+    private enum JournalKind: String, Codable, Equatable, Sendable { case stateTransition, snapshotUpdate, legacyImport }
 
     private struct JournalEntry: Codable, Equatable, Sendable {
         let payload: JournalPayload
         let digest: String
+    }
+
+    private struct MigrationRequest: Codable, Equatable, Sendable {
+        let schema: String
+        let provenance: String
+        let snapshots: [Snapshot]
+        let receipts: [RuntimeReceipt]
+    }
+
+    private struct MigrationRecord: Codable, Equatable, Sendable {
+        let schema: String
+        let provenance: String
+        let requestDigest: String
+        let request: MigrationRequest?
     }
 
     private let directory: URL
@@ -147,6 +164,7 @@ public actor ChangeSetTransactionStore {
     private let maxRuntimeReceipts: Int
     private let maxTransactionReferences: Int
     private let terminalRetention: TimeInterval
+    private let migrationCrashAfterImportedTransactions: Int?
     private let fileManager: FileManager
     private var loaded = false
     private var index = Index(schema: "aishell.change-set-transaction-index.v1", transactionDirectories: [:])
@@ -158,6 +176,7 @@ public actor ChangeSetTransactionStore {
         maxRuntimeReceipts: Int = 512,
         maxTransactionReferences: Int = 4_096,
         terminalRetention: TimeInterval = 86_400,
+        migrationCrashAfterImportedTransactions: Int? = nil,
         fileManager: FileManager = .default
     ) throws {
         guard !encryptionKey.isEmpty else { throw StoreError.invalidKey }
@@ -167,6 +186,7 @@ public actor ChangeSetTransactionStore {
         self.maxRuntimeReceipts = max(1, maxRuntimeReceipts)
         self.maxTransactionReferences = max(1, maxTransactionReferences)
         self.terminalRetention = max(0, terminalRetention)
+        self.migrationCrashAfterImportedTransactions = migrationCrashAfterImportedTransactions
         self.fileManager = fileManager
         try Self.createOwnerOnlyDirectory(self.directory, fileManager: fileManager)
         try Self.createOwnerOnlyDirectory(self.transactionsDirectory, fileManager: fileManager)
@@ -207,6 +227,101 @@ public actor ChangeSetTransactionStore {
 
     public func listTerminalReferences(now: Date = Date()) throws -> [TransactionReference] {
         try listReferences(now: now).filter { Self.isTerminal($0.state) }
+    }
+
+    /// 旧monolithic storeからempty storeへ一度だけcutoverする。
+    /// intentが残る間、通常APIはpartial importを公開せず、同じrequestだけが再開できる。
+    public func importLegacy(
+        _ snapshots: [Snapshot],
+        receipts importedReceipts: [RuntimeReceipt],
+        provenance: String,
+        expectedEmpty: Bool = true
+    ) throws {
+        try ensureLoaded(allowMigration: true)
+        guard !provenance.isEmpty else { throw StoreError.migrationConflict }
+        guard snapshots.count <= maxTransactionReferences, importedReceipts.count <= maxRuntimeReceipts else {
+            throw StoreError.referenceCapacityExceeded(maxTransactionReferences)
+        }
+        let orderedSnapshots = snapshots.sorted { $0.transactionID.rawValue < $1.transactionID.rawValue }
+        guard Set(orderedSnapshots.map(\.transactionID.rawValue)).count == orderedSnapshots.count else {
+            throw StoreError.migrationConflict
+        }
+        let transactionIDs = Set(orderedSnapshots.map(\.transactionID.rawValue))
+        guard importedReceipts.allSatisfy({ transactionIDs.contains($0.transactionID.rawValue) }),
+              Set(importedReceipts.map(\.transactionID.rawValue)).count == importedReceipts.count else {
+            throw StoreError.migrationConflict
+        }
+        let orderedReceipts = importedReceipts.sorted { $0.transactionID.rawValue < $1.transactionID.rawValue }
+        let request = MigrationRequest(
+            schema: "aishell.change-set-legacy-migration.v1", provenance: provenance,
+            snapshots: orderedSnapshots, receipts: orderedReceipts
+        )
+        let requestDigest = Self.sha256(try Self.encode(request))
+        let intentURL = directory.appendingPathComponent("migration-intent.enc")
+        let completeURL = directory.appendingPathComponent("migration-complete.enc")
+
+        if fileManager.fileExists(atPath: completeURL.path) {
+            let complete = try open(MigrationRecord.self, data: try Self.secureRead(completeURL))
+            guard complete.schema == "aishell.change-set-legacy-migration-complete.v1",
+                  complete.provenance == provenance, complete.requestDigest == requestDigest else {
+                throw StoreError.migrationConflict
+            }
+            guard receipts == orderedReceipts, index.transactionDirectories.count == orderedSnapshots.count else {
+                throw StoreError.migrationConflict
+            }
+            for snapshot in orderedSnapshots {
+                guard let directoryName = index.transactionDirectories[snapshot.transactionID.rawValue],
+                      try reconcileTransaction(id: snapshot.transactionID.rawValue, directoryName: directoryName) == snapshot else {
+                    throw StoreError.migrationConflict
+                }
+            }
+            if fileManager.fileExists(atPath: intentURL.path) {
+                try fileManager.removeItem(at: intentURL)
+                try Self.syncDirectory(directory)
+            }
+            return
+        }
+
+        if fileManager.fileExists(atPath: intentURL.path) {
+            let intent = try open(MigrationRecord.self, data: try Self.secureRead(intentURL))
+            guard intent.schema == "aishell.change-set-legacy-migration-intent.v1",
+                  intent.provenance == provenance, intent.requestDigest == requestDigest,
+                  intent.request == request else { throw StoreError.migrationConflict }
+        } else {
+            guard expectedEmpty, index.transactionDirectories.isEmpty, receipts.isEmpty else {
+                throw StoreError.migrationConflict
+            }
+            let intent = MigrationRecord(
+                schema: "aishell.change-set-legacy-migration-intent.v1", provenance: provenance,
+                requestDigest: requestDigest, request: request
+            )
+            try atomicWrite(try seal(intent), to: intentURL)
+        }
+
+        var importedCount = 0
+        for snapshot in orderedSnapshots {
+            if let directoryName = index.transactionDirectories[snapshot.transactionID.rawValue] {
+                guard try reconcileTransaction(id: snapshot.transactionID.rawValue, directoryName: directoryName) == snapshot else {
+                    throw StoreError.migrationConflict
+                }
+            } else {
+                try importLegacySnapshot(snapshot)
+            }
+            importedCount += 1
+            if migrationCrashAfterImportedTransactions == importedCount {
+                throw StoreError.simulatedMigrationCrash(importedCount)
+            }
+        }
+        if !receipts.isEmpty, receipts != orderedReceipts { throw StoreError.migrationConflict }
+        receipts = orderedReceipts
+        try saveReceipts()
+        let complete = MigrationRecord(
+            schema: "aishell.change-set-legacy-migration-complete.v1", provenance: provenance,
+            requestDigest: requestDigest, request: nil
+        )
+        try atomicWrite(try seal(complete), to: completeURL)
+        try fileManager.removeItem(at: intentURL)
+        try Self.syncDirectory(directory)
     }
 
     /// stateを進めずrich payload/referenceを更新するrevision CAS。
@@ -383,8 +498,13 @@ public actor ChangeSetTransactionStore {
 
     // MARK: - Recovery and persistence
 
-    private func ensureLoaded() throws {
-        guard !loaded else { return }
+    private func ensureLoaded(allowMigration: Bool = false) throws {
+        if loaded {
+            if !allowMigration, fileManager.fileExists(atPath: directory.appendingPathComponent("migration-intent.enc").path) {
+                throw StoreError.migrationInProgress("legacy import must be resumed with the exact request")
+            }
+            return
+        }
         let indexURL = directory.appendingPathComponent("index.enc")
         if fileManager.fileExists(atPath: indexURL.path) {
             index = try open(Index.self, data: try Self.secureRead(indexURL))
@@ -401,6 +521,9 @@ public actor ChangeSetTransactionStore {
         try reconcileDirectoryMembership()
         for (rawID, directoryName) in index.transactionDirectories {
             _ = try reconcileTransaction(id: rawID, directoryName: directoryName)
+        }
+        if !allowMigration, fileManager.fileExists(atPath: directory.appendingPathComponent("migration-intent.enc").path) {
+            throw StoreError.migrationInProgress("legacy import must be resumed with the exact request")
         }
         loaded = true
     }
@@ -457,6 +580,22 @@ public actor ChangeSetTransactionStore {
         let entry = JournalEntry(payload: payload, digest: Self.sha256(Data(previousDigest.utf8) + payloadBytes))
         try appendLine(try Self.encode(entry), to: journalURL)
         try atomicWrite(sealedSnapshot, to: transactionDirectory.appendingPathComponent("snapshot.enc"))
+    }
+
+    private func importLegacySnapshot(_ snapshot: Snapshot) throws {
+        let rawID = snapshot.transactionID.rawValue
+        guard !rawID.isEmpty, index.transactionDirectories.count < maxTransactionReferences else {
+            throw StoreError.referenceCapacityExceeded(maxTransactionReferences)
+        }
+        let directoryName = Self.directoryName(for: rawID)
+        let transactionDirectory = transactionsDirectory.appendingPathComponent(directoryName, isDirectory: true)
+        guard !fileManager.fileExists(atPath: transactionDirectory.path) else { throw StoreError.orphan(directoryName) }
+        try Self.createOwnerOnlyDirectory(transactionDirectory, fileManager: fileManager)
+        let identity = Identity(schema: "aishell.change-set-transaction-identity.v1", transactionID: rawID, directoryName: directoryName)
+        try atomicWrite(try seal(identity), to: transactionDirectory.appendingPathComponent("identity.enc"))
+        try writeTransition(snapshot, fromState: nil, directoryName: directoryName, kind: .legacyImport)
+        index.transactionDirectories[rawID] = directoryName
+        try saveIndex()
     }
 
     private func makeReference(snapshot: Snapshot, now: Date) throws -> TransactionReference {
@@ -560,10 +699,12 @@ public actor ChangeSetTransactionStore {
                       entry.payload.snapshotRevision == nil || entry.payload.snapshotRevision == (previous.payload.snapshotRevision ?? UInt64(offset - 1)) + 1 else {
                     throw StoreError.corrupt("journal state/revision ordering mismatch at \(offset)")
                 }
-            } else if entry.payload.fromState != nil || entry.payload.toState != .preparing
-                        || (entry.payload.kind ?? .stateTransition) != .stateTransition
-                        || (entry.payload.snapshotRevision != nil && entry.payload.snapshotRevision != 0) {
-                throw StoreError.corrupt("invalid initial journal state")
+            } else {
+                let initialKind = entry.payload.kind ?? .stateTransition
+                let validInitial = entry.payload.fromState == nil
+                    && (initialKind == .legacyImport || entry.payload.toState == .preparing)
+                    && (initialKind == .legacyImport || entry.payload.snapshotRevision == nil || entry.payload.snapshotRevision == 0)
+                guard validInitial else { throw StoreError.corrupt("invalid initial journal state") }
             }
             entries.append(entry)
             previousDigest = entry.digest

@@ -211,6 +211,70 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         XCTAssertEqual(loaded?.payload, Data("v1".utf8))
         XCTAssertEqual(loaded?.references, references)
     }
+
+    func testLegacyImportPreservesArbitraryStatesAndIsExactlyIdempotent() async throws {
+        let fixture = try Fixture()
+        let store = try fixture.makeStore()
+        let snapshots = [
+            fixture.snapshot(id: .init("a-prepared"), state: .prepared, payload: Data("prepared".utf8), revision: 4),
+            fixture.snapshot(id: .init("b-decided"), state: .commitDecided, payload: Data("decided".utf8), revision: 7),
+            fixture.snapshot(id: .init("c-recovery"), state: .recoveryRequired, payload: Data("recovery".utf8), revision: 8),
+            fixture.snapshot(id: .init("d-terminal"), state: .committed, payload: Data("terminal".utf8), terminalAt: Date(timeIntervalSince1970: 100), revision: 12),
+        ]
+        let importedReceipts = [ChangeSetTransactionStore.RuntimeReceipt(
+            transactionID: .init("d-terminal"),
+            cursor: .init(root: fixture.root.path, generation: "legacy", sequence: 42),
+            paths: ["legacy.txt"], digest: "legacy-runtime-digest",
+            recordedAt: Date(timeIntervalSince1970: 100), terminalAt: Date(timeIntervalSince1970: 100)
+        )]
+
+        try await store.importLegacy(snapshots, receipts: importedReceipts, provenance: "legacy-store-digest")
+        let loaded = try await store.listReferences(now: Date(timeIntervalSince1970: 101))
+        XCTAssertEqual(loaded.map(\.transactionID.rawValue), ["a-prepared", "b-decided", "c-recovery", "d-terminal"])
+        XCTAssertEqual(loaded.map(\.revision), [4, 7, 8, 12])
+        XCTAssertEqual(loaded.last?.runtimeReceiptDigest, "legacy-runtime-digest")
+
+        // 完了後も同じimportはno-op、異なるpayloadは明示conflict。
+        try await store.importLegacy(snapshots, receipts: importedReceipts, provenance: "legacy-store-digest")
+        var changed = snapshots
+        changed[0] = fixture.snapshot(id: .init("a-prepared"), state: .prepared, payload: Data("changed".utf8), revision: 4)
+        await XCTAssertThrowsStoreError(.migrationConflict) {
+            try await store.importLegacy(changed, receipts: importedReceipts, provenance: "legacy-store-digest")
+        }
+    }
+
+    func testLegacyImportCrashBlocksPartialVisibilityAndExactRetryResumes() async throws {
+        let fixture = try Fixture()
+        let snapshots = [
+            fixture.snapshot(id: .init("legacy-1"), state: .prepared, revision: 2),
+            fixture.snapshot(id: .init("legacy-2"), state: .recoveryRequired, revision: 5),
+        ]
+        let crashing = try fixture.makeStore(crashAfterImportedTransactions: 1)
+        await XCTAssertThrowsStoreError(.simulatedMigrationCrash(1)) {
+            try await crashing.importLegacy(snapshots, receipts: [], provenance: "legacy-crash")
+        }
+        await XCTAssertThrowsStoreError(.migrationInProgress("legacy import must be resumed with the exact request")) {
+            _ = try await crashing.listReferences()
+        }
+
+        let restarted = try fixture.makeStore()
+        try await restarted.importLegacy(snapshots, receipts: [], provenance: "legacy-crash")
+        let loaded = try await restarted.listReferences()
+        XCTAssertEqual(loaded.map(\.transactionID.rawValue), ["legacy-1", "legacy-2"])
+        XCTAssertEqual(loaded.map(\.revision), [2, 5])
+    }
+
+    func testLegacyImportRejectsNonemptyStore() async throws {
+        let fixture = try Fixture()
+        let store = try fixture.makeStore()
+        try await store.persistTransition(fixture.snapshot(state: .preparing))
+        await XCTAssertThrowsStoreError(.migrationConflict) {
+            try await store.importLegacy(
+                [fixture.snapshot(id: .init("legacy"), state: .prepared)],
+                receipts: [], provenance: "legacy-nonempty"
+            )
+        }
+    }
 }
 
 private struct Fixture {
@@ -229,10 +293,11 @@ private struct Fixture {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
 
-    func makeStore() throws -> ChangeSetTransactionStore {
+    func makeStore(crashAfterImportedTransactions: Int? = nil) throws -> ChangeSetTransactionStore {
         try ChangeSetTransactionStore(
             directory: storeDirectory, encryptionKey: key,
-            maxRuntimeReceipts: maxRuntimeReceipts, terminalRetention: terminalRetention
+            maxRuntimeReceipts: maxRuntimeReceipts, terminalRetention: terminalRetention,
+            migrationCrashAfterImportedTransactions: crashAfterImportedTransactions
         )
     }
 
@@ -240,12 +305,13 @@ private struct Fixture {
         id: ApplyChangeSetTransactionID? = nil,
         state: ApplyChangeSetTransactionState,
         payload: Data = Data("payload".utf8),
-        terminalAt: Date? = nil
+        terminalAt: Date? = nil,
+        revision: UInt64 = 0
     ) -> ChangeSetTransactionStore.Snapshot {
         .init(
             transactionID: id ?? transactionID, state: state, manifestDigest: "manifest-digest",
             references: [.init(kind: "artifact", identifier: "artifact-1", digest: "artifact-digest")],
-            payload: payload, terminalAt: terminalAt
+            payload: payload, terminalAt: terminalAt, revision: revision
         )
     }
 
