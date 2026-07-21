@@ -138,6 +138,14 @@ public struct GitWorkspaceComparisonBinding: Codable, Equatable, Sendable {
         self.schema = "aishell.git-workspace-binding.v1"
         self.workspaceCursor = workspaceCursor
     }
+
+    /// continuationの同一性はworkspace内容で判定する。
+    /// cursorとgenerationはsnapshot取得ごとに進む観測位置であり、内容が同じpage間のbindingには含めない。
+    fileprivate func hasSameContent(as other: Self) -> Bool {
+        schema == other.schema
+            && rootIdentity == other.rootIdentity
+            && entries == other.entries
+    }
 }
 
 public struct GitEvidenceContentDigest: Codable, Equatable, Sendable {
@@ -381,7 +389,9 @@ public actor GitContextProvider {
         let id = String(parts[1])
         guard let snapshot = retained[id] else { throw GitContextError.cursorExpired }
         guard Date() <= snapshot.expiresAt else { retained[id] = nil; throw GitContextError.cursorExpired }
-        guard snapshot.binding == currentBinding else { throw GitContextError.contentChanged }
+        guard snapshot.binding.hasSameContent(as: currentBinding) else {
+            throw GitContextError.contentChanged
+        }
         let root = URL(fileURLWithPath: snapshot.template.repositoryRoot, isDirectory: true)
         let rootDescriptor = try openDirectoryWithoutFollowing(root)
         defer { close(rootDescriptor) }

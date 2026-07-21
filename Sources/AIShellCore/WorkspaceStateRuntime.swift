@@ -162,7 +162,16 @@ public actor WorkspaceStateRuntime {
                     externalPaths.append(event.path)
                 }
             }
-            changes.append(contentsOf: try reconcile(paths: externalPaths, state: &state))
+            let reconciledChanges = try reconcile(paths: externalPaths, state: &state)
+            for change in reconciledChanges {
+                if let event = uniqueEvents.first(where: {
+                    Self.relativePath($0.path, root: root.path) == change.path
+                        || Self.relativePath($0.path, root: root.path) == change.previousPath
+                }) {
+                    state.knownChangesBySequence[event.sequence] = change
+                }
+            }
+            changes.append(contentsOf: reconciledChanges)
             changes.sort {
                 if $0.path != $1.path { return $0.path < $1.path }
                 return Self.changeOrder($0.kind) < Self.changeOrder($1.kind)
@@ -172,10 +181,8 @@ public actor WorkspaceStateRuntime {
                 state.prefetchedPaths.remove(relative)
                 state.prefetchedEntries.removeValue(forKey: relative)
             }
-            state.journal.discardEvents(through: processedSequence)
-            state.knownChangesBySequence = state.knownChangesBySequence.filter { $0.key > processedSequence }
             states[key] = state
-            try await persistCheckpoint(state)
+            try await persistCheckpoint(state, discardingEventsThrough: processedSequence)
             let changedEntries = changes.compactMap(\.entry)
             let remainingPaths = Set(pendingEvents.filter { $0.sequence > processedSequence }.map(\.path))
             let git = try gitStatus(root: root)
@@ -204,6 +211,7 @@ public actor WorkspaceStateRuntime {
 
         if !newlyInitialized || state.journal.rescanReason != nil {
             state.journal.startNewGeneration(UUID().uuidString.lowercased())
+            state.knownChangesBySequence.removeAll(keepingCapacity: true)
             state.checkpointState = "rebuilt"
             state.prefetchedPaths.removeAll(keepingCapacity: true)
             state.prefetchedEntries.removeAll(keepingCapacity: true)
@@ -222,7 +230,10 @@ public actor WorkspaceStateRuntime {
         if !state.journal.events.isEmpty {
             let appliedSequence = state.journal.sequence
             _ = try reconcile(paths: state.journal.events.map(\.path), state: &state)
+            // full snapshotはそのcursor自体が新しいconsumer基点になるcheckpoint圧縮点。
+            // delta snapshotだけが既存consumerのretained intervalを保持する。
             state.journal.discardEvents(through: appliedSequence)
+            state.knownChangesBySequence.removeAll(keepingCapacity: true)
         }
         state.prefetchedPaths.removeAll(keepingCapacity: true)
         state.prefetchedEntries.removeAll(keepingCapacity: true)
@@ -431,6 +442,7 @@ public actor WorkspaceStateRuntime {
             let before = state.journal.sequence
             state.journal.record([ObservedFileEvent(path: absolute.path, eventID: 0, flags: 0)])
             state.knownChangesBySequence[before + 1] = change
+            pruneKnownChanges(to: &state)
         }
         state.knownTransactionIDs.insert(transactionID)
         states[key] = state
@@ -586,7 +598,17 @@ public actor WorkspaceStateRuntime {
                 let relative = Self.relativePath(path, root: rootPath)
                 return !relative.isEmpty && !Self.isExcluded(relative)
             }
+            pruneKnownChanges(to: &state)
             states[key] = state
+        }
+    }
+
+    /// 既知の変更はjournalに残っているeventと同じ寿命だけ保持する。
+    /// snapshot consumerの進捗では破棄せず、journalのretention上限だけを失効境界にする。
+    private func pruneKnownChanges(to state: inout RootState) {
+        let retainedSequences = Set(state.journal.events.map(\.sequence))
+        state.knownChangesBySequence = state.knownChangesBySequence.filter {
+            retainedSequences.contains($0.key)
         }
     }
 
@@ -610,6 +632,7 @@ public actor WorkspaceStateRuntime {
             let relative = Self.relativePath(path, root: rootPath)
             return !relative.isEmpty && !Self.isExcluded(relative)
         }
+        pruneKnownChanges(to: &state)
         if let watermark = drained.watermark {
             state.journal.advanceEventWatermark(to: watermark)
         }
@@ -846,8 +869,15 @@ public actor WorkspaceStateRuntime {
         "ws2:\(state.rootDigest):\(state.exclusionDigest):\(state.journal.generation):\(sequence ?? state.journal.sequence)"
     }
 
-    private func persistCheckpoint(_ state: RootState) async throws {
+    private func persistCheckpoint(
+        _ state: RootState,
+        discardingEventsThrough compressedSequence: UInt64? = nil
+    ) async throws {
         let now = Date()
+        let persistedEvents = state.journal.events.filter { event in
+            guard let compressedSequence else { return true }
+            return event.sequence > compressedSequence
+        }
         let checkpoint = WorkspaceCheckpoint(
             rootPath: Self.canonicalPath(state.root.path).path,
             rootIdentity: state.rootIdentity,
@@ -857,7 +887,7 @@ public actor WorkspaceStateRuntime {
             generation: state.journal.generation,
             lastEventID: state.journal.lastEventID,
             journalSequence: state.journal.sequence,
-            journalEvents: state.journal.events,
+            journalEvents: persistedEvents,
             entries: state.entries.values.map(Self.checkpointEntry),
             createdAt: now,
             lastAccessedAt: now

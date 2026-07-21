@@ -73,7 +73,14 @@ final class GitContextProviderTests: XCTestCase {
         }
         try fixture.write("tracked", "c\n")
         let changedBinding = GitWorkspaceComparisonBinding(
-            entries: [], eventHighWater: nil, generation: "generation-1", rootIdentity: "fixture-root", workspaceCursor: "cursor-2"
+            entries: [.init(
+                hashState: "hashed", identity: "changed", kind: "regular",
+                modifiedAtNanoseconds: nil, path: "tracked", sha256: "changed", sizeBytes: 2
+            )],
+            eventHighWater: nil,
+            generation: "generation-2",
+            rootIdentity: "fixture-root",
+            workspaceCursor: "cursor-2"
         )
         await XCTAssertThrowsErrorAsync(try await provider.context(request: .init(continuation: token), comparisonBinding: changedBinding)) {
             XCTAssertEqual($0 as? GitContextError, .contentChanged)

@@ -2,6 +2,41 @@ import XCTest
 @testable import AIShellCore
 
 final class ContextCompilerServiceTests: XCTestCase {
+    func testWorkspaceGitDiffContinuationSurvivesUnchangedSnapshotGeneration() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Self.runGit(["init"], at: root)
+        try Self.runGit(["config", "user.email", "fixture@example.invalid"], at: root)
+        try Self.runGit(["config", "user.name", "Fixture"], at: root)
+        let source = root.appendingPathComponent("Source.swift")
+        try "let value = 1\n".write(to: source, atomically: false, encoding: .utf8)
+        try Self.runGit(["add", "Source.swift"], at: root)
+        try Self.runGit(["commit", "-m", "fixture"], at: root)
+        try "let value = 2\n".write(to: source, atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let service = ContextCompilerService(runtimeStore: store, workspaceRuntime: runtime)
+
+        let first = try await service.workspaceSnapshot(
+            path: root.path,
+            contextBudget: 0,
+            gitDiffRequest: GitDiffContextRequest(byteBudget: 1, includePatch: false)
+        )
+        let continuation = try XCTUnwrap(first.gitDiff?.continuation)
+        let second = try await service.workspaceSnapshot(
+            path: root.path,
+            contextBudget: 0,
+            gitDiffRequest: GitDiffContextRequest(byteBudget: 600, continuation: continuation)
+        )
+
+        XCTAssertNotEqual(first.cursor, second.cursor)
+        XCTAssertEqual(second.gitDiff?.changes.map(\.path), ["Source.swift"])
+        XCTAssertFalse(second.gitDiff?.hasMore ?? true)
+    }
+
     func testWorkspaceV2IntegratesGitDiffAndProjectProfilesWithoutRemovingV1Fields() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }

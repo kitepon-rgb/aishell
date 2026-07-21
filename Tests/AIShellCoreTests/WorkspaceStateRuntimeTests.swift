@@ -3,6 +3,32 @@ import XCTest
 @testable import AIShellCore
 
 final class WorkspaceStateRuntimeTests: XCTestCase {
+    func testSnapshotDoesNotConsumeSearchObservationInterval() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("State.swift")
+        try "let value = 1\n".write(to: file, atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let initial = try await runtime.snapshot()
+
+        try "let value = 2\n".write(to: file, atomically: false, encoding: .utf8)
+        await runtime.ingestObservedPaths([file.path])
+        let delta = try await runtime.snapshot(sinceCursor: initial.cursor)
+        let observation = try await runtime.searchContextObservation(
+            path: root.path,
+            fromCursor: initial.cursor
+        )
+
+        XCTAssertTrue(delta.changes.contains { $0.path == "State.swift" && $0.kind == .modified })
+        XCTAssertEqual(observation.changedPaths, ["State.swift"])
+        XCTAssertEqual(observation.observedFrom, initial.cursor)
+        XCTAssertEqual(observation.observedThrough, delta.cursor)
+    }
+
     func testSearchObservationReplaysWithoutConsumingSnapshotJournal() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
