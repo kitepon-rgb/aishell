@@ -8,6 +8,50 @@ import Foundation
 /// その後にだけ material を書く。予約 file の縮小に失敗した場合も成功へ丸めず、同じ key の
 /// retry または再起動後の `reconcile` で物理予約を ledger へ収束させる。
 public actor ChangeSetQuotaLedger {
+    public enum LifecycleFailurePoint: String, Sendable { case abandonmentIntentPersisted, replacementRenameCompleted }
+    public struct SimulatedLifecycleCrash: Error, Sendable { public let point: LifecycleFailurePoint }
+    public struct OwnerBinding: Equatable, Sendable {
+        public let bootID: String
+        public let processStartIdentity: String
+        public let instanceNonce: String
+        public let leaseExpiresAt: Date
+
+        public init(bootID: String, processStartIdentity: String, instanceNonce: String, leaseExpiresAt: Date) {
+            self.bootID = bootID; self.processStartIdentity = processStartIdentity
+            self.instanceNonce = instanceNonce; self.leaseExpiresAt = leaseExpiresAt
+        }
+        public static func current(leaseDuration: TimeInterval = 60) -> Self {
+            let bootEpoch = Int((Date().timeIntervalSince1970 - ProcessInfo.processInfo.systemUptime).rounded())
+            return .init(bootID: "boot-\(bootEpoch)", processStartIdentity: "pid-\(getpid())",
+                         instanceNonce: UUID().uuidString.lowercased(), leaseExpiresAt: Date().addingTimeInterval(leaseDuration))
+        }
+    }
+
+    public struct PreparedAbandonmentAttestation: Equatable, Sendable {
+        public let digest: String
+        public let owner: OwnerBinding
+        public let admissionReferenced: Bool
+        public let transactionDirectoryReferenced: Bool
+        public let registryReferenced: Bool
+        public init(digest: String, owner: OwnerBinding, admissionReferenced: Bool,
+                    transactionDirectoryReferenced: Bool, registryReferenced: Bool) {
+            self.digest = digest; self.owner = owner; self.admissionReferenced = admissionReferenced
+            self.transactionDirectoryReferenced = transactionDirectoryReferenced; self.registryReferenced = registryReferenced
+        }
+    }
+
+    public struct AbandonmentReceipt: Equatable, Sendable { public let attestationDigest: String; public let abandonedMaterialIDs: Set<String> }
+
+    public struct RetentionExpiredAttestation: Equatable, Sendable {
+        public let digest: String
+        public let materialID: String
+        public let generation: UInt64
+        public let terminalReplayRetentionExpired: Bool
+        public init(digest: String, materialID: String, generation: UInt64, terminalReplayRetentionExpired: Bool) {
+            self.digest = digest; self.materialID = materialID; self.generation = generation
+            self.terminalReplayRetentionExpired = terminalReplayRetentionExpired
+        }
+    }
     public enum MaterialKind: String, Codable, CaseIterable, Sendable {
         case canonicalEnvelope
         case afterStage
@@ -102,7 +146,7 @@ public actor ChangeSetQuotaLedger {
     }
 
     public enum MaterialState: String, Equatable, Sendable {
-        case reserved, adopted, authorized, materialized, released, replacementIntent
+        case reserved, adopted, authorized, materialized, released, replacementIntent, abandoned
     }
 
     public struct MaterialView: Equatable, Sendable {
@@ -115,6 +159,7 @@ public actor ChangeSetQuotaLedger {
         /// materialized世代を一意にする `device:inode`。未materializedではnil。
         public let generation: String?
         public let replacementOldMaterialID: String?
+        public let slotGeneration: UInt64
     }
 
     public struct PhysicalReservationDiagnostic: Equatable, Sendable {
@@ -153,6 +198,12 @@ public actor ChangeSetQuotaLedger {
         case physicalReservationNotConverged(PhysicalReservationDiagnostic)
         case finalPathMismatch(String)
         case materializationIncomplete(String)
+        case ownerBindingMismatch
+        case leaseStillLive
+        case abandonmentReferenced
+        case abandonmentForbiddenState(String)
+        case generationMismatch(expected: UInt64, actual: UInt64)
+        case retentionNotExpired(String)
     }
 
     private struct MaterialRecord: Codable, Equatable {
@@ -172,6 +223,8 @@ public actor ChangeSetQuotaLedger {
         let finalBytes: String
         let finalSHA256: String
         let replacementOldID: String
+        var slotGeneration: String = String(repeating: "0", count: 20)
+        var retentionAttestationDigest: String = String(repeating: "0", count: 64)
         let status: Int
     }
 
@@ -190,6 +243,12 @@ public actor ChangeSetQuotaLedger {
         let ledgerBytes: String
         let materials: [MaterialRecord]
         let volumes: [VolumeRecord]
+        var ownerBootID: String = String(repeating: " ", count: 128)
+        var ownerProcessStartIdentity: String = String(repeating: " ", count: 128)
+        var ownerInstanceNonce: String = String(repeating: " ", count: 128)
+        var leaseExpiresEpochMillis: String = String(repeating: "0", count: 20)
+        var abandonmentState: Int = 0
+        var abandonmentAttestationDigest: String = String(repeating: "0", count: 64)
     }
 
     private struct MaterialIdentity {
@@ -213,12 +272,19 @@ public actor ChangeSetQuotaLedger {
     private let ledgerDirectory: URL
     private let reservationID: String
     private let ledgerURL: URL
+    private let ownerBinding: OwnerBinding
+    private let lifecycleFailurePoint: LifecycleFailurePoint?
 
-    public init(ledgerDirectory: URL, reservationID: String) throws {
+    public init(ledgerDirectory: URL, reservationID: String, ownerBinding: OwnerBinding = .current(),
+                lifecycleFailurePoint: LifecycleFailurePoint? = nil) throws {
         guard Self.validIdentifier(reservationID) else { throw LedgerError.invalidIdentifier(reservationID) }
+        guard Self.validIdentifier(ownerBinding.bootID), Self.validIdentifier(ownerBinding.processStartIdentity),
+              Self.validIdentifier(ownerBinding.instanceNonce) else { throw LedgerError.invalidIdentifier("owner binding") }
         self.ledgerDirectory = ledgerDirectory.standardizedFileURL.resolvingSymlinksInPath()
         self.reservationID = reservationID
         self.ledgerURL = self.ledgerDirectory.appendingPathComponent("quota-\(reservationID).json")
+        self.ownerBinding = ownerBinding
+        self.lifecycleFailurePoint = lifecycleFailurePoint
     }
 
     /// 全 material と ledger 自身の encoded size を確定し、各所有 volume に物理領域を予約する。
@@ -302,7 +368,15 @@ public actor ChangeSetQuotaLedger {
                     remainingBytes: Self.fixed(materialBytes)
                 )
             }
-            candidate = .init(schema: Self.schema, reservationID: reservationID, ledgerDevice: Self.fixed(ledgerDevice), ledgerBytes: Self.fixed(ledgerBytes), materials: materialRecords, volumes: volumes)
+            candidate = .init(
+                schema: Self.schema, reservationID: reservationID, ledgerDevice: Self.fixed(ledgerDevice),
+                ledgerBytes: Self.fixed(ledgerBytes), materials: materialRecords, volumes: volumes,
+                ownerBootID: Self.fixedIdentifier(ownerBinding.bootID),
+                ownerProcessStartIdentity: Self.fixedIdentifier(ownerBinding.processStartIdentity),
+                ownerInstanceNonce: Self.fixedIdentifier(ownerBinding.instanceNonce),
+                leaseExpiresEpochMillis: Self.fixed(Self.epochMillis(ownerBinding.leaseExpiresAt)),
+                abandonmentState: 0, abandonmentAttestationDigest: Self.zeroDigest
+            )
             let encodedCount = try Self.encode(candidate).count
             if encodedCount == ledgerBytes { break }
             ledgerBytes = encodedCount
@@ -503,6 +577,85 @@ public actor ChangeSetQuotaLedger {
         try persist(snapshot)
     }
 
+    public func renewLease(owner: OwnerBinding, until: Date) throws {
+        let snapshot = try load()
+        try Self.requireOwner(snapshot, owner: ownerBinding)
+        try Self.requireOwner(snapshot, owner: owner)
+        guard until > Date() else { throw LedgerError.leaseStillLive }
+        try persist(Self.copySnapshot(snapshot, leaseExpiresEpochMillis: Self.fixed(Self.epochMillis(until))))
+    }
+
+    /// admission/transaction/registryから未参照とcallerが証明したpre-admission reservationだけを破棄する。
+    public func abandonPrepared(attestation: PreparedAbandonmentAttestation, now: Date = Date()) throws -> AbandonmentReceipt {
+        var snapshot = try load()
+        if snapshot.abandonmentState == 2 {
+            guard snapshot.abandonmentAttestationDigest == attestation.digest else { throw LedgerError.corruptLedger("abandonment attestation changed") }
+            return Self.abandonmentReceipt(snapshot)
+        }
+        if snapshot.abandonmentState == 0 {
+            try Self.requireOwner(snapshot, owner: ownerBinding)
+            try Self.requireOwner(snapshot, owner: attestation.owner)
+            guard Self.validDigest(attestation.digest) else { throw LedgerError.corruptLedger("invalid abandonment attestation digest") }
+            guard !attestation.admissionReferenced, !attestation.transactionDirectoryReferenced, !attestation.registryReferenced else {
+                throw LedgerError.abandonmentReferenced
+            }
+            let leaseExpiry = try Self.parseUInt(snapshot.leaseExpiresEpochMillis)
+            guard Self.epochMillis(now) >= leaseExpiry + 600_000 else { throw LedgerError.leaseStillLive }
+            if let forbidden = snapshot.materials.first(where: { ![0, 1, 2].contains($0.status) }) {
+                throw LedgerError.abandonmentForbiddenState(forbidden.id)
+            }
+            snapshot = Self.copySnapshot(snapshot, abandonmentState: 1, abandonmentAttestationDigest: attestation.digest)
+            try persist(snapshot)
+            if lifecycleFailurePoint == .abandonmentIntentPersisted {
+                throw SimulatedLifecycleCrash(point: .abandonmentIntentPersisted)
+            }
+        } else if snapshot.abandonmentAttestationDigest != attestation.digest {
+            throw LedgerError.corruptLedger("abandonment intent digest mismatch")
+        }
+        snapshot = try completeAbandonment(snapshot)
+        return Self.abandonmentReceipt(snapshot)
+    }
+
+    /// retention終了を証明したreleased slotだけを、logical generation CAS付きで再利用する。
+    public func recycleReleased(
+        materialID: String,
+        expectedGeneration: UInt64,
+        retentionExpiredAttestation: RetentionExpiredAttestation,
+        replacement: Capacity
+    ) throws -> MaterialView {
+        var snapshot = try load()
+        guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
+        let material = snapshot.materials[index]
+        guard material.status == 4 else { throw LedgerError.abandonmentForbiddenState(materialID) }
+        let generation = try Self.parseUInt(material.slotGeneration)
+        guard generation == expectedGeneration else { throw LedgerError.generationMismatch(expected: expectedGeneration, actual: generation) }
+        guard retentionExpiredAttestation.materialID == materialID,
+              retentionExpiredAttestation.generation == generation,
+              retentionExpiredAttestation.terminalReplayRetentionExpired,
+              Self.validDigest(retentionExpiredAttestation.digest) else { throw LedgerError.retentionNotExpired(materialID) }
+        guard replacement.id == materialID, replacement.kind == material.kind,
+              Self.validIdentifier(replacement.idempotencyKey), replacement.idempotencyKey != material.idempotencyKey,
+              replacement.idempotencyKey.utf8.count == material.idempotencyKey.utf8.count,
+              replacement.maximumEncodedBytes >= 0 else { throw LedgerError.invalidIdentifier("recycled slot shape") }
+        let directory = replacement.allocationDirectory.standardizedFileURL.resolvingSymlinksInPath()
+        let extent = URL(fileURLWithPath: material.extentFilePath)
+        let directoryDevice = try Self.device(ofExistingDirectory: directory)
+        let expectedDevice = try Self.parseUInt(material.volume)
+        guard directory.path == extent.deletingLastPathComponent().path,
+              directoryDevice == expectedDevice,
+              !FileManager.default.fileExists(atPath: extent.path) else { throw LedgerError.differentLedgerVolume }
+        try Self.preallocate(extent, bytes: replacement.maximumEncodedBytes)
+        do {
+            snapshot = try Self.recycling(snapshot, materialIndex: index, replacement: replacement,
+                                          newGeneration: generation + 1, attestationDigest: retentionExpiredAttestation.digest)
+            try persist(snapshot)
+        } catch {
+            try? FileManager.default.removeItem(at: extent)
+            throw error
+        }
+        return try Self.makeMaterialViews(snapshot)[index]
+    }
+
     /// crash後、durable ledgerを正本として全 volume の物理予約sizeを収束させる。
     @discardableResult
     public func reconcile() throws -> View {
@@ -536,6 +689,8 @@ public actor ChangeSetQuotaLedger {
 
     private func reconcile(snapshot initial: Snapshot) throws {
         var snapshot = initial
+        if snapshot.abandonmentState == 1 { snapshot = try completeAbandonment(snapshot) }
+        if snapshot.abandonmentState == 2 { return }
         let ledgerDevice = try Self.device(ofExistingDirectory: ledgerDirectory)
         let expectedLedgerDevice = try Self.parseUInt(snapshot.ledgerDevice)
         guard ledgerDevice == expectedLedgerDevice else { throw LedgerError.differentLedgerVolume }
@@ -593,6 +748,19 @@ public actor ChangeSetQuotaLedger {
         }
     }
 
+    private func completeAbandonment(_ initial: Snapshot) throws -> Snapshot {
+        var snapshot = initial
+        guard snapshot.abandonmentState == 1 else { return snapshot }
+        for material in snapshot.materials {
+            guard [0, 1, 2, 6].contains(material.status) else { throw LedgerError.abandonmentForbiddenState(material.id) }
+            let extent = URL(fileURLWithPath: material.extentFilePath)
+            if FileManager.default.fileExists(atPath: extent.path) { try Self.durableUnlink(extent) }
+        }
+        snapshot = Self.markingAbandoned(snapshot)
+        try persist(snapshot)
+        return snapshot
+    }
+
     private func completeReplacement(_ initial: Snapshot, newIndex: Int) throws -> Snapshot {
         var snapshot = initial
         let new = snapshot.materials[newIndex]
@@ -613,6 +781,9 @@ public actor ChangeSetQuotaLedger {
             _ = try Self.inspectMaterialized(extent, expectedDevice: device,
                                              expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
             try Self.atomicReplaceMaterial(extent, final: final, expectedDevice: device)
+            if lifecycleFailurePoint == .replacementRenameCompleted {
+                throw SimulatedLifecycleCrash(point: .replacementRenameCompleted)
+            }
         }
         let newIdentity = try Self.inspectMaterialized(final, expectedDevice: device,
                                                        expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
@@ -629,8 +800,25 @@ public actor ChangeSetQuotaLedger {
             return .init(device: volume.device, directoryPath: volume.directoryPath, reserveFilePath: volume.reserveFilePath,
                          totalBytes: fixed(remaining + ledgerBytes), remainingBytes: volume.remainingBytes)
         }
-        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
-                     ledgerBytes: fixed(ledgerBytes), materials: snapshot.materials, volumes: volumes)
+        return copySnapshot(snapshot, ledgerBytes: fixed(ledgerBytes), volumes: volumes)
+    }
+
+    private static func copySnapshot(
+        _ snapshot: Snapshot,
+        ledgerBytes: String? = nil,
+        materials: [MaterialRecord]? = nil,
+        volumes: [VolumeRecord]? = nil,
+        leaseExpiresEpochMillis: String? = nil,
+        abandonmentState: Int? = nil,
+        abandonmentAttestationDigest: String? = nil
+    ) -> Snapshot {
+        .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
+              ledgerBytes: ledgerBytes ?? snapshot.ledgerBytes, materials: materials ?? snapshot.materials,
+              volumes: volumes ?? snapshot.volumes, ownerBootID: snapshot.ownerBootID,
+              ownerProcessStartIdentity: snapshot.ownerProcessStartIdentity, ownerInstanceNonce: snapshot.ownerInstanceNonce,
+              leaseExpiresEpochMillis: leaseExpiresEpochMillis ?? snapshot.leaseExpiresEpochMillis,
+              abandonmentState: abandonmentState ?? snapshot.abandonmentState,
+              abandonmentAttestationDigest: abandonmentAttestationDigest ?? snapshot.abandonmentAttestationDigest)
     }
 
     private static func adopting(_ snapshot: Snapshot, materialIndex: Int, pathHex: String, pathBytes: String) -> Snapshot {
@@ -643,9 +831,10 @@ public actor ChangeSetQuotaLedger {
                                          plannedFinalPathHex: pathHex, plannedFinalPathBytes: pathBytes,
                                          finalDevice: material.finalDevice, finalInode: material.finalInode,
                                          finalBytes: material.finalBytes, finalSHA256: material.finalSHA256,
-                                         replacementOldID: material.replacementOldID, status: 1)
-        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
-                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+                                         replacementOldID: material.replacementOldID,
+                                         slotGeneration: material.slotGeneration,
+                                         retentionAttestationDigest: material.retentionAttestationDigest, status: 1)
+        return copySnapshot(snapshot, materials: materials)
     }
 
     private static func authorizing(_ snapshot: Snapshot, materialIndex: Int, volumeIndex: Int, actualBytes: Int, digest: String) -> Snapshot {
@@ -657,13 +846,14 @@ public actor ChangeSetQuotaLedger {
                                          plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
                                          finalDevice: material.finalDevice, finalInode: material.finalInode,
                                          finalBytes: material.finalBytes, finalSHA256: material.finalSHA256,
-                                         replacementOldID: material.replacementOldID, status: 2)
+                                         replacementOldID: material.replacementOldID,
+                                         slotGeneration: material.slotGeneration,
+                                         retentionAttestationDigest: material.retentionAttestationDigest, status: 2)
         let volume = volumes[volumeIndex]
         let remaining = (try! parse(volume.remainingBytes)) - (try! parse(material.bytes))
         volumes[volumeIndex] = .init(device: volume.device, directoryPath: volume.directoryPath, reserveFilePath: volume.reserveFilePath,
                                      totalBytes: volume.totalBytes, remainingBytes: fixed(remaining))
-        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
-                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: volumes)
+        return copySnapshot(snapshot, materials: materials, volumes: volumes)
     }
 
     private static func materializing(_ snapshot: Snapshot, materialIndex: Int, identity: MaterialIdentity) -> Snapshot {
@@ -675,10 +865,10 @@ public actor ChangeSetQuotaLedger {
             sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
             plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
             finalDevice: fixed(identity.device), finalInode: fixed(identity.inode), finalBytes: fixed(identity.bytes),
-            finalSHA256: identity.sha256, replacementOldID: emptyIdentifier, status: 3
+            finalSHA256: identity.sha256, replacementOldID: emptyIdentifier,
+            slotGeneration: material.slotGeneration, retentionAttestationDigest: material.retentionAttestationDigest, status: 3
         )
-        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
-                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+        return copySnapshot(snapshot, materials: materials)
     }
 
     private static func settingTerminalReleased(_ snapshot: Snapshot, materialIndex: Int) -> Snapshot {
@@ -690,10 +880,10 @@ public actor ChangeSetQuotaLedger {
             sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
             plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
             finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
-            finalSHA256: material.finalSHA256, replacementOldID: emptyIdentifier, status: 4
+            finalSHA256: material.finalSHA256, replacementOldID: emptyIdentifier,
+            slotGeneration: material.slotGeneration, retentionAttestationDigest: material.retentionAttestationDigest, status: 4
         )
-        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
-                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+        return copySnapshot(snapshot, materials: materials)
     }
 
     private static func markingReplacementIntent(_ snapshot: Snapshot, newIndex: Int, oldID: String) -> Snapshot {
@@ -705,10 +895,10 @@ public actor ChangeSetQuotaLedger {
             sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
             plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
             finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
-            finalSHA256: material.finalSHA256, replacementOldID: fixedIdentifier(oldID), status: 5
+            finalSHA256: material.finalSHA256, replacementOldID: fixedIdentifier(oldID),
+            slotGeneration: material.slotGeneration, retentionAttestationDigest: material.retentionAttestationDigest, status: 5
         )
-        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
-                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+        return copySnapshot(snapshot, materials: materials)
     }
 
     private static func completingReplacement(_ snapshot: Snapshot, oldIndex: Int, newIndex: Int, identity: MaterialIdentity) -> Snapshot {
@@ -716,10 +906,57 @@ public actor ChangeSetQuotaLedger {
         return materializing(released, materialIndex: newIndex, identity: identity)
     }
 
+    private static func markingAbandoned(_ snapshot: Snapshot) -> Snapshot {
+        let materials = snapshot.materials.map { material in
+            MaterialRecord(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+                           bytes: material.bytes, actualBytes: material.actualBytes,
+                           expectedSHA256: material.expectedSHA256, sha256: material.sha256,
+                           volume: material.volume, extentFilePath: material.extentFilePath,
+                           plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
+                           finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
+                           finalSHA256: material.finalSHA256, replacementOldID: emptyIdentifier,
+                           slotGeneration: material.slotGeneration, retentionAttestationDigest: material.retentionAttestationDigest,
+                           status: 6)
+        }
+        let volumes = snapshot.volumes.map {
+            VolumeRecord(device: $0.device, directoryPath: $0.directoryPath, reserveFilePath: $0.reserveFilePath,
+                         totalBytes: $0.totalBytes, remainingBytes: fixed(0))
+        }
+        return copySnapshot(snapshot, materials: materials, volumes: volumes, abandonmentState: 2)
+    }
+
+    private static func recycling(_ snapshot: Snapshot, materialIndex: Int, replacement: Capacity,
+                                  newGeneration: UInt64, attestationDigest: String) throws -> Snapshot {
+        var materials = snapshot.materials, volumes = snapshot.volumes
+        let old = materials[materialIndex]
+        materials[materialIndex] = .init(
+            id: old.id, idempotencyKey: replacement.idempotencyKey, kind: old.kind,
+            bytes: fixed(replacement.maximumEncodedBytes), actualBytes: fixed(0), expectedSHA256: zeroDigest,
+            sha256: zeroDigest, volume: old.volume, extentFilePath: old.extentFilePath,
+            plannedFinalPathHex: emptyPathHex, plannedFinalPathBytes: fixed(0),
+            finalDevice: fixed(0), finalInode: fixed(0), finalBytes: fixed(0), finalSHA256: zeroDigest,
+            replacementOldID: emptyIdentifier, slotGeneration: fixed(newGeneration),
+            retentionAttestationDigest: attestationDigest, status: 0
+        )
+        guard let volumeIndex = volumes.firstIndex(where: { $0.device == old.volume }) else { throw LedgerError.corruptLedger("recycled volume absent") }
+        let volume = volumes[volumeIndex]
+        let oldCapacity = try parse(old.bytes), total = try parse(volume.totalBytes), remaining = try parse(volume.remainingBytes)
+        let adjustedTotal = total - oldCapacity + replacement.maximumEncodedBytes
+        guard adjustedTotal >= 0 else { throw LedgerError.corruptLedger("recycled quota underflow") }
+        volumes[volumeIndex] = .init(device: volume.device, directoryPath: volume.directoryPath,
+                                     reserveFilePath: volume.reserveFilePath, totalBytes: fixed(adjustedTotal),
+                                     remainingBytes: fixed(remaining + replacement.maximumEncodedBytes))
+        return copySnapshot(snapshot, materials: materials, volumes: volumes)
+    }
+
     private static func receipt(_ material: MaterialRecord, snapshot: Snapshot) -> Receipt {
         let volume = snapshot.volumes.first { $0.device == material.volume }!
         return .init(materialID: material.id, idempotencyKey: material.idempotencyKey, bytes: try! parse(material.actualBytes),
                      remainingBytesOnVolume: try! parse(volume.remainingBytes), dataSHA256: material.sha256)
+    }
+
+    private static func abandonmentReceipt(_ snapshot: Snapshot) -> AbandonmentReceipt {
+        .init(attestationDigest: snapshot.abandonmentAttestationDigest, abandonedMaterialIDs: Set(snapshot.materials.map(\.id)))
     }
 
     private static func adoptedReserve(_ material: MaterialRecord) -> AdoptedReserve {
@@ -748,6 +985,7 @@ public actor ChangeSetQuotaLedger {
         case 3: .materialized
         case 4: .released
         case 5: .replacementIntent
+        case 6: .abandoned
         default: preconditionFailure("validated ledger contains unknown material status")
         }
     }
@@ -762,13 +1000,16 @@ public actor ChangeSetQuotaLedger {
             let oldID = material.status == 5 ? try decodeIdentifier(material.replacementOldID) : nil
             return .init(id: material.id, kind: material.kind, state: status, plannedFinalURL: planned,
                          capacityBytes: try parse(material.bytes), actualBytes: actual,
-                         generation: generation, replacementOldMaterialID: oldID)
+                         generation: generation, replacementOldMaterialID: oldID,
+                         slotGeneration: try parseUInt(material.slotGeneration))
         }
     }
 
     private static func samePlan(_ lhs: Snapshot, _ rhs: Snapshot) -> Bool {
         guard lhs.schema == rhs.schema, lhs.reservationID == rhs.reservationID,
-              lhs.ledgerDevice == rhs.ledgerDevice, lhs.ledgerBytes == rhs.ledgerBytes else { return false }
+              lhs.ledgerDevice == rhs.ledgerDevice, lhs.ledgerBytes == rhs.ledgerBytes,
+              lhs.ownerBootID == rhs.ownerBootID, lhs.ownerProcessStartIdentity == rhs.ownerProcessStartIdentity,
+              lhs.ownerInstanceNonce == rhs.ownerInstanceNonce else { return false }
         let normalizedMaterials = lhs.materials.map {
             MaterialRecord(id: $0.id, idempotencyKey: $0.idempotencyKey, kind: $0.kind,
                            bytes: $0.bytes, actualBytes: fixed(0), expectedSHA256: $0.expectedSHA256,
@@ -858,6 +1099,16 @@ public actor ChangeSetQuotaLedger {
         guard parentFD >= 0, fsync(parentFD) == 0, close(parentFD) == 0 else {
             if parentFD >= 0 { close(parentFD) }
             throw LedgerError.durableWriteFailed("replacement parent fsync: \(errno)")
+        }
+    }
+
+    private static func durableUnlink(_ url: URL) throws {
+        let parent = url.deletingLastPathComponent()
+        guard unlink(url.path) == 0 || errno == ENOENT else { throw LedgerError.durableWriteFailed("extent unlink: \(errno)") }
+        let descriptor = open(parent.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0, fsync(descriptor) == 0, close(descriptor) == 0 else {
+            if descriptor >= 0 { close(descriptor) }
+            throw LedgerError.durableWriteFailed("extent parent fsync: \(errno)")
         }
     }
 
@@ -967,8 +1218,15 @@ public actor ChangeSetQuotaLedger {
         return decoded
     }
     private static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    private static func epochMillis(_ date: Date) -> UInt64 { UInt64(max(0, date.timeIntervalSince1970 * 1_000)) }
     private static func validIdentifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 128 && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) }
+    }
+    private static func validDigest(_ value: String) -> Bool { value.count == 64 && value.allSatisfy(\.isHexDigit) }
+    private static func requireOwner(_ snapshot: Snapshot, owner: OwnerBinding) throws {
+        guard try decodeIdentifier(snapshot.ownerBootID) == owner.bootID,
+              try decodeIdentifier(snapshot.ownerProcessStartIdentity) == owner.processStartIdentity,
+              try decodeIdentifier(snapshot.ownerInstanceNonce) == owner.instanceNonce else { throw LedgerError.ownerBindingMismatch }
     }
     private static func fixed<T: BinaryInteger>(_ value: T) -> String { String(repeating: "0", count: numberWidth - String(value).count) + String(value) }
     private static func parse(_ value: String) throws -> Int {

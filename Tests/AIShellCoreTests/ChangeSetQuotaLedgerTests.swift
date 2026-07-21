@@ -170,6 +170,120 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
         }
     }
 
+    func testAbandonPreparedRequiresExpiredSameOwnerLeaseAndZeroReferences() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let now = Date()
+        let liveOwner = ChangeSetQuotaLedger.OwnerBinding(
+            bootID: "boot-live", processStartIdentity: "process-live", instanceNonce: "instance-live",
+            leaseExpiresAt: now.addingTimeInterval(60)
+        )
+        let liveLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "live-lease", ownerBinding: liveOwner)
+        _ = try await liveLedger.prepareCapacity([
+            .init(id: "live", idempotencyKey: "live-key", kind: .canonicalEnvelope,
+                  maximumEncodedBytes: 8, allocationDirectory: fixture.directory)
+        ])
+        let liveAttestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "f", count: 64), owner: liveOwner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false
+        )
+        await XCTAssertThrowsErrorAsync(try await liveLedger.abandonPrepared(attestation: liveAttestation, now: now)) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .leaseStillLive)
+        }
+        let owner = ChangeSetQuotaLedger.OwnerBinding(
+            bootID: "boot-test", processStartIdentity: "process-test", instanceNonce: "instance-test",
+            leaseExpiresAt: now.addingTimeInterval(-601)
+        )
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "abandon", ownerBinding: owner,
+                                              lifecycleFailurePoint: .abandonmentIntentPersisted)
+        _ = try await ledger.prepareCapacity([
+            .init(id: "reservation", idempotencyKey: "reservation-key", kind: .canonicalEnvelope,
+                  maximumEncodedBytes: 48, allocationDirectory: fixture.directory)
+        ])
+        let referenced = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "a", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: true
+        )
+        await XCTAssertThrowsErrorAsync(try await ledger.abandonPrepared(attestation: referenced, now: now)) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .abandonmentReferenced)
+        }
+        let foreign = ChangeSetQuotaLedger.OwnerBinding(
+            bootID: "other-boot", processStartIdentity: owner.processStartIdentity,
+            instanceNonce: owner.instanceNonce, leaseExpiresAt: owner.leaseExpiresAt
+        )
+        let foreignAttestation = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "b", count: 64), owner: foreign, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false
+        )
+        await XCTAssertThrowsErrorAsync(try await ledger.abandonPrepared(attestation: foreignAttestation, now: now)) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .ownerBindingMismatch)
+        }
+        let accepted = ChangeSetQuotaLedger.PreparedAbandonmentAttestation(
+            digest: String(repeating: "c", count: 64), owner: owner, admissionReferenced: false,
+            transactionDirectoryReferenced: false, registryReferenced: false
+        )
+        await XCTAssertThrowsErrorAsync(try await ledger.abandonPrepared(attestation: accepted, now: now)) {
+            XCTAssertEqual(($0 as? ChangeSetQuotaLedger.SimulatedLifecycleCrash)?.point, .abandonmentIntentPersisted)
+        }
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "abandon", ownerBinding: owner)
+        _ = try await restarted.reconcile()
+        let receipt = try await restarted.abandonPrepared(attestation: accepted, now: now)
+        let replay = try await restarted.abandonPrepared(attestation: accepted, now: now)
+        XCTAssertEqual(receipt, replay)
+        let abandonedView = try await restarted.currentView()
+        XCTAssertEqual(abandonedView.materialStates["reservation"], .abandoned)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(at: fixture.directory, includingPropertiesForKeys: nil)
+            .contains { $0.pathExtension == "extent" && $0.lastPathComponent.contains("abandon") })
+    }
+
+    func testRecycleReleasedRequiresRetentionAndGenerationCASAndRejectsOldKey() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let final = fixture.directory.appendingPathComponent("recycled-final")
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "recycle")
+        _ = try await ledger.prepareCapacity([
+            .init(id: "slot", idempotencyKey: "old-key", kind: .terminalReplay,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory)
+        ])
+        let reserve = try await ledger.adoptReserve(materialID: "slot", idempotencyKey: "old-key", finalURL: final)
+        let data = Data("old terminal".utf8)
+        _ = try await ledger.authorizeActual(materialID: "slot", idempotencyKey: "old-key", data: data)
+        try Self.write(data, toExtent: reserve.extentURL); try FileManager.default.moveItem(at: reserve.extentURL, to: final)
+        _ = try await ledger.commitMaterialization(materialID: "slot", idempotencyKey: "old-key", finalURL: final)
+        try await ledger.releaseMaterial(materialID: "slot", idempotencyKey: "old-key")
+
+        let notExpired = ChangeSetQuotaLedger.RetentionExpiredAttestation(
+            digest: String(repeating: "d", count: 64), materialID: "slot", generation: 0,
+            terminalReplayRetentionExpired: false
+        )
+        let replacement = ChangeSetQuotaLedger.Capacity(
+            id: "slot", idempotencyKey: "new-key", kind: .terminalReplay,
+            maximumEncodedBytes: 96, allocationDirectory: fixture.directory
+        )
+        await XCTAssertThrowsErrorAsync(try await ledger.recycleReleased(
+            materialID: "slot", expectedGeneration: 0, retentionExpiredAttestation: notExpired, replacement: replacement
+        )) { XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .retentionNotExpired("slot")) }
+        let expired = ChangeSetQuotaLedger.RetentionExpiredAttestation(
+            digest: String(repeating: "e", count: 64), materialID: "slot", generation: 0,
+            terminalReplayRetentionExpired: true
+        )
+        await XCTAssertThrowsErrorAsync(try await ledger.recycleReleased(
+            materialID: "slot", expectedGeneration: 1, retentionExpiredAttestation: expired, replacement: replacement
+        )) { XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .generationMismatch(expected: 1, actual: 0)) }
+        let recycled = try await ledger.recycleReleased(
+            materialID: "slot", expectedGeneration: 0, retentionExpiredAttestation: expired, replacement: replacement
+        )
+        XCTAssertEqual(recycled.state, .reserved)
+        XCTAssertEqual(recycled.slotGeneration, 1)
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "recycle")
+        let restartedMaterials = try await restarted.materialViews()
+        XCTAssertEqual(restartedMaterials.first?.slotGeneration, 1)
+        await XCTAssertThrowsErrorAsync(try await ledger.adoptReserve(
+            materialID: "slot", idempotencyKey: "old-key", finalURL: final
+        )) { XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .idempotencyMismatch("slot")) }
+        _ = try await ledger.adoptReserve(materialID: "slot", idempotencyKey: "new-key", finalURL: final)
+    }
+
     func testRenameCrashRecoversOnlyAtPlannedFinalAndReleaseEndsVerification() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
