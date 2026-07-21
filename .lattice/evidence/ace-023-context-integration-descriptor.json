@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "25a66ed3c46bdc1c92074d4cd129646426a5a4efc27bf08de150bf0bded39ee0",
+  "evidence_id": "ace-023-context-integration-20260721",
+  "git_blob_oid": "89ca37d7ca15a3a8bff99a262c7e6efc81b092ff",
+  "media_type": "text/x-swift",
+  "path": "Sources/AIShellCore/ContextCompilerService.swift",
+  "repo_id": "self"
+}
