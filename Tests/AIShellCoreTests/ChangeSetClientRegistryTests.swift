@@ -316,9 +316,22 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         XCTAssertEqual(references[0].artifactHandle, "legacy-artifact")
         XCTAssertEqual(references[1].state, .recoveryRequired)
 
+        let postImportAllocation = try await registry.allocate(
+            controlRequestID: fixture.uuid(64),
+            proofIDDigest: fixture.digest(64),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            expectedRegistryGeneration: legacy.registryGeneration
+        )
+        XCTAssertEqual(postImportAllocation.registryGeneration, legacy.registryGeneration + 1)
+        XCTAssertEqual(postImportAllocation.slotIndex, 1)
+
         let restarted = try fixture.open()
+        let restartedSnapshot = await restarted.snapshot()
+        XCTAssertEqual(restartedSnapshot.generation, postImportAllocation.registryGeneration)
+        XCTAssertEqual(restartedSnapshot.slots[1].allocationState, .active)
         let replayed = try await restarted.initializeFromLegacy(legacySnapshot: legacy)
         XCTAssertEqual(replayed, imported)
+        XCTAssertEqual(replayed.registryGeneration, legacy.registryGeneration)
         let restartedReferences = await restarted.replayReferences()
         XCTAssertEqual(restartedReferences, references)
         await XCTAssertRegistryError(.ownerProofConsumed) {
@@ -326,7 +339,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
                 controlRequestID: fixture.uuid(62),
                 proofIDDigest: fixture.digest(60),
                 proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
-                expectedRegistryGeneration: legacy.registryGeneration
+                expectedRegistryGeneration: postImportAllocation.registryGeneration
             )
         }
     }

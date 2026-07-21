@@ -736,7 +736,8 @@ private extension ChangeSetClientRegistry {
             }
         }
         if let receipt = image.legacyImportReceipt {
-            guard isSHA256(receipt.snapshotDigest), receipt.registryGeneration == image.generation else {
+            guard isSHA256(receipt.snapshotDigest), receipt.registryGeneration > 0,
+                  receipt.registryGeneration <= image.generation else {
                 throw ChangeSetClientRegistryError(.storeCorrupt, "legacy import receipt is invalid")
             }
         }
