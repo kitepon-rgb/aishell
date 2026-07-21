@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import AIShellCore
@@ -173,6 +174,78 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
         try await restarted.releaseMaterial(materialID: "evidence", idempotencyKey: "evidence-key")
         try Data("product now owns this path".utf8).write(to: final)
         _ = try await restarted.reconcile()
+    }
+
+    func testGenerationReplacementAtomicallySupersedesOldAndRecoversAfterRenameCrash() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let final = fixture.directory.appendingPathComponent("CURRENT")
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "generations")
+        _ = try await ledger.prepareCapacity([
+            .init(id: "generation-old", idempotencyKey: "old-key", kind: .stateSnapshot,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+            .init(id: "generation-new", idempotencyKey: "new-key", kind: .stateSnapshot,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+
+        let oldReserve = try await ledger.adoptReserve(materialID: "generation-old", idempotencyKey: "old-key", finalURL: final)
+        let oldData = Data("old-generation".utf8)
+        _ = try await ledger.authorizeActual(materialID: "generation-old", idempotencyKey: "old-key", data: oldData)
+        try Self.write(oldData, toExtent: oldReserve.extentURL)
+        try FileManager.default.moveItem(at: oldReserve.extentURL, to: final)
+        _ = try await ledger.commitMaterialization(materialID: "generation-old", idempotencyKey: "old-key", finalURL: final)
+
+        let newReserve = try await ledger.adoptReserve(materialID: "generation-new", idempotencyKey: "new-key", finalURL: final)
+        let newData = Data("new-generation".utf8)
+        _ = try await ledger.authorizeActual(materialID: "generation-new", idempotencyKey: "new-key", data: newData)
+        try Self.write(newData, toExtent: newReserve.extentURL)
+        let explicit = try await ledger.commitReplacement(
+            oldMaterialID: "generation-old", oldIdempotencyKey: "old-key",
+            newMaterialID: "generation-new", newIdempotencyKey: "new-key", finalURL: final
+        )
+        XCTAssertEqual(explicit.supersededMaterialID, "generation-old")
+        XCTAssertEqual(try Data(contentsOf: final), newData)
+        var view = try await ledger.currentView()
+        XCTAssertEqual(view.materialStates["generation-old"], .released)
+        XCTAssertEqual(view.materialStates["generation-new"], .materialized)
+        XCTAssertEqual(view.materializedMaterialIDs, ["generation-new"])
+        XCTAssertEqual(view.releasedMaterialIDs, ["generation-old"])
+        let generations = try await ledger.materialViews()
+        XCTAssertNotNil(generations.first { $0.id == "generation-new" }?.generation)
+        await XCTAssertThrowsErrorAsync(
+            try await ledger.authorizeActual(materialID: "generation-new", idempotencyKey: "new-key", data: newData)
+        ) { XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .materializationIncomplete("generation-new")) }
+        await XCTAssertThrowsErrorAsync(
+            try await ledger.adoptReserve(materialID: "generation-old", idempotencyKey: "old-key", finalURL: final)
+        ) { XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .materializationIncomplete("generation-old")) }
+
+        // 次世代をoutside renameし、rename後・ledger persist前のcrashを模擬する。
+        try await ledger.releaseMaterial(materialID: "generation-new", idempotencyKey: "new-key")
+        // release済み世代を再利用せず、別ledgerでold/newの同じ境界を再現する。
+        let crashLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "generation-crash")
+        _ = try await crashLedger.prepareCapacity([
+            .init(id: "old", idempotencyKey: "o", kind: .transactionJournal, maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+            .init(id: "new", idempotencyKey: "n", kind: .transactionJournal, maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        let crashFinal = fixture.directory.appendingPathComponent("WAL")
+        let old = try await crashLedger.adoptReserve(materialID: "old", idempotencyKey: "o", finalURL: crashFinal)
+        _ = try await crashLedger.authorizeActual(materialID: "old", idempotencyKey: "o", data: oldData)
+        try Self.write(oldData, toExtent: old.extentURL); try FileManager.default.moveItem(at: old.extentURL, to: crashFinal)
+        _ = try await crashLedger.commitMaterialization(materialID: "old", idempotencyKey: "o", finalURL: crashFinal)
+        let new = try await crashLedger.adoptReserve(materialID: "new", idempotencyKey: "n", finalURL: crashFinal)
+        _ = try await crashLedger.authorizeActual(materialID: "new", idempotencyKey: "n", data: newData)
+        try Self.write(newData, toExtent: new.extentURL)
+        XCTAssertEqual(rename(new.extentURL.path, crashFinal.path), 0)
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "generation-crash")
+        _ = try await restarted.reconcile()
+        view = try await restarted.currentView()
+        XCTAssertEqual(view.materialStates["old"], .released)
+        XCTAssertEqual(view.materialStates["new"], .materialized)
+    }
+
+    private static func write(_ data: Data, toExtent url: URL) throws {
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.write(contentsOf: data); try handle.synchronize(); try handle.close()
     }
 
 }

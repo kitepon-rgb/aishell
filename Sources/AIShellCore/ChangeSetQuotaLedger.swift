@@ -75,6 +75,11 @@ public actor ChangeSetQuotaLedger {
         public let sha256: String
     }
 
+    public struct ReplacementReceipt: Equatable, Sendable {
+        public let supersededMaterialID: String
+        public let materialized: MaterializationReceipt
+    }
+
     public struct Receipt: Codable, Equatable, Sendable {
         public let materialID: String
         public let idempotencyKey: String
@@ -90,6 +95,26 @@ public actor ChangeSetQuotaLedger {
         public let remainingMaterialBytes: Int
         public let consumedMaterialIDs: Set<String>
         public let volumeRemainingBytes: [UInt64: Int]
+        public let materialStates: [String: MaterialState]
+        public let usedMaterialIDs: Set<String>
+        public let materializedMaterialIDs: Set<String>
+        public let releasedMaterialIDs: Set<String>
+    }
+
+    public enum MaterialState: String, Equatable, Sendable {
+        case reserved, adopted, authorized, materialized, released, replacementIntent
+    }
+
+    public struct MaterialView: Equatable, Sendable {
+        public let id: String
+        public let kind: MaterialKind
+        public let state: MaterialState
+        public let plannedFinalURL: URL?
+        public let capacityBytes: Int
+        public let actualBytes: Int?
+        /// materialized世代を一意にする `device:inode`。未materializedではnil。
+        public let generation: String?
+        public let replacementOldMaterialID: String?
     }
 
     public enum LedgerError: Error, Equatable, Sendable {
@@ -132,6 +157,7 @@ public actor ChangeSetQuotaLedger {
         let finalInode: String
         let finalBytes: String
         let finalSHA256: String
+        let replacementOldID: String
         let status: Int
     }
 
@@ -162,6 +188,7 @@ public actor ChangeSetQuotaLedger {
     private static let schema = "aishell.change-set-quota-ledger.v1"
     private static let numberWidth = 20
     private static let maximumPathBytes = 4_096
+    private static let identifierWidth = 128
 
     private let ledgerDirectory: URL
     private let reservationID: String
@@ -229,6 +256,7 @@ public actor ChangeSetQuotaLedger {
                 plannedFinalPathBytes: Self.fixed(0),
                 finalDevice: Self.fixed(0), finalInode: Self.fixed(0), finalBytes: Self.fixed(0),
                 finalSHA256: Self.zeroDigest,
+                replacementOldID: Self.emptyIdentifier,
                 status: 0
             ))
         }
@@ -320,10 +348,11 @@ public actor ChangeSetQuotaLedger {
         let planned = try Self.encodePath(canonicalFinal.path)
         let device = try Self.parseUInt(material.volume)
         guard try Self.device(ofExistingDirectory: canonicalFinal.deletingLastPathComponent()) == device else { throw LedgerError.differentLedgerVolume }
-        if material.status >= 1 {
+        if material.status == 1 || material.status == 2 {
             guard try Self.plannedFinalURL(material).path == canonicalFinal.path else { throw LedgerError.finalPathMismatch(materialID) }
             return Self.adoptedReserve(material)
         }
+        guard material.status == 0 else { throw LedgerError.materializationIncomplete(materialID) }
         let extent = URL(fileURLWithPath: material.extentFilePath)
         let capacity = try Self.parse(material.bytes)
         try Self.requireExtent(extent, device: device, size: capacity)
@@ -353,6 +382,7 @@ public actor ChangeSetQuotaLedger {
             try reconcile(snapshot: snapshot)
             return Self.receipt(material, snapshot: snapshot)
         }
+        guard material.status == 1 else { throw LedgerError.materializationIncomplete(materialID) }
         guard let volumeIndex = snapshot.volumes.firstIndex(where: { (try? Self.parseUInt($0.device)) == device }) else {
             throw LedgerError.corruptLedger("material volume is absent")
         }
@@ -393,6 +423,51 @@ public actor ChangeSetQuotaLedger {
         return Self.materializationReceipt(snapshot.materials[index], identity: identity)
     }
 
+    /// 同一final pathの旧世代を、新extentへ一回のdurable世代交代で置き換える。
+    public func commitReplacement(
+        oldMaterialID: String,
+        oldIdempotencyKey: String,
+        newMaterialID: String,
+        newIdempotencyKey: String,
+        finalURL: URL
+    ) throws -> ReplacementReceipt {
+        var snapshot = try load()
+        guard let oldIndex = snapshot.materials.firstIndex(where: { $0.id == oldMaterialID }),
+              let newIndex = snapshot.materials.firstIndex(where: { $0.id == newMaterialID }) else {
+            throw LedgerError.unknownMaterial("\(oldMaterialID)->\(newMaterialID)")
+        }
+        let old = snapshot.materials[oldIndex], new = snapshot.materials[newIndex]
+        guard old.idempotencyKey == oldIdempotencyKey else { throw LedgerError.idempotencyMismatch(oldMaterialID) }
+        guard new.idempotencyKey == newIdempotencyKey else { throw LedgerError.idempotencyMismatch(newMaterialID) }
+        let canonical = try Self.canonicalPlannedFinal(finalURL)
+        guard try Self.plannedFinalURL(old).path == canonical.path,
+              try Self.plannedFinalURL(new).path == canonical.path else { throw LedgerError.finalPathMismatch(newMaterialID) }
+
+        if old.status == 4, new.status == 3 {
+            let identity = try Self.inspectMaterialized(canonical, expectedDevice: try Self.parseUInt(new.volume),
+                                                        expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
+            try Self.validateStoredIdentity(new, identity: identity)
+            return .init(supersededMaterialID: oldMaterialID, materialized: Self.materializationReceipt(new, identity: identity))
+        }
+        if new.status != 5 {
+            guard old.status == 3, new.status == 2 else { throw LedgerError.materializationIncomplete(newMaterialID) }
+            let oldIdentity = try Self.inspectMaterialized(canonical, expectedDevice: try Self.parseUInt(old.volume),
+                                                           expectedBytes: try Self.parse(old.actualBytes), expectedSHA: old.sha256)
+            try Self.validateStoredIdentity(old, identity: oldIdentity)
+            _ = try Self.inspectMaterialized(URL(fileURLWithPath: new.extentFilePath), expectedDevice: try Self.parseUInt(new.volume),
+                                             expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
+            snapshot = Self.markingReplacementIntent(snapshot, newIndex: newIndex, oldID: oldMaterialID)
+            try persist(snapshot)
+        } else {
+            guard try Self.decodeIdentifier(new.replacementOldID) == oldMaterialID else { throw LedgerError.corruptLedger("replacement peer mismatch") }
+        }
+        snapshot = try completeReplacement(snapshot, newIndex: newIndex)
+        let materialized = snapshot.materials[newIndex]
+        let identity = try Self.inspectMaterialized(canonical, expectedDevice: try Self.parseUInt(materialized.volume),
+                                                    expectedBytes: try Self.parse(materialized.actualBytes), expectedSHA: materialized.sha256)
+        return .init(supersededMaterialID: oldMaterialID, materialized: Self.materializationReceipt(materialized, identity: identity))
+    }
+
     /// terminal replayがdurableになった後、ledgerのextent/final検証責務を明示的に終了する。
     /// final material自体は削除しない。
     public func releaseMaterial(materialID: String, idempotencyKey: String) throws {
@@ -418,6 +493,7 @@ public actor ChangeSetQuotaLedger {
     }
 
     public func currentView() throws -> View { Self.view(try load()) }
+    public func materialViews() throws -> [MaterialView] { try Self.makeMaterialViews(try load()) }
 
     private func persist(_ snapshot: Snapshot) throws {
         let encoded = try Self.encode(snapshot)
@@ -452,6 +528,26 @@ public actor ChangeSetQuotaLedger {
                 try Self.resizeAndSync(URL(fileURLWithPath: volume.reserveFilePath), bytes: 0)
             }
         }
+        for index in snapshot.materials.indices where snapshot.materials[index].status == 5 {
+            snapshot = try completeReplacement(snapshot, newIndex: index)
+        }
+        // rename完了・intent/final ledger commit前のcrashも、newのplanned pathと実identityが一致する場合だけ
+        // old→released/new→materializedを一回のpersistへ収束させる。old検証より必ず先に行う。
+        for newIndex in snapshot.materials.indices where snapshot.materials[newIndex].status == 2 {
+            let new = snapshot.materials[newIndex]
+            guard !FileManager.default.fileExists(atPath: new.extentFilePath) else { continue }
+            let final = try Self.plannedFinalURL(new)
+            let oldCandidates = try snapshot.materials.indices.filter { index in
+                guard snapshot.materials[index].status == 3 else { return false }
+                return try Self.plannedFinalURL(snapshot.materials[index]).path == final.path
+            }
+            guard !oldCandidates.isEmpty else { continue }
+            guard oldCandidates.count == 1 else { throw LedgerError.corruptLedger("multiple active generations share a final path") }
+            let identity = try Self.inspectMaterialized(final, expectedDevice: try Self.parseUInt(new.volume),
+                                                        expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
+            snapshot = Self.completingReplacement(snapshot, oldIndex: oldCandidates[0], newIndex: newIndex, identity: identity)
+            try persist(snapshot)
+        }
         for index in snapshot.materials.indices {
             let material = snapshot.materials[index]
             if material.status == 4 { continue }
@@ -476,6 +572,34 @@ public actor ChangeSetQuotaLedger {
         }
     }
 
+    private func completeReplacement(_ initial: Snapshot, newIndex: Int) throws -> Snapshot {
+        var snapshot = initial
+        let new = snapshot.materials[newIndex]
+        guard new.status == 5 else { throw LedgerError.corruptLedger("replacement intent is absent") }
+        let oldID = try Self.decodeIdentifier(new.replacementOldID)
+        guard let oldIndex = snapshot.materials.firstIndex(where: { $0.id == oldID }) else { throw LedgerError.corruptLedger("replacement old material is absent") }
+        let old = snapshot.materials[oldIndex]
+        guard old.status == 3 else { throw LedgerError.corruptLedger("replacement old generation is not active") }
+        let final = try Self.plannedFinalURL(new)
+        guard try Self.plannedFinalURL(old).path == final.path else { throw LedgerError.finalPathMismatch(new.id) }
+        let extent = URL(fileURLWithPath: new.extentFilePath)
+        let device = try Self.parseUInt(new.volume)
+
+        if FileManager.default.fileExists(atPath: extent.path) {
+            let oldIdentity = try Self.inspectMaterialized(final, expectedDevice: try Self.parseUInt(old.volume),
+                                                           expectedBytes: try Self.parse(old.actualBytes), expectedSHA: old.sha256)
+            try Self.validateStoredIdentity(old, identity: oldIdentity)
+            _ = try Self.inspectMaterialized(extent, expectedDevice: device,
+                                             expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
+            try Self.atomicReplaceMaterial(extent, final: final, expectedDevice: device)
+        }
+        let newIdentity = try Self.inspectMaterialized(final, expectedDevice: device,
+                                                       expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
+        snapshot = Self.completingReplacement(snapshot, oldIndex: oldIndex, newIndex: newIndex, identity: newIdentity)
+        try persist(snapshot)
+        return snapshot
+    }
+
     private static func replacingLedgerBytes(_ snapshot: Snapshot, ledgerBytes: Int) -> Snapshot {
         let ledgerDevice = try! parseUInt(snapshot.ledgerDevice)
         let volumes = snapshot.volumes.map { volume -> VolumeRecord in
@@ -497,7 +621,8 @@ public actor ChangeSetQuotaLedger {
                                          volume: material.volume, extentFilePath: material.extentFilePath,
                                          plannedFinalPathHex: pathHex, plannedFinalPathBytes: pathBytes,
                                          finalDevice: material.finalDevice, finalInode: material.finalInode,
-                                         finalBytes: material.finalBytes, finalSHA256: material.finalSHA256, status: 1)
+                                         finalBytes: material.finalBytes, finalSHA256: material.finalSHA256,
+                                         replacementOldID: material.replacementOldID, status: 1)
         return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
                      ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
     }
@@ -510,7 +635,8 @@ public actor ChangeSetQuotaLedger {
                                          sha256: digest, volume: material.volume, extentFilePath: material.extentFilePath,
                                          plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
                                          finalDevice: material.finalDevice, finalInode: material.finalInode,
-                                         finalBytes: material.finalBytes, finalSHA256: material.finalSHA256, status: 2)
+                                         finalBytes: material.finalBytes, finalSHA256: material.finalSHA256,
+                                         replacementOldID: material.replacementOldID, status: 2)
         let volume = volumes[volumeIndex]
         let remaining = (try! parse(volume.remainingBytes)) - (try! parse(material.bytes))
         volumes[volumeIndex] = .init(device: volume.device, directoryPath: volume.directoryPath, reserveFilePath: volume.reserveFilePath,
@@ -528,7 +654,7 @@ public actor ChangeSetQuotaLedger {
             sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
             plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
             finalDevice: fixed(identity.device), finalInode: fixed(identity.inode), finalBytes: fixed(identity.bytes),
-            finalSHA256: identity.sha256, status: 3
+            finalSHA256: identity.sha256, replacementOldID: emptyIdentifier, status: 3
         )
         return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
                      ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
@@ -543,10 +669,30 @@ public actor ChangeSetQuotaLedger {
             sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
             plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
             finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
-            finalSHA256: material.finalSHA256, status: 4
+            finalSHA256: material.finalSHA256, replacementOldID: emptyIdentifier, status: 4
         )
         return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
                      ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+    }
+
+    private static func markingReplacementIntent(_ snapshot: Snapshot, newIndex: Int, oldID: String) -> Snapshot {
+        var materials = snapshot.materials
+        let material = materials[newIndex]
+        materials[newIndex] = .init(
+            id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+            bytes: material.bytes, actualBytes: material.actualBytes, expectedSHA256: material.expectedSHA256,
+            sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
+            plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
+            finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
+            finalSHA256: material.finalSHA256, replacementOldID: fixedIdentifier(oldID), status: 5
+        )
+        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
+                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+    }
+
+    private static func completingReplacement(_ snapshot: Snapshot, oldIndex: Int, newIndex: Int, identity: MaterialIdentity) -> Snapshot {
+        let released = settingTerminalReleased(snapshot, materialIndex: oldIndex)
+        return materializing(released, materialIndex: newIndex, identity: identity)
     }
 
     private static func receipt(_ material: MaterialRecord, snapshot: Snapshot) -> Receipt {
@@ -564,9 +710,39 @@ public actor ChangeSetQuotaLedger {
     private static func view(_ snapshot: Snapshot) -> View {
         let materialBytes = snapshot.materials.reduce(0) { $0 + (try! parse($1.bytes)) }
         let remaining = snapshot.volumes.reduce(0) { $0 + (try! parse($1.remainingBytes)) }
+        let states = Dictionary(uniqueKeysWithValues: snapshot.materials.map { ($0.id, materialState($0.status)) })
         return .init(reservationID: snapshot.reservationID, ledgerBytes: try! parse(snapshot.ledgerBytes), materialBytes: materialBytes,
-                     remainingMaterialBytes: remaining, consumedMaterialIDs: Set(snapshot.materials.filter { $0.status == 2 }.map(\.id)),
-                     volumeRemainingBytes: Dictionary(uniqueKeysWithValues: snapshot.volumes.map { (try! parseUInt($0.device), try! parse($0.remainingBytes)) }))
+                     remainingMaterialBytes: remaining, consumedMaterialIDs: Set(snapshot.materials.filter { $0.status >= 2 }.map(\.id)),
+                     volumeRemainingBytes: Dictionary(uniqueKeysWithValues: snapshot.volumes.map { (try! parseUInt($0.device), try! parse($0.remainingBytes)) }),
+                     materialStates: states, usedMaterialIDs: Set(snapshot.materials.filter { $0.status > 0 }.map(\.id)),
+                     materializedMaterialIDs: Set(snapshot.materials.filter { $0.status == 3 }.map(\.id)),
+                     releasedMaterialIDs: Set(snapshot.materials.filter { $0.status == 4 }.map(\.id)))
+    }
+
+    private static func materialState(_ status: Int) -> MaterialState {
+        switch status {
+        case 0: .reserved
+        case 1: .adopted
+        case 2: .authorized
+        case 3: .materialized
+        case 4: .released
+        case 5: .replacementIntent
+        default: preconditionFailure("validated ledger contains unknown material status")
+        }
+    }
+
+    private static func makeMaterialViews(_ snapshot: Snapshot) throws -> [MaterialView] {
+        try snapshot.materials.map { material in
+            let status = materialState(material.status)
+            let planned = try parse(material.plannedFinalPathBytes) == 0 ? nil : plannedFinalURL(material)
+            let actual = material.status >= 2 ? try parse(material.actualBytes) : nil
+            let generation = material.status == 3 || material.status == 4
+                ? "\(try parseUInt(material.finalDevice)):\(try parseUInt(material.finalInode))" : nil
+            let oldID = material.status == 5 ? try decodeIdentifier(material.replacementOldID) : nil
+            return .init(id: material.id, kind: material.kind, state: status, plannedFinalURL: planned,
+                         capacityBytes: try parse(material.bytes), actualBytes: actual,
+                         generation: generation, replacementOldMaterialID: oldID)
+        }
     }
 
     private static func samePlan(_ lhs: Snapshot, _ rhs: Snapshot) -> Bool {
@@ -577,7 +753,8 @@ public actor ChangeSetQuotaLedger {
                            bytes: $0.bytes, actualBytes: fixed(0), expectedSHA256: $0.expectedSHA256,
                            sha256: zeroDigest, volume: $0.volume, extentFilePath: $0.extentFilePath,
                            plannedFinalPathHex: emptyPathHex, plannedFinalPathBytes: fixed(0),
-                           finalDevice: fixed(0), finalInode: fixed(0), finalBytes: fixed(0), finalSHA256: zeroDigest, status: 0)
+                           finalDevice: fixed(0), finalInode: fixed(0), finalBytes: fixed(0), finalSHA256: zeroDigest,
+                           replacementOldID: emptyIdentifier, status: 0)
         }
         guard normalizedMaterials == rhs.materials, lhs.volumes.count == rhs.volumes.count else { return false }
         return zip(lhs.volumes, rhs.volumes).allSatisfy {
@@ -623,6 +800,19 @@ public actor ChangeSetQuotaLedger {
               expectedDevice == nil || UInt64(info.st_dev) == expectedDevice,
               ftruncate(descriptor, off_t(bytes)) == 0, fsync(descriptor) == 0 else {
             throw LedgerError.durableWriteFailed("extent resize: \(errno)")
+        }
+    }
+
+    private static func atomicReplaceMaterial(_ extent: URL, final: URL, expectedDevice: UInt64) throws {
+        var extentInfo = stat(), parentInfo = stat()
+        let parent = final.deletingLastPathComponent()
+        guard lstat(extent.path, &extentInfo) == 0, lstat(parent.path, &parentInfo) == 0,
+              UInt64(extentInfo.st_dev) == expectedDevice, UInt64(parentInfo.st_dev) == expectedDevice,
+              rename(extent.path, final.path) == 0 else { throw LedgerError.materializationIncomplete(final.path) }
+        let parentFD = open(parent.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard parentFD >= 0, fsync(parentFD) == 0, close(parentFD) == 0 else {
+            if parentFD >= 0 { close(parentFD) }
+            throw LedgerError.durableWriteFailed("replacement parent fsync: \(errno)")
         }
     }
 
@@ -721,6 +911,16 @@ public actor ChangeSetQuotaLedger {
     }
     private static let zeroDigest = String(repeating: "0", count: 64)
     private static let emptyPathHex = String(repeating: "0", count: maximumPathBytes * 2)
+    private static let emptyIdentifier = String(repeating: " ", count: identifierWidth)
+    private static func fixedIdentifier(_ value: String) -> String {
+        value + String(repeating: " ", count: identifierWidth - value.utf8.count)
+    }
+    private static func decodeIdentifier(_ value: String) throws -> String {
+        guard value.utf8.count == identifierWidth else { throw LedgerError.corruptLedger("invalid replacement identifier") }
+        let decoded = value.trimmingCharacters(in: .whitespaces)
+        guard validIdentifier(decoded) else { throw LedgerError.corruptLedger("invalid replacement identifier") }
+        return decoded
+    }
     private static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     private static func validIdentifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 128 && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) }
