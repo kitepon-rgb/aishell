@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "3ef1cb790441149570eb378b9270956af228da16dac28806b999e73b5cf28aa0",
+  "evidence_id": "ace-032-change-impact-contract-20260721",
+  "git_blob_oid": "da7b6dba41886bd279bfbcfbe5f892daf4298bd7",
+  "media_type": "text/markdown",
+  "path": "docs/adr/0012-change-impact-contract.md",
+  "repo_id": "self"
+}
