@@ -28,12 +28,23 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             expectedRegistryGeneration: initial.generation
         )
         XCTAssertEqual(receipt.registryGeneration, 2)
+        XCTAssertEqual(receipt.slotIndex, 0)
+        XCTAssertEqual(receipt.clientID, initial.slots[0].clientID)
         XCTAssertEqual(try fixture.fileSize("registry-b.bank"), ChangeSetClientRegistry.bankByteCount)
 
         let restarted = try fixture.open()
         let restartedSnapshot = await restarted.snapshot()
         XCTAssertEqual(restartedSnapshot.generation, 2)
         XCTAssertEqual(restartedSnapshot.slots.filter { $0.allocationState == .active }.count, 1)
+        let replayedReceipt = try await restarted.allocate(
+            controlRequestID: fixture.uuid(1),
+            proofIDDigest: fixture.digest(1),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            expectedRegistryGeneration: initial.generation
+        )
+        XCTAssertEqual(replayedReceipt.clientID, receipt.clientID)
+        XCTAssertEqual(replayedReceipt.slotIndex, receipt.slotIndex)
+        XCTAssertEqual(replayedReceipt.registryGeneration, receipt.registryGeneration)
     }
 
     func testHighestValidBankRecoversOneCorruptionAndBothCorruptFailClosed() async throws {
@@ -200,6 +211,72 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         XCTAssertEqual(reused.clientID, first.clientID)
         XCTAssertEqual(reused.currentEpoch, first.currentEpoch + 2)
         XCTAssertEqual(allocated.currentEpoch, reused.currentEpoch)
+    }
+
+    func testReplayReferencesAreCompactBoundedAndDeterministicallyOrdered() async throws {
+        let fixture = try RegistryFixture()
+        defer { fixture.cleanup() }
+        let registry = try fixture.open()
+
+        let firstReceipt = try await registry.allocate(
+            controlRequestID: fixture.uuid(40),
+            proofIDDigest: fixture.digest(40),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            expectedRegistryGeneration: 1
+        )
+        let secondReceipt = try await registry.allocate(
+            controlRequestID: fixture.uuid(41),
+            proofIDDigest: fixture.digest(41),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            expectedRegistryGeneration: firstReceipt.registryGeneration
+        )
+        let snapshot = await registry.snapshot()
+        let first = snapshot.slots[try XCTUnwrap(firstReceipt.slotIndex)]
+        let second = snapshot.slots[try XCTUnwrap(secondReceipt.slotIndex)]
+
+        let firstGeneration = try await registry.admit(
+            clientID: first.clientID,
+            epoch: first.currentEpoch,
+            sequence: 1,
+            requestDigest: fixture.digest(42),
+            transactionID: "tx-first",
+            expectedRegistryGeneration: secondReceipt.registryGeneration
+        )
+        let secondGeneration = try await registry.admit(
+            clientID: second.clientID,
+            epoch: second.currentEpoch,
+            sequence: 1,
+            requestDigest: fixture.digest(43),
+            transactionID: "tx-second",
+            expectedRegistryGeneration: firstGeneration
+        )
+        _ = try await registry.markTerminal(
+            clientID: first.clientID,
+            epoch: first.currentEpoch,
+            sequence: 1,
+            state: .committed,
+            terminalResponseDigest: fixture.digest(44),
+            artifact: ChangeSetReplayArtifact(handle: "artifact-first", expiresAt: fixture.clock.now().addingTimeInterval(120)),
+            retentionExpiresAt: fixture.clock.now().addingTimeInterval(120),
+            expectedRegistryGeneration: secondGeneration
+        )
+
+        let references = await registry.replayReferences()
+        XCTAssertEqual(references.count, 2)
+        XCTAssertEqual(references.map(\.slotIndex), [0, 1])
+        XCTAssertEqual(references.map(\.sequence), [1, 1])
+        XCTAssertEqual(references[0].clientID, first.clientID)
+        XCTAssertEqual(references[0].requestDigest, fixture.digest(42))
+        XCTAssertEqual(references[0].transactionID, "tx-first")
+        XCTAssertEqual(references[0].state, .committed)
+        XCTAssertEqual(references[0].terminalResponseDigest, fixture.digest(44))
+        XCTAssertEqual(references[0].artifactHandle, "artifact-first")
+        XCTAssertNotNil(references[0].artifactExpiresAt)
+        XCTAssertEqual(references[1].clientID, second.clientID)
+        XCTAssertEqual(references[1].state, .pending)
+        XCTAssertNil(references[1].terminalResponseDigest)
+        XCTAssertNil(Mirror(reflecting: references[0]).children.first { $0.label == "fullResult" })
+        XCTAssertLessThanOrEqual(references.count, ChangeSetClientRegistry.slotCount * ChangeSetClientRegistry.replayCapacity)
     }
 }
 

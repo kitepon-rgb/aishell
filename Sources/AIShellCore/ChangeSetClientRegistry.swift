@@ -83,6 +83,8 @@ public struct ChangeSetClientControlReceipt: Codable, Equatable, Sendable {
     public let action: ChangeSetClientControlAction
     public let resultDigest: String
     public let registryGeneration: UInt64
+    public let clientID: String?
+    public let slotIndex: Int?
     public let slotGeneration: UInt64?
     public let currentEpoch: UInt64?
     public let expiresAt: Date
@@ -98,6 +100,20 @@ public enum ChangeSetClientLookup: Equatable, Sendable {
     case new(nextSequence: UInt64)
     case pending(ChangeSetReplayEnvelope)
     case replay(ChangeSetReplayEnvelope)
+}
+
+/// startup照合用のbounded read model。full apply resultやrequest payloadは含めない。
+public struct ChangeSetReplayReference: Equatable, Sendable {
+    public let clientID: String
+    public let epoch: UInt64
+    public let slotIndex: Int
+    public let sequence: UInt64
+    public let requestDigest: String
+    public let transactionID: String
+    public let state: ChangeSetReplayState
+    public let terminalResponseDigest: String?
+    public let artifactHandle: String?
+    public let artifactExpiresAt: Date?
 }
 
 public struct ChangeSetClientRegistryError: Error, Equatable, Sendable {
@@ -206,6 +222,31 @@ public actor ChangeSetClientRegistry {
             slots: image.slots.map { $0.snapshot },
             controlReceiptCount: image.receipts.compactMap { $0 }.count
         )
+    }
+
+    /// active slotだけをslot index、sequenceの順に返す。最大64×256件で固定bounded。
+    public func replayReferences() -> [ChangeSetReplayReference] {
+        image.slots
+            .filter { $0.allocationState == .active }
+            .sorted { $0.number < $1.number }
+            .flatMap { slot in
+                slot.replay.compactMap { $0 }
+                    .sorted { $0.sequence < $1.sequence }
+                    .map { envelope in
+                        ChangeSetReplayReference(
+                            clientID: slot.clientID,
+                            epoch: slot.currentEpoch,
+                            slotIndex: slot.number,
+                            sequence: envelope.sequence,
+                            requestDigest: envelope.requestDigest,
+                            transactionID: envelope.transactionID,
+                            state: envelope.state,
+                            terminalResponseDigest: envelope.terminalResponseDigest,
+                            artifactHandle: envelope.artifact?.handle,
+                            artifactExpiresAt: envelope.artifact?.expiresAt
+                        )
+                    }
+            }
     }
 
     public func lookup(clientID: String, epoch: UInt64, sequence: UInt64, requestDigest: String) throws -> ChangeSetClientLookup {
@@ -470,6 +511,8 @@ public actor ChangeSetClientRegistry {
             action: action,
             resultDigest: Self.sha256(Data(result.utf8)),
             registryGeneration: next.generation,
+            clientID: slot?.clientID,
+            slotIndex: slot?.number,
             slotGeneration: slot?.slotGeneration,
             currentEpoch: slot?.currentEpoch,
             expiresAt: expiry
@@ -557,7 +600,11 @@ private extension ChangeSetClientRegistry {
         }
         for receipt in image.receipts.compactMap({ $0 }) {
             guard isCanonicalUUID(receipt.controlRequestID), isSHA256(receipt.proofIDDigest), isSHA256(receipt.resultDigest),
-                  receipt.registryGeneration <= image.generation else {
+                  receipt.registryGeneration <= image.generation,
+                  receipt.clientID.map(isCanonicalUUID) ?? true,
+                  receipt.slotIndex.map({ (0..<slotCount).contains($0) }) ?? true,
+                  (receipt.clientID == nil) == (receipt.slotIndex == nil),
+                  (receipt.action == .reinitializeRegistry) == (receipt.clientID == nil) else {
                 throw ChangeSetClientRegistryError(.storeCorrupt, "control receipt is invalid")
             }
         }
