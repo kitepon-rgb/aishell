@@ -461,6 +461,98 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
         _ = try await restarted.reconcile()
     }
 
+    func testReleaseAndUnlinkIntentRecoversEveryCrashSeamAndRejectsForeignReplacement() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let seams: [ChangeSetQuotaLedger.LifecycleFailurePoint] = [
+            .releaseUnlinkIntentPersisted, .releaseUnlinkCompleted, .releaseUnlinkBeforeLedgerCommit,
+        ]
+        for (index, seam) in seams.enumerated() {
+            let reservationID = "unlink-crash-\(index)"
+            let materialID = "unused-\(index)"
+            let key = "unused-key-\(index)"
+            let final = fixture.directory.appendingPathComponent("unused-final-\(index)")
+            let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: reservationID,
+                                                  lifecycleFailurePoint: seam)
+            _ = try await ledger.prepareCapacity([
+                .init(id: materialID, idempotencyKey: key, kind: .evidenceData,
+                      maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+            ])
+            _ = try await Self.materialize(
+                ledger, materialID: materialID, key: key, data: Data("unused-\(index)".utf8), final: final
+            )
+            await XCTAssertThrowsErrorAsync(try await ledger.releaseAndUnlinkMaterial(materialID: materialID, idempotencyKey: key)) {
+                XCTAssertEqual(($0 as? ChangeSetQuotaLedger.SimulatedLifecycleCrash)?.point, seam)
+            }
+            XCTAssertEqual(FileManager.default.fileExists(atPath: final.path), seam == .releaseUnlinkIntentPersisted)
+
+            let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: reservationID)
+            _ = try await restarted.reconcile()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: final.path))
+            let view = try await restarted.currentView()
+            XCTAssertEqual(view.materialStates[materialID], .released)
+        }
+
+        let foreignID = "unlink-foreign"
+        let foreignKey = "unlink-foreign-key"
+        let foreignFinal = fixture.directory.appendingPathComponent("unlink-foreign-final")
+        let foreignData = Data("same-content-new-inode".utf8)
+        let foreignLedger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "unlink-foreign-ledger",
+                                                     lifecycleFailurePoint: .releaseUnlinkIntentPersisted)
+        _ = try await foreignLedger.prepareCapacity([
+            .init(id: foreignID, idempotencyKey: foreignKey, kind: .evidenceMetadata,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        _ = try await Self.materialize(
+            foreignLedger, materialID: foreignID, key: foreignKey, data: foreignData, final: foreignFinal
+        )
+        await XCTAssertThrowsErrorAsync(try await foreignLedger.releaseAndUnlinkMaterial(materialID: foreignID, idempotencyKey: foreignKey)) {
+            XCTAssertEqual(($0 as? ChangeSetQuotaLedger.SimulatedLifecycleCrash)?.point, .releaseUnlinkIntentPersisted)
+        }
+        try FileManager.default.removeItem(at: foreignFinal)
+        try foreignData.write(to: foreignFinal, options: .atomic)
+        let foreignRestart = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "unlink-foreign-ledger")
+        await XCTAssertThrowsErrorAsync(try await foreignRestart.reconcile()) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError, .materializationIncomplete(foreignID))
+        }
+        XCTAssertEqual(try Data(contentsOf: foreignFinal), foreignData)
+    }
+
+    func testReplacementIntentPersistedBeforeRenameRecoversOnRestart() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let final = fixture.directory.appendingPathComponent("replacement-intent-final")
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "replacement-intent",
+                                              lifecycleFailurePoint: .replacementIntentPersisted)
+        _ = try await ledger.prepareCapacity([
+            .init(id: "old", idempotencyKey: "old-key", kind: .evidenceMetadata,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+            .init(id: "new", idempotencyKey: "new-key", kind: .evidenceMetadata,
+                  maximumEncodedBytes: 64, allocationDirectory: fixture.directory),
+        ])
+        _ = try await Self.materialize(
+            ledger, materialID: "old", key: "old-key", data: Data("old-metadata".utf8), final: final
+        )
+        let newData = Data("new-metadata".utf8)
+        let reserve = try await ledger.adoptReserve(materialID: "new", idempotencyKey: "new-key", finalURL: final)
+        _ = try await ledger.authorizeActual(materialID: "new", idempotencyKey: "new-key", data: newData)
+        try Self.write(newData, toExtent: reserve.extentURL)
+        await XCTAssertThrowsErrorAsync(try await ledger.commitReplacement(
+            oldMaterialID: "old", oldIdempotencyKey: "old-key",
+            newMaterialID: "new", newIdempotencyKey: "new-key", finalURL: final
+        )) {
+            XCTAssertEqual(($0 as? ChangeSetQuotaLedger.SimulatedLifecycleCrash)?.point, .replacementIntentPersisted)
+        }
+        XCTAssertEqual(try Data(contentsOf: final), Data("old-metadata".utf8))
+
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "replacement-intent")
+        _ = try await restarted.reconcile()
+        XCTAssertEqual(try Data(contentsOf: final), newData)
+        let view = try await restarted.currentView()
+        XCTAssertEqual(view.materialStates["old"], .released)
+        XCTAssertEqual(view.materialStates["new"], .materialized)
+    }
+
     func testGenerationReplacementAtomicallySupersedesOldAndRecoversAfterRenameCrash() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

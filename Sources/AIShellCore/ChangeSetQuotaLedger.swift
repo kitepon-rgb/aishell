@@ -8,7 +8,14 @@ import Foundation
 /// その後にだけ material を書く。予約 file の縮小に失敗した場合も成功へ丸めず、同じ key の
 /// retry または再起動後の `reconcile` で物理予約を ledger へ収束させる。
 public actor ChangeSetQuotaLedger {
-    public enum LifecycleFailurePoint: String, Sendable { case abandonmentIntentPersisted, replacementRenameCompleted }
+    public enum LifecycleFailurePoint: String, Sendable {
+        case abandonmentIntentPersisted
+        case replacementIntentPersisted
+        case replacementRenameCompleted
+        case releaseUnlinkIntentPersisted
+        case releaseUnlinkCompleted
+        case releaseUnlinkBeforeLedgerCommit
+    }
     public struct SimulatedLifecycleCrash: Error, Sendable { public let point: LifecycleFailurePoint }
     public struct OwnerBinding: Equatable, Sendable {
         public let bootID: String
@@ -163,7 +170,7 @@ public actor ChangeSetQuotaLedger {
     }
 
     public enum MaterialState: String, Equatable, Sendable {
-        case reserved, adopted, authorized, materialized, released, replacementIntent, abandoned
+        case reserved, adopted, authorized, materialized, released, replacementIntent, abandoned, unlinkIntent
     }
 
     public struct MaterialView: Equatable, Sendable {
@@ -570,6 +577,9 @@ public actor ChangeSetQuotaLedger {
                                              expectedBytes: try Self.parse(new.actualBytes), expectedSHA: new.sha256)
             snapshot = Self.markingReplacementIntent(snapshot, newIndex: newIndex, oldID: oldMaterialID)
             try persist(snapshot)
+            if lifecycleFailurePoint == .replacementIntentPersisted {
+                throw SimulatedLifecycleCrash(point: .replacementIntentPersisted)
+            }
         } else {
             guard try Self.decodeIdentifier(new.replacementOldID) == oldMaterialID else { throw LedgerError.corruptLedger("replacement peer mismatch") }
         }
@@ -594,6 +604,30 @@ public actor ChangeSetQuotaLedger {
         if extent.path != final.path, FileManager.default.fileExists(atPath: extent.path) { try FileManager.default.removeItem(at: extent) }
         snapshot = Self.settingTerminalReleased(snapshot, materialIndex: index)
         try persist(snapshot)
+    }
+
+    /// terminal replayから参照されなかったfinal materialを、ledger identityで照合してdurable unlinkする。
+    /// unlink intentを先に永続化するため、final欠損からreleasedへ進めるのはstatus=7だけに限定される。
+    public func releaseAndUnlinkMaterial(materialID: String, idempotencyKey: String) throws {
+        var snapshot = try load()
+        guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
+        let material = snapshot.materials[index]
+        guard material.idempotencyKey == idempotencyKey else { throw LedgerError.idempotencyMismatch(materialID) }
+        if material.status == 4 { return }
+        if material.status == 3 {
+            let final = try Self.plannedFinalURL(material)
+            let identity = try Self.inspectMaterialized(final, expectedDevice: try Self.parseUInt(material.finalDevice),
+                expectedBytes: try Self.parse(material.finalBytes), expectedSHA: material.finalSHA256)
+            try Self.validateStoredIdentity(material, identity: identity)
+            snapshot = Self.markingUnlinkIntent(snapshot, materialIndex: index)
+            try persist(snapshot)
+            if lifecycleFailurePoint == .releaseUnlinkIntentPersisted {
+                throw SimulatedLifecycleCrash(point: .releaseUnlinkIntentPersisted)
+            }
+        } else if material.status != 7 {
+            throw LedgerError.materializationIncomplete(materialID)
+        }
+        _ = try completeUnlinkRelease(snapshot, materialIndex: index)
     }
 
     public func renewLease(owner: OwnerBinding, until: Date) throws {
@@ -728,6 +762,9 @@ public actor ChangeSetQuotaLedger {
         for index in snapshot.materials.indices where snapshot.materials[index].status == 5 {
             snapshot = try completeReplacement(snapshot, newIndex: index)
         }
+        for index in snapshot.materials.indices where snapshot.materials[index].status == 7 {
+            snapshot = try completeUnlinkRelease(snapshot, materialIndex: index)
+        }
         // rename完了・intent/final ledger commit前のcrashも、newのplanned pathと実identityが一致する場合だけ
         // old→released/new→materializedを一回のpersistへ収束させる。old検証より必ず先に行う。
         for newIndex in snapshot.materials.indices where snapshot.materials[newIndex].status == 2 {
@@ -834,6 +871,32 @@ public actor ChangeSetQuotaLedger {
         return snapshot
     }
 
+    private func completeUnlinkRelease(_ initial: Snapshot, materialIndex: Int) throws -> Snapshot {
+        var snapshot = initial
+        let material = snapshot.materials[materialIndex]
+        guard material.status == 7 else { throw LedgerError.corruptLedger("unlink intent is absent") }
+        let final = try Self.plannedFinalURL(material)
+        var info = stat()
+        if lstat(final.path, &info) == 0 {
+            let identity = try Self.inspectMaterialized(final, expectedDevice: try Self.parseUInt(material.finalDevice),
+                                                        expectedBytes: try Self.parse(material.finalBytes),
+                                                        expectedSHA: material.finalSHA256)
+            try Self.validateStoredIdentity(material, identity: identity)
+            try Self.durableUnlink(final)
+        } else if errno != ENOENT {
+            throw LedgerError.materializationIncomplete(final.path)
+        }
+        if lifecycleFailurePoint == .releaseUnlinkCompleted {
+            throw SimulatedLifecycleCrash(point: .releaseUnlinkCompleted)
+        }
+        if lifecycleFailurePoint == .releaseUnlinkBeforeLedgerCommit {
+            throw SimulatedLifecycleCrash(point: .releaseUnlinkBeforeLedgerCommit)
+        }
+        snapshot = Self.settingTerminalReleased(snapshot, materialIndex: materialIndex)
+        try persist(snapshot)
+        return snapshot
+    }
+
     private static func replacingLedgerBytes(_ snapshot: Snapshot, ledgerBytes: Int) -> Snapshot {
         let ledgerDevice = try! parseUInt(snapshot.ledgerDevice)
         let volumes = snapshot.volumes.map { volume -> VolumeRecord in
@@ -926,6 +989,21 @@ public actor ChangeSetQuotaLedger {
             finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
             finalSHA256: material.finalSHA256, replacementOldID: emptyIdentifier,
             slotGeneration: material.slotGeneration, retentionAttestationDigest: material.retentionAttestationDigest, status: 4
+        )
+        return copySnapshot(snapshot, materials: materials)
+    }
+
+    private static func markingUnlinkIntent(_ snapshot: Snapshot, materialIndex: Int) -> Snapshot {
+        var materials = snapshot.materials
+        let material = materials[materialIndex]
+        materials[materialIndex] = .init(
+            id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+            bytes: material.bytes, actualBytes: material.actualBytes, expectedSHA256: material.expectedSHA256,
+            sha256: material.sha256, volume: material.volume, extentFilePath: material.extentFilePath,
+            plannedFinalPathHex: material.plannedFinalPathHex, plannedFinalPathBytes: material.plannedFinalPathBytes,
+            finalDevice: material.finalDevice, finalInode: material.finalInode, finalBytes: material.finalBytes,
+            finalSHA256: material.finalSHA256, replacementOldID: emptyIdentifier,
+            slotGeneration: material.slotGeneration, retentionAttestationDigest: material.retentionAttestationDigest, status: 7
         )
         return copySnapshot(snapshot, materials: materials)
     }
@@ -1032,6 +1110,7 @@ public actor ChangeSetQuotaLedger {
         case 4: .released
         case 5: .replacementIntent
         case 6: .abandoned
+        case 7: .unlinkIntent
         default: preconditionFailure("validated ledger contains unknown material status")
         }
     }
@@ -1041,7 +1120,7 @@ public actor ChangeSetQuotaLedger {
             let status = materialState(material.status)
             let planned = try parse(material.plannedFinalPathBytes) == 0 ? nil : plannedFinalURL(material)
             let actual = material.status >= 2 ? try parse(material.actualBytes) : nil
-            let generation = material.status == 3 || material.status == 4
+            let generation = material.status == 3 || material.status == 4 || material.status == 7
                 ? "\(try parseUInt(material.finalDevice)):\(try parseUInt(material.finalInode))" : nil
             let oldID = material.status == 5 ? try decodeIdentifier(material.replacementOldID) : nil
             return .init(id: material.id, kind: material.kind, state: status, plannedFinalURL: planned,
