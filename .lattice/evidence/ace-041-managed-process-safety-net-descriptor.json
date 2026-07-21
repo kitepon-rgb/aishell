@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "422943f40867aa5bddea82631fc28d7d61e2553d33724a56772cb3a13ab3dba1",
+  "evidence_id": "ace-041-managed-process-safety-net-20260721",
+  "git_blob_oid": "556d689fd14003a87e6c6f4bc4ddf4a6000a2297",
+  "media_type": "text/x-swift",
+  "path": "Tests/AIShellCoreTests/ManagedProcessSafetyNetTests.swift",
+  "repo_id": "self"
+}
