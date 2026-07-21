@@ -13,6 +13,7 @@ public actor ChangeSetTransactionStore {
         public let references: [Reference]
         public let payload: Data
         public let terminalAt: Date?
+        public let revision: UInt64
 
         public init(
             transactionID: ApplyChangeSetTransactionID,
@@ -20,7 +21,8 @@ public actor ChangeSetTransactionStore {
             manifestDigest: String,
             references: [Reference] = [],
             payload: Data = Data(),
-            terminalAt: Date? = nil
+            terminalAt: Date? = nil,
+            revision: UInt64 = 0
         ) {
             self.transactionID = transactionID
             self.state = state
@@ -28,6 +30,7 @@ public actor ChangeSetTransactionStore {
             self.references = references
             self.payload = payload
             self.terminalAt = terminalAt
+            self.revision = revision
         }
     }
 
@@ -80,6 +83,7 @@ public actor ChangeSetTransactionStore {
         public let referenceDigest: String
         public let artifactDigests: [String]
         public let runtimeReceiptDigest: String?
+        public let revision: UInt64
     }
 
     public enum StoreError: Error, Equatable, Sendable {
@@ -88,6 +92,8 @@ public actor ChangeSetTransactionStore {
         case missingTransaction(String)
         case duplicateTransaction(String)
         case staleTransition(expected: ApplyChangeSetTransactionState, actual: ApplyChangeSetTransactionState)
+        case staleRevision(expected: UInt64, actual: UInt64)
+        case snapshotUpdateConflict(expectedRevision: UInt64)
         case invalidTransition(from: ApplyChangeSetTransactionState, to: ApplyChangeSetTransactionState)
         case corrupt(String)
         case orphan(String)
@@ -122,7 +128,13 @@ public actor ChangeSetTransactionStore {
         let previousDigest: String
         let sealedSnapshot: Data
         let snapshotDigest: String
+        let kind: JournalKind?
+        let snapshotRevision: UInt64?
+        let payloadDigest: String?
+        let referenceDigest: String?
     }
+
+    private enum JournalKind: String, Codable, Equatable, Sendable { case stateTransition, snapshotUpdate }
 
     private struct JournalEntry: Codable, Equatable, Sendable {
         let payload: JournalPayload
@@ -197,6 +209,41 @@ public actor ChangeSetTransactionStore {
         try listReferences(now: now).filter { Self.isTerminal($0.state) }
     }
 
+    /// stateを進めずrich payload/referenceを更新するrevision CAS。
+    /// 同じexpectedRevisionと同じ内容のretryだけは、既に確定したrevisionを返す。
+    @discardableResult
+    public func updateSnapshot(
+        transactionID: ApplyChangeSetTransactionID,
+        expectedState: ApplyChangeSetTransactionState,
+        expectedRevision: UInt64,
+        payload: Data,
+        references: [Reference],
+        manifestDigest: String,
+        terminalAt: Date? = nil
+    ) throws -> UInt64 {
+        try ensureLoaded()
+        guard let directoryName = index.transactionDirectories[transactionID.rawValue] else {
+            throw StoreError.missingTransaction(transactionID.rawValue)
+        }
+        let current = try reconcileTransaction(id: transactionID.rawValue, directoryName: directoryName)
+        guard current.state == expectedState else {
+            throw StoreError.staleTransition(expected: expectedState, actual: current.state)
+        }
+        let candidate = Snapshot(
+            transactionID: transactionID, state: expectedState, manifestDigest: manifestDigest,
+            references: references, payload: payload, terminalAt: terminalAt, revision: expectedRevision + 1
+        )
+        if current.revision == expectedRevision + 1 {
+            guard current == candidate else { throw StoreError.snapshotUpdateConflict(expectedRevision: expectedRevision) }
+            return current.revision
+        }
+        guard current.revision == expectedRevision else {
+            throw StoreError.staleRevision(expected: expectedRevision, actual: current.revision)
+        }
+        try writeTransition(candidate, fromState: current.state, directoryName: directoryName, kind: .snapshotUpdate)
+        return candidate.revision
+    }
+
     /// expectedState を照合してから単調な遷移を永続化する。新規 transaction は preparing だけを受け付ける。
     public func persistTransition(_ snapshot: Snapshot, expectedState: ApplyChangeSetTransactionState? = nil) throws {
         try ensureLoaded()
@@ -209,13 +256,23 @@ public actor ChangeSetTransactionStore {
                 throw StoreError.staleTransition(expected: expectedState, actual: current.state)
             }
             guard current.state != snapshot.state else {
-                guard current == snapshot else { throw StoreError.duplicateTransaction(rawID) }
+                let replayCandidate = Snapshot(
+                    transactionID: snapshot.transactionID, state: snapshot.state, manifestDigest: snapshot.manifestDigest,
+                    references: snapshot.references, payload: snapshot.payload, terminalAt: snapshot.terminalAt,
+                    revision: current.revision
+                )
+                guard current == replayCandidate else { throw StoreError.duplicateTransaction(rawID) }
                 return
             }
             guard Self.canTransition(from: current.state, to: snapshot.state) else {
                 throw StoreError.invalidTransition(from: current.state, to: snapshot.state)
             }
-            try writeTransition(snapshot, fromState: current.state, directoryName: directoryName)
+            let versioned = Snapshot(
+                transactionID: snapshot.transactionID, state: snapshot.state, manifestDigest: snapshot.manifestDigest,
+                references: snapshot.references, payload: snapshot.payload, terminalAt: snapshot.terminalAt,
+                revision: current.revision + 1
+            )
+            try writeTransition(versioned, fromState: current.state, directoryName: directoryName, kind: .stateTransition)
             return
         }
 
@@ -231,7 +288,8 @@ public actor ChangeSetTransactionStore {
         try Self.createOwnerOnlyDirectory(transactionDirectory, fileManager: fileManager)
         let identity = Identity(schema: "aishell.change-set-transaction-identity.v1", transactionID: rawID, directoryName: directoryName)
         try atomicWrite(try seal(identity), to: transactionDirectory.appendingPathComponent("identity.enc"))
-        try writeTransition(snapshot, fromState: nil, directoryName: directoryName)
+        guard snapshot.revision == 0 else { throw StoreError.staleRevision(expected: 0, actual: snapshot.revision) }
+        try writeTransition(snapshot, fromState: nil, directoryName: directoryName, kind: .stateTransition)
         index.transactionDirectories[rawID] = directoryName
         try saveIndex()
     }
@@ -286,7 +344,8 @@ public actor ChangeSetTransactionStore {
             manifestDigest: snapshot.manifestDigest,
             references: snapshot.references,
             payload: payload ?? snapshot.payload,
-            terminalAt: terminalAt
+            terminalAt: terminalAt,
+            revision: snapshot.revision + 1
         )
         try persistTransition(snapshot, expectedState: (try load(transactionID))?.state)
         if let receiptIndex = receipts.firstIndex(where: { $0.transactionID == transactionID }) {
@@ -376,7 +435,12 @@ public actor ChangeSetTransactionStore {
         }
     }
 
-    private func writeTransition(_ snapshot: Snapshot, fromState: ApplyChangeSetTransactionState?, directoryName: String) throws {
+    private func writeTransition(
+        _ snapshot: Snapshot,
+        fromState: ApplyChangeSetTransactionState?,
+        directoryName: String,
+        kind: JournalKind
+    ) throws {
         let transactionDirectory = transactionsDirectory.appendingPathComponent(directoryName, isDirectory: true)
         let journalURL = transactionDirectory.appendingPathComponent("journal.wal")
         let entries = try readJournal(journalURL)
@@ -385,7 +449,9 @@ public actor ChangeSetTransactionStore {
         let payload = JournalPayload(
             schema: "aishell.change-set-transaction-journal.v1", sequence: UInt64(entries.count),
             transactionID: snapshot.transactionID.rawValue, fromState: fromState, toState: snapshot.state,
-            previousDigest: previousDigest, sealedSnapshot: sealedSnapshot, snapshotDigest: Self.sha256(sealedSnapshot)
+            previousDigest: previousDigest, sealedSnapshot: sealedSnapshot, snapshotDigest: Self.sha256(sealedSnapshot),
+            kind: kind, snapshotRevision: snapshot.revision, payloadDigest: Self.sha256(snapshot.payload),
+            referenceDigest: Self.sha256(try Self.encode(snapshot.references))
         )
         let payloadBytes = try Self.encode(payload)
         let entry = JournalEntry(payload: payload, digest: Self.sha256(Data(previousDigest.utf8) + payloadBytes))
@@ -411,7 +477,8 @@ public actor ChangeSetTransactionStore {
             references: sortedReferences,
             referenceDigest: Self.sha256(try Self.encode(sortedReferences)),
             artifactDigests: sortedReferences.filter { $0.kind.localizedCaseInsensitiveContains("artifact") }.map(\.digest),
-            runtimeReceiptDigest: runtimeDigest
+            runtimeReceiptDigest: runtimeDigest,
+            revision: snapshot.revision
         )
     }
 
@@ -444,7 +511,11 @@ public actor ChangeSetTransactionStore {
             throw StoreError.corrupt("snapshot digest is neither current nor the known previous generation")
         }
         let snapshot = try open(Snapshot.self, data: durableData)
-        guard snapshot.transactionID.rawValue == rawID, snapshot.state == last.payload.toState else {
+        let decodedReferenceDigest = Self.sha256(try Self.encode(snapshot.references))
+        guard snapshot.transactionID.rawValue == rawID, snapshot.state == last.payload.toState,
+              last.payload.snapshotRevision == nil || snapshot.revision == last.payload.snapshotRevision,
+              last.payload.payloadDigest == nil || Self.sha256(snapshot.payload) == last.payload.payloadDigest,
+              last.payload.referenceDigest == nil || decodedReferenceDigest == last.payload.referenceDigest else {
             throw StoreError.corrupt("snapshot/journal mismatch")
         }
         return snapshot
@@ -479,11 +550,19 @@ public actor ChangeSetTransactionStore {
                   Self.sha256(Data(previousDigest.utf8) + (try Self.encode(entry.payload))) == entry.digest else {
                 throw StoreError.corrupt("journal hash chain mismatch at \(offset)")
             }
-            if let prior = entries.last?.payload.toState {
-                guard entry.payload.fromState == prior, Self.canTransition(from: prior, to: entry.payload.toState) else {
-                    throw StoreError.corrupt("journal state ordering mismatch at \(offset)")
+            if let previous = entries.last {
+                let prior = previous.payload.toState
+                let kind = entry.payload.kind ?? .stateTransition
+                let validState = kind == .snapshotUpdate
+                    ? entry.payload.fromState == prior && entry.payload.toState == prior
+                    : entry.payload.fromState == prior && Self.canTransition(from: prior, to: entry.payload.toState)
+                guard validState,
+                      entry.payload.snapshotRevision == nil || entry.payload.snapshotRevision == (previous.payload.snapshotRevision ?? UInt64(offset - 1)) + 1 else {
+                    throw StoreError.corrupt("journal state/revision ordering mismatch at \(offset)")
                 }
-            } else if entry.payload.fromState != nil || entry.payload.toState != .preparing {
+            } else if entry.payload.fromState != nil || entry.payload.toState != .preparing
+                        || (entry.payload.kind ?? .stateTransition) != .stateTransition
+                        || (entry.payload.snapshotRevision != nil && entry.payload.snapshotRevision != 0) {
                 throw StoreError.corrupt("invalid initial journal state")
             }
             entries.append(entry)

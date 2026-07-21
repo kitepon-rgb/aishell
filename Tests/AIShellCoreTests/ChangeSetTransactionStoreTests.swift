@@ -34,12 +34,13 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         let restarted = try fixture.makeStore()
         let loadedPreparing = try await restarted.load(fixture.transactionID)
         XCTAssertEqual(loadedPreparing, preparing)
-        let prepared = fixture.snapshot(state: .prepared)
-        try await restarted.persistTransition(prepared, expectedState: .preparing)
+        let preparedRequest = fixture.snapshot(state: .prepared)
+        try await restarted.persistTransition(preparedRequest, expectedState: .preparing)
 
         let restartedAgain = try fixture.makeStore()
         let loadedPrepared = try await restartedAgain.load(fixture.transactionID)
-        XCTAssertEqual(loadedPrepared, prepared)
+        XCTAssertEqual(loadedPrepared?.state, .prepared)
+        XCTAssertEqual(loadedPrepared?.revision, 1)
     }
 
     func testWALAheadOfPreviousSnapshotIsReconciledAfterRestart() async throws {
@@ -48,8 +49,8 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         try await store.persistTransition(fixture.snapshot(state: .preparing))
         let snapshotURL = fixture.transactionDirectory.appendingPathComponent("snapshot.enc")
         let previousSnapshot = try Data(contentsOf: snapshotURL)
-        let prepared = fixture.snapshot(state: .prepared)
-        try await store.persistTransition(prepared, expectedState: .preparing)
+        let preparedRequest = fixture.snapshot(state: .prepared)
+        try await store.persistTransition(preparedRequest, expectedState: .preparing)
 
         // WAL fsync後・snapshot atomic replace前のcrashを、直前世代snapshotへ戻して再現する。
         try previousSnapshot.write(to: snapshotURL, options: .atomic)
@@ -57,10 +58,11 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
 
         let restarted = try fixture.makeStore()
         let reconciled = try await restarted.load(fixture.transactionID)
-        XCTAssertEqual(reconciled, prepared)
+        XCTAssertEqual(reconciled?.state, .prepared)
+        XCTAssertEqual(reconciled?.revision, 1)
         let restartedAgain = try fixture.makeStore()
         let durable = try await restartedAgain.load(fixture.transactionID)
-        XCTAssertEqual(durable, prepared)
+        XCTAssertEqual(durable, reconciled)
     }
 
     func testCompleteJournalCorruptionFailsClosedWithoutDeletingMaterial() async throws {
@@ -81,6 +83,7 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         let store = try fixture.makeStore()
         try await store.persistTransition(fixture.snapshot(state: .preparing))
         try await store.persistTransition(fixture.snapshot(state: .prepared), expectedState: .preparing)
+        try await store.persistTransition(fixture.snapshot(state: .prepared), expectedState: .prepared)
 
         await XCTAssertThrowsStoreError(.staleTransition(expected: .preparing, actual: .prepared)) {
             try await store.persistTransition(fixture.snapshot(state: .commitDecided), expectedState: .preparing)
@@ -164,6 +167,49 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         _ = try await restarted.cleanup(now: Date(timeIntervalSince1970: 111))
         let afterCleanup = try await restarted.listReferences(now: Date(timeIntervalSince1970: 111))
         XCTAssertEqual(afterCleanup.map(\.transactionID.rawValue), ["active-transaction"])
+    }
+
+    func testSameStateSnapshotUpdatesUseRevisionCASAndReplayOnlyExactContent() async throws {
+        let fixture = try Fixture()
+        let store = try fixture.makeStore()
+        try await store.persistTransition(fixture.snapshot(state: .preparing, payload: Data("v0".utf8)))
+        let snapshotURL = fixture.transactionDirectory.appendingPathComponent("snapshot.enc")
+        let revisionZeroBytes = try Data(contentsOf: snapshotURL)
+        let references = [ChangeSetTransactionStore.Reference(kind: "artifact", identifier: "v1", digest: "digest-v1")]
+
+        let revisionOne = try await store.updateSnapshot(
+            transactionID: fixture.transactionID, expectedState: .preparing, expectedRevision: 0,
+            payload: Data("v1".utf8), references: references, manifestDigest: "manifest-v1"
+        )
+        XCTAssertEqual(revisionOne, 1)
+        let replayRevision = try await store.updateSnapshot(
+            transactionID: fixture.transactionID, expectedState: .preparing, expectedRevision: 0,
+            payload: Data("v1".utf8), references: references, manifestDigest: "manifest-v1"
+        )
+        XCTAssertEqual(replayRevision, 1)
+
+        await XCTAssertThrowsStoreError(.snapshotUpdateConflict(expectedRevision: 0)) {
+            try await store.updateSnapshot(
+                transactionID: fixture.transactionID, expectedState: .preparing, expectedRevision: 0,
+                payload: Data("different".utf8), references: references, manifestDigest: "manifest-v1"
+            )
+        }
+        await XCTAssertThrowsStoreError(.staleRevision(expected: 9, actual: 1)) {
+            try await store.updateSnapshot(
+                transactionID: fixture.transactionID, expectedState: .preparing, expectedRevision: 9,
+                payload: Data("v10".utf8), references: references, manifestDigest: "manifest-v10"
+            )
+        }
+
+        // same-state WAL fsync後・snapshot replace前のcrashも、WALのrevision 1へ回復する。
+        try revisionZeroBytes.write(to: snapshotURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshotURL.path)
+        let restarted = try fixture.makeStore()
+        let loaded = try await restarted.load(fixture.transactionID)
+        XCTAssertEqual(loaded?.state, .preparing)
+        XCTAssertEqual(loaded?.revision, 1)
+        XCTAssertEqual(loaded?.payload, Data("v1".utf8))
+        XCTAssertEqual(loaded?.references, references)
     }
 }
 
