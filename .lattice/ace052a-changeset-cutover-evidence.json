@@ -1,0 +1,9 @@
+{
+  "evidence_id": "ace-052a-changeset-cutover-20260722",
+  "repo_id": "self",
+  "path": "Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift",
+  "git_blob_oid": "40f76d671dd7dac5e96017daf463d1d353f13ddc",
+  "content_digest": "0fce708c7210e39d99038a311e99627f089980226acc5d1d6fcaffceea5b7cb9",
+  "media_type": "text/x-swift",
+  "anchor_digest": null
+}
