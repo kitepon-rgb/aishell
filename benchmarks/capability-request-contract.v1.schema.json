@@ -1,0 +1,9 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "type":"object","additionalProperties":false,
+  "required":["schema","taskId","workspaceRoot","preStateDigest","requiredCalls"],
+  "properties":{
+    "schema":{"const":"aishell.capability-request-contract.v1"},"taskId":{"type":"string"},"workspaceRoot":{"type":"string"},"preStateDigest":{"type":"string"},
+    "requiredCalls":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["tool","action","templateId","requestSubset"],"properties":{"tool":{"type":"string"},"action":{"type":"string"},"templateId":{"type":"string"},"requestSubset":{"type":"object"}}}}
+  }
+}

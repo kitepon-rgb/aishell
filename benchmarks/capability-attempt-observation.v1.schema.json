@@ -1,0 +1,18 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://quolu.dev/aishell/capability-attempt-observation.v1.schema.json",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["producer","taskId","arm","agent","assertions","observationSources","capabilityEvidence","agentReport","toolResultAssertions"],
+  "properties":{
+    "producer":{"const":"aishell-benchmark-observer.v1"},
+    "taskId":{"type":"string","minLength":1},
+    "arm":{"enum":["native","current-aishell-0.3.3","candidate"]},
+    "agent":{"type":"object","additionalProperties":false,"required":["exitCode","timedOut"],"properties":{"exitCode":{"type":"integer"},"timedOut":{"type":"boolean"}}},
+    "assertions":{"type":"object"},
+    "observationSources":{"type":"object","additionalProperties":{"enum":["filesystem_or_git","process_supervisor","artifact_store","structured_result","continuation_trace","benchmark_contract","aishell_telemetry"]}},
+    "capabilityEvidence":{"type":"object","additionalProperties":false,"required":["requiredInvocations","acceptedInvocations"],"properties":{"requiredInvocations":{"type":"array","items":{"type":"string"},"uniqueItems":true},"acceptedInvocations":{"type":"array","items":{"type":"string"},"uniqueItems":true}}},
+    "agentReport":{"type":"object","additionalProperties":false,"required":["schema","taskId","assertions"],"properties":{"schema":{"const":"aishell.agent-benchmark-report.v1"},"taskId":{"type":"string","minLength":1},"assertions":{"type":"object"}}},
+    "toolResultAssertions":{"type":"object"}
+  }
+}

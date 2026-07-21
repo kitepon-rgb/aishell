@@ -1,0 +1,8 @@
+{
+  "cwd": "/Users/kite/Developer/aishell",
+  "control_id": "aishell-capability-expansion-20260721",
+  "actor_id": "bell-root",
+  "expected_revision": 0,
+  "risk": "high",
+  "behavior_lane": "behavior-change"
+}

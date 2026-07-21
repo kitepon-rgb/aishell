@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "aishell.representative-suite.v1",
+  "frozenAt": "2026-07-21",
+  "minimumTaskCount": 30,
+  "repetitionsPerTask": 3,
+  "promptTemplate": "Complete benchmark scenario {task_id} in the provided disposable fixture. Goal: {goal} Parameters: {model_parameters} Use only the capabilities available in this arm, make the smallest necessary observations or changes, preserve unrelated files, and finish by returning exactly one JSON object matching this report contract with observed values and no prose: {agent_report_contract}",
+  "commonHostCatalog": {"capabilities":["bounded-file-read","lexical-search","direct-process-launch","sha-guarded-file-edit"],"rule":"the exact host tool definitions and their catalog digest are identical across all three arms and recorded for every benchmark run"},
+  "arms": [
+    {"id":"native","binding":"Codex native tools; AIShell MCP absent","aishellTools":[],"controls":[]},
+    {"id":"current-aishell-0.3.3","binding":"git 2705b407cde704873c40b833507059eba99a1a82; tag v0.3.3; exact packaged binary digest recorded at execution","aishellTools":["run_check","artifact_read","workspace_snapshot","read_context","search_context"],"controls":["runtime_status","runtime_open_manager"]},
+    {"id":"candidate","binding":"evaluated commit and exact packaged binary digest recorded at execution","aishellTools":["run_check","run_observe","artifact_read","workspace_snapshot","workspace_wait","read_context","search_context","change_impact","apply_change_set"],"controls":["runtime_status","runtime_open_manager"]}
+  ],
+  "isolation": {"sameModelSnapshot":true,"sameReasoningEffort":true,"samePrompt":true,"sameFixtureBytes":true,"sameSandbox":true,"freshWorkspacePerAttempt":true,"randomizedArmOrder":true,"pairedRandomizationSeed":"aishell-capability-expansion-v1","attemptTimeoutSeconds":300,"replaceInvalidAttempts":false},
+  "metrics": {
+    "primary":"sum(total_model_tokens_across_all_attempts) / oracle_successes",
+    "totalModelTokens":"input_tokens + output_tokens; cached_input_tokens and reasoning_output_tokens are reported but not added again",
+    "zeroSuccess":"positive_infinity",
+    "missingUsage":"invalid_run_not_zero",
+    "correctness":"candidate and current arms may not lose any task solved by native; candidate may not lose any task solved by current",
+    "secondary":["success_rate","p50_wall_time","p95_wall_time","first_useful_result_ms","tool_calls","model_turns","retries","artifact_rereads","filesystem_entries_rescanned","bytes_reread","process_reexecutions","cache_hits","change_journal_hits","tool_adoption"],
+    "internalTelemetryKeys":["maxFullRescans","silentFallbacks","profileCacheHit","silentTruncations","secondExecutionCount","cacheHit","falseFresh","pollLoops","silentFullScans","partialWrites","silentTextFallbacks","silentLexicalFallbacks"]
+  },
+  "oraclePolicy": {
+    "attemptSolved":"agent exit code is zero, no timeout occurred, and the external evaluator computes every arm-applicable assertion as passing from benchmark-harness evidence",
+    "taskSolved":"all preregistered repetitions for the task and arm are attemptSolved",
+    "functionalAssertions":"apply to every arm",
+    "internalTelemetry":"required for candidate; native and current-0.3.3 record unavailable keys as null/not_applicable and are not failed solely because post-0.3.3 AIShell telemetry is unavailable",
+    "oracleIsolation":"the agent receives the task goal and fixture but not the scenario oracle; the observer reads workspace/process/artifact/result/telemetry evidence and the evaluator reads the frozen oracle after the attempt",
+    "capabilityApplicability":"native and current may compose the identical common host catalog; candidate must exercise the scenario capability through expanded AIShell while retaining the same host catalog",
+    "telemetryApplicability":"candidate requires every scenario AIShell telemetry assertion; native and current require all arm-neutral functional assertions and record unavailable post-0.3.3 telemetry as null/not_applicable"
+  },
+  "aggregation": {
+    "levels":["overall-arm","per-task-arm"],
+    "tokenNumerator":"sum total_model_tokens for every valid attempt, including failed attempts",
+    "tokenDenominator":"count of attemptSolved attempts",
+    "regressionUnit":"taskSolved",
+    "internalTelemetryComparison":"current-aishell-0.3.3 versus candidate only, key by key only where both arms report the metric; missing current metrics never become zero",
+    "percentilePopulation":"all valid attempts within each arm at overall-arm level, and all valid attempts within each task and arm at per-task-arm level",
+    "invalidAttemptPolicy":"missing usage or harness failure invalidates the entire benchmark run; attempts are never replaced"
+  },
+  "tasks": [
+    {"id":"workspace-persistence-warm-restore","fixture":"workspace-persistence","scenario":"warm-restore"},{"id":"workspace-persistence-offline-change","fixture":"workspace-persistence","scenario":"offline-change"},
+    {"id":"git-diff-context-staged-rename","fixture":"git-diff-context","scenario":"staged-rename"},{"id":"git-diff-context-mixed-state","fixture":"git-diff-context","scenario":"mixed-state"},
+    {"id":"project-profile-warm-hit","fixture":"project-profile","scenario":"warm-hit"},{"id":"project-profile-manifest-change","fixture":"project-profile","scenario":"manifest-change"},
+    {"id":"batch-context-multi-query","fixture":"batch-context","scenario":"multi-query"},{"id":"batch-context-shared-budget","fixture":"batch-context","scenario":"shared-budget"},
+    {"id":"freshness-cache-repeat-check","fixture":"freshness-cache","scenario":"repeat-check"},{"id":"freshness-cache-input-change","fixture":"freshness-cache","scenario":"input-change"},
+    {"id":"change-impact-direct-dependent","fixture":"change-impact","scenario":"direct-dependent"},{"id":"change-impact-unresolved-edge","fixture":"change-impact","scenario":"unresolved-edge"},
+    {"id":"focused-pipeline-recommend-only","fixture":"focused-pipeline","scenario":"recommend-only"},{"id":"focused-pipeline-explicit-run","fixture":"focused-pipeline","scenario":"explicit-run"},
+    {"id":"async-process-first-useful-result","fixture":"async-process","scenario":"first-useful-result"},{"id":"async-process-cancel","fixture":"async-process","scenario":"cancel"},
+    {"id":"artifact-query-cross-run-search","fixture":"artifact-query","scenario":"cross-run-search"},{"id":"artifact-query-history-diff","fixture":"artifact-query","scenario":"history-diff"},
+    {"id":"workspace-wait-external-edit","fixture":"workspace-wait","scenario":"external-edit"},{"id":"workspace-wait-event-gap","fixture":"workspace-wait","scenario":"event-gap"},
+    {"id":"change-set-atomic-success","fixture":"change-set","scenario":"atomic-success"},{"id":"change-set-stale-sha","fixture":"change-set","scenario":"stale-sha"},
+    {"id":"diagnostic-adapter-known-format","fixture":"diagnostic-adapter","scenario":"known-format"},{"id":"diagnostic-adapter-malformed-format","fixture":"diagnostic-adapter","scenario":"malformed-format"},
+    {"id":"semantic-context-fresh-reference","fixture":"semantic-context","scenario":"fresh-reference"},{"id":"semantic-context-stale-after-edit","fixture":"semantic-context","scenario":"stale-after-edit"},
+    {"id":"dependency-provider-depfile-impact","fixture":"dependency-provider","scenario":"depfile-impact"},{"id":"dependency-provider-missing-evidence","fixture":"dependency-provider","scenario":"missing-evidence"},
+    {"id":"worktree-compare-branch-diff","fixture":"worktree-compare","scenario":"branch-diff"},{"id":"worktree-compare-dirty-worktree","fixture":"worktree-compare","scenario":"dirty-worktree"},
+    {"id":"bilingual-workflow-english","fixture":"bilingual-workflow","scenario":"english"},{"id":"bilingual-workflow-japanese","fixture":"bilingual-workflow","scenario":"japanese"}
+  ]
+}

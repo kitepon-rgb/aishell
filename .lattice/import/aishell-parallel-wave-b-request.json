@@ -1,0 +1,35 @@
+{
+  "schema": "lattice.run_request.v1",
+  "request_id": "aishell-parallel-core-wave-b-v1",
+  "repo": { "base_sha": "2705b407cde704873c40b833507059eba99a1a82", "root_kind": "git-worktree" },
+  "capacity": { "executors": 2 },
+  "todos": [{ "todo_id": "ace-044b" }, { "todo_id": "ace-052a" }],
+  "manual_witness": {
+    "ace-044b": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/EvidenceStore.swift", "Sources/AIShellCore/Models.swift"],
+      "writes": ["Sources/AIShellCore/ArtifactQueryService.swift", "Tests/AIShellCoreTests/ArtifactQueryServiceTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-044b", "expect": { "kind": "symbol", "name": "EvidenceStore", "path": "Sources/AIShellCore/EvidenceStore.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-052a": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/NativeFileService.swift", "Sources/AIShellCore/WorkspaceStateRuntime.swift"],
+      "writes": ["Sources/AIShellCore/ChangeSetService.swift", "Tests/AIShellCoreTests/ChangeSetServiceTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-052a", "expect": { "kind": "symbol", "name": "NativeFileService", "path": "Sources/AIShellCore/NativeFileService.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    }
+  },
+  "codegraph_query_set": {
+    "queries": [
+      { "id": "q-status", "operation": "status" },
+      { "id": "q-044b", "operation": "query", "target": "EvidenceStore" },
+      { "id": "q-052a", "operation": "query", "target": "NativeFileService" }
+    ]
+  },
+  "executor_capability": { "adapters": ["isolated-worktree"] },
+  "claim_mode": "exact_minimum",
+  "request_digest": "7efdfada2d09d04c5c8cafe84eb3bc08368c8a2f5e0ac2325ccd9b7523f7fa3f"
+}

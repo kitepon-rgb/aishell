@@ -1,0 +1,103 @@
+{
+  "schema": "lattice.run_request.v1",
+  "request_id": "aishell-parallel-core-wave-v1",
+  "repo": {
+    "base_sha": "2705b407cde704873c40b833507059eba99a1a82",
+    "root_kind": "git-worktree"
+  },
+  "capacity": {
+    "executors": 4
+  },
+  "todos": [
+    { "todo_id": "ace-012a" },
+    { "todo_id": "ace-012b" },
+    { "todo_id": "ace-023a" },
+    { "todo_id": "ace-023b" },
+    { "todo_id": "ace-023c" },
+    { "todo_id": "ace-034a" },
+    { "todo_id": "ace-034b" },
+    { "todo_id": "ace-044a" }
+  ],
+  "manual_witness": {
+    "ace-012a": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/RuntimeStore.swift", "Sources/AIShellCore/WorkspaceStateRuntime.swift"],
+      "writes": ["Sources/AIShellCore/WorkspaceCheckpointStore.swift", "Tests/AIShellCoreTests/WorkspaceCheckpointStoreTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-012a", "expect": { "kind": "symbol", "name": "WorkspaceStateRuntime", "path": "Sources/AIShellCore/WorkspaceStateRuntime.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-012b": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/FSEventsObserver.swift", "Sources/AIShellCore/WorkspaceStateRuntime.swift"],
+      "writes": ["Sources/AIShellCore/ObservationJournal.swift", "Tests/AIShellCoreTests/ObservationJournalTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-012b", "expect": { "kind": "symbol", "name": "FSEventsObserver", "path": "Sources/AIShellCore/FSEventsObserver.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-023a": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/ContextCompilerService.swift", "Sources/AIShellCore/Models.swift"],
+      "writes": ["Sources/AIShellCore/GitContextProvider.swift", "Tests/AIShellCoreTests/GitContextProviderTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-023a", "expect": { "kind": "symbol", "name": "ContextCompilerService", "path": "Sources/AIShellCore/ContextCompilerService.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-023b": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/ContextCompilerService.swift", "Sources/AIShellCore/RuntimeStore.swift"],
+      "writes": ["Sources/AIShellCore/ProjectProfileService.swift", "Tests/AIShellCoreTests/ProjectProfileServiceTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-023b", "expect": { "kind": "symbol", "name": "RuntimeStore", "path": "Sources/AIShellCore/RuntimeStore.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-023c": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/ContextCompilerService.swift", "Sources/AIShellCore/Models.swift"],
+      "writes": ["Sources/AIShellCore/SearchContextService.swift", "Tests/AIShellCoreTests/SearchContextServiceTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-023c", "expect": { "kind": "symbol", "name": "WorkspaceEntry", "path": "Sources/AIShellCore/Models.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-034a": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/DevelopmentRuntimeService.swift", "Sources/AIShellCore/RuntimeStore.swift"],
+      "writes": ["Sources/AIShellCore/CheckFreshnessCache.swift", "Tests/AIShellCoreTests/CheckFreshnessCacheTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-034a", "expect": { "kind": "symbol", "name": "DevelopmentRuntimeService", "path": "Sources/AIShellCore/DevelopmentRuntimeService.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-034b": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/DevelopmentRuntimeService.swift", "Sources/AIShellCore/Models.swift"],
+      "writes": ["Sources/AIShellCore/ChangeImpactService.swift", "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-034b", "expect": { "kind": "symbol", "name": "AllowedPathResolver", "path": "Sources/AIShellCore/AllowedPathResolver.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    },
+    "ace-044a": {
+      "owns": [],
+      "reads": ["Sources/AIShellCore/NativeProcessService.swift", "Sources/AIShellCore/RuntimeStore.swift"],
+      "writes": ["Sources/AIShellCore/ManagedProcessRegistry.swift", "Tests/AIShellCoreTests/ManagedProcessRegistryTests.swift"],
+      "resources": [], "state_effects": [],
+      "codegraph_provenance": { "queries": [{ "query_id": "q-044a", "expect": { "kind": "symbol", "name": "NativeProcessService", "path": "Sources/AIShellCore/NativeProcessService.swift" } }] },
+      "affected_tests": [], "unknowns": []
+    }
+  },
+  "codegraph_query_set": {
+    "queries": [
+      { "id": "q-status", "operation": "status" },
+      { "id": "q-012a", "operation": "query", "target": "WorkspaceStateRuntime" },
+      { "id": "q-012b", "operation": "query", "target": "FSEventsObserver" },
+      { "id": "q-023a", "operation": "query", "target": "ContextCompilerService" },
+      { "id": "q-023b", "operation": "query", "target": "RuntimeStore" },
+      { "id": "q-023c", "operation": "query", "target": "WorkspaceEntry" },
+      { "id": "q-034a", "operation": "query", "target": "DevelopmentRuntimeService" },
+      { "id": "q-034b", "operation": "query", "target": "AllowedPathResolver" },
+      { "id": "q-044a", "operation": "query", "target": "NativeProcessService" }
+    ]
+  },
+  "executor_capability": { "adapters": ["isolated-worktree"] },
+  "claim_mode": "exact_minimum",
+  "request_digest": "dd52207d476fbb45b6fe86fa60efffe6c0ceed8cadeb02a608a1958c69b2b675"
+}
