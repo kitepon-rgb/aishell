@@ -504,6 +504,9 @@ private struct ChangeSetFixture {
     func ambiguousRenameRequests() async throws -> [ApplyChangeSetRequest] { try await probe.ambiguousRenameRequests(root: root, client: client, service: service) }
     func pathSwapAction(for point: ApplyChangeSetRacePoint) throws -> ApplyChangeSetRaceAction { try probe.pathSwapAction(root: root, outside: outside, point: point) }
     func externalFDWriteAction(bytes: Data) throws -> ApplyChangeSetRaceAction { try probe.externalFDWriteAction(root: root, bytes: bytes) }
+    func assertReservedNamespaceExcludedFromEveryReader() async throws {
+        try await probe.assertReservedNamespaceExcludedFromEveryReader(root)
+    }
     func expectedMixedAfterDigest() throws -> String { try probe.expectedMixedAfterDigest(root) }
     func restartedService(autoRecover: Bool = true) async throws -> ApplyChangeSetService { try await probe.restartedService(failureInjector: faults, clock: clock, autoRecover: autoRecover) }
     func prepareRecoverableTransaction() async throws -> ApplyChangeSetTransactionID { try await probe.prepareRecoverableTransaction(service: service, request: try await singleWriteRequest()) }
