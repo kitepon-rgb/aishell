@@ -68,6 +68,20 @@ public actor ChangeSetTransactionStore {
         }
     }
 
+    /// startup相互照合用のmetadata view。暗号化payload/evidence bytesは公開しない。
+    public struct TransactionReference: Codable, Equatable, Sendable {
+        public let transactionID: ApplyChangeSetTransactionID
+        public let state: ApplyChangeSetTransactionState
+        public let terminalAt: Date?
+        public let retentionExpiresAt: Date?
+        public let cleanupCandidate: Bool
+        public let manifestDigest: String
+        public let references: [Reference]
+        public let referenceDigest: String
+        public let artifactDigests: [String]
+        public let runtimeReceiptDigest: String?
+    }
+
     public enum StoreError: Error, Equatable, Sendable {
         case invalidKey
         case invalidTransactionID
@@ -77,6 +91,7 @@ public actor ChangeSetTransactionStore {
         case invalidTransition(from: ApplyChangeSetTransactionState, to: ApplyChangeSetTransactionState)
         case corrupt(String)
         case orphan(String)
+        case referenceCapacityExceeded(Int)
         case io(String)
     }
 
@@ -118,6 +133,7 @@ public actor ChangeSetTransactionStore {
     private let transactionsDirectory: URL
     private let key: SymmetricKey
     private let maxRuntimeReceipts: Int
+    private let maxTransactionReferences: Int
     private let terminalRetention: TimeInterval
     private let fileManager: FileManager
     private var loaded = false
@@ -128,6 +144,7 @@ public actor ChangeSetTransactionStore {
         directory: URL,
         encryptionKey: Data,
         maxRuntimeReceipts: Int = 512,
+        maxTransactionReferences: Int = 4_096,
         terminalRetention: TimeInterval = 86_400,
         fileManager: FileManager = .default
     ) throws {
@@ -136,6 +153,7 @@ public actor ChangeSetTransactionStore {
         self.transactionsDirectory = directory.appendingPathComponent("transactions", isDirectory: true)
         self.key = SymmetricKey(data: Data(SHA256.hash(data: encryptionKey)))
         self.maxRuntimeReceipts = max(1, maxRuntimeReceipts)
+        self.maxTransactionReferences = max(1, maxTransactionReferences)
         self.terminalRetention = max(0, terminalRetention)
         self.fileManager = fileManager
         try Self.createOwnerOnlyDirectory(self.directory, fileManager: fileManager)
@@ -156,6 +174,27 @@ public actor ChangeSetTransactionStore {
             let snapshot = try reconcileTransaction(id: rawID, directoryName: directoryName)
             return Self.isTerminal(snapshot.state) ? nil : snapshot
         }
+    }
+
+    /// active/terminalを同じbounded viewで列挙する。期限切れterminalも黙って消さずcleanupCandidateで返す。
+    public func listReferences(now: Date = Date()) throws -> [TransactionReference] {
+        try ensureLoaded()
+        guard index.transactionDirectories.count <= maxTransactionReferences else {
+            throw StoreError.referenceCapacityExceeded(maxTransactionReferences)
+        }
+        return try index.transactionDirectories.keys.sorted().map { rawID in
+            guard let directoryName = index.transactionDirectories[rawID] else {
+                throw StoreError.corrupt("transaction index changed during reference enumeration")
+            }
+            return try makeReference(
+                snapshot: reconcileTransaction(id: rawID, directoryName: directoryName),
+                now: now
+            )
+        }
+    }
+
+    public func listTerminalReferences(now: Date = Date()) throws -> [TransactionReference] {
+        try listReferences(now: now).filter { Self.isTerminal($0.state) }
     }
 
     /// expectedState を照合してから単調な遷移を永続化する。新規 transaction は preparing だけを受け付ける。
@@ -182,6 +221,9 @@ public actor ChangeSetTransactionStore {
 
         guard expectedState == nil, snapshot.state == .preparing else {
             throw StoreError.missingTransaction(rawID)
+        }
+        guard index.transactionDirectories.count < maxTransactionReferences else {
+            throw StoreError.referenceCapacityExceeded(maxTransactionReferences)
         }
         let directoryName = Self.directoryName(for: rawID)
         let transactionDirectory = transactionsDirectory.appendingPathComponent(directoryName, isDirectory: true)
@@ -288,6 +330,9 @@ public actor ChangeSetTransactionStore {
         if fileManager.fileExists(atPath: indexURL.path) {
             index = try open(Index.self, data: try Self.secureRead(indexURL))
             guard index.schema == "aishell.change-set-transaction-index.v1" else { throw StoreError.corrupt("unknown index schema") }
+            guard index.transactionDirectories.count <= maxTransactionReferences else {
+                throw StoreError.referenceCapacityExceeded(maxTransactionReferences)
+            }
         }
         let receiptsURL = directory.appendingPathComponent("runtime-receipts.enc")
         if fileManager.fileExists(atPath: receiptsURL.path) {
@@ -346,6 +391,28 @@ public actor ChangeSetTransactionStore {
         let entry = JournalEntry(payload: payload, digest: Self.sha256(Data(previousDigest.utf8) + payloadBytes))
         try appendLine(try Self.encode(entry), to: journalURL)
         try atomicWrite(sealedSnapshot, to: transactionDirectory.appendingPathComponent("snapshot.enc"))
+    }
+
+    private func makeReference(snapshot: Snapshot, now: Date) throws -> TransactionReference {
+        let sortedReferences = snapshot.references.sorted {
+            if $0.kind != $1.kind { return $0.kind < $1.kind }
+            if $0.identifier != $1.identifier { return $0.identifier < $1.identifier }
+            return $0.digest < $1.digest
+        }
+        let expiresAt = snapshot.terminalAt.map { $0.addingTimeInterval(terminalRetention) }
+        let runtimeDigest = receipts.first { $0.transactionID == snapshot.transactionID }?.digest
+        return TransactionReference(
+            transactionID: snapshot.transactionID,
+            state: snapshot.state,
+            terminalAt: snapshot.terminalAt,
+            retentionExpiresAt: expiresAt,
+            cleanupCandidate: expiresAt.map { now >= $0 } ?? false,
+            manifestDigest: snapshot.manifestDigest,
+            references: sortedReferences,
+            referenceDigest: Self.sha256(try Self.encode(sortedReferences)),
+            artifactDigests: sortedReferences.filter { $0.kind.localizedCaseInsensitiveContains("artifact") }.map(\.digest),
+            runtimeReceiptDigest: runtimeDigest
+        )
     }
 
     private func reconcileTransaction(id rawID: String, directoryName: String) throws -> Snapshot {

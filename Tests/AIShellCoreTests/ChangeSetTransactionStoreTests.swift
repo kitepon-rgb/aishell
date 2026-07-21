@@ -127,6 +127,44 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         await XCTAssertThrowsStoreError(.orphan("orphan")) { _ = try await store.listActive() }
         XCTAssertTrue(FileManager.default.fileExists(atPath: orphan.path))
     }
+
+    func testBoundedReferencesExposeTerminalRetentionAndDigestsAcrossRestartAndCleanup() async throws {
+        let fixture = try Fixture(terminalRetention: 10)
+        let store = try fixture.makeStore()
+        let activeID = ApplyChangeSetTransactionID("active-transaction")
+        let terminalID = ApplyChangeSetTransactionID("terminal-transaction")
+        try await store.persistTransition(fixture.snapshot(id: activeID, state: .preparing, payload: Data(repeating: 0xAA, count: 4_096)))
+        try await store.persistTransition(fixture.snapshot(id: terminalID, state: .preparing))
+        try await store.persistTransition(
+            fixture.snapshot(id: terminalID, state: .abortedBeforeSideEffect, terminalAt: Date(timeIntervalSince1970: 100)),
+            expectedState: .preparing
+        )
+        try await store.appendRuntimeReceipt(.init(
+            transactionID: terminalID,
+            cursor: .init(root: fixture.root.path, generation: "g", sequence: 9),
+            paths: ["terminal.txt"], digest: "runtime-digest",
+            recordedAt: Date(timeIntervalSince1970: 100), terminalAt: Date(timeIntervalSince1970: 100)
+        ))
+
+        let references = try await store.listReferences(now: Date(timeIntervalSince1970: 111))
+        XCTAssertEqual(references.map(\.transactionID.rawValue), ["active-transaction", "terminal-transaction"])
+        XCTAssertEqual(references[0].state, .preparing)
+        XCTAssertNil(references[0].terminalAt)
+        XCTAssertFalse(references[0].cleanupCandidate)
+        XCTAssertEqual(references[1].state, .abortedBeforeSideEffect)
+        XCTAssertEqual(references[1].retentionExpiresAt, Date(timeIntervalSince1970: 110))
+        XCTAssertTrue(references[1].cleanupCandidate)
+        XCTAssertEqual(references[1].artifactDigests, ["artifact-digest"])
+        XCTAssertEqual(references[1].runtimeReceiptDigest, "runtime-digest")
+        XCTAssertEqual(references[1].referenceDigest.count, 64)
+
+        let restarted = try fixture.makeStore()
+        let terminal = try await restarted.listTerminalReferences(now: Date(timeIntervalSince1970: 111))
+        XCTAssertEqual(terminal, [references[1]])
+        _ = try await restarted.cleanup(now: Date(timeIntervalSince1970: 111))
+        let afterCleanup = try await restarted.listReferences(now: Date(timeIntervalSince1970: 111))
+        XCTAssertEqual(afterCleanup.map(\.transactionID.rawValue), ["active-transaction"])
+    }
 }
 
 private struct Fixture {
