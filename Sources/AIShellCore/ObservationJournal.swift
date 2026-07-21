@@ -52,12 +52,18 @@ struct ObservationJournal: Sendable {
     private(set) var events: [ObservationJournalEvent]
     let retentionLimit: Int
 
-    init(generation: String, retentionLimit: Int = 10_000) {
+    init(
+        generation: String,
+        sequence: UInt64 = 0,
+        lastEventID: UInt64? = nil,
+        events: [ObservationJournalEvent] = [],
+        retentionLimit: Int = 10_000
+    ) {
         self.generation = generation
-        sequence = 0
-        lastEventID = nil
+        self.sequence = sequence
+        self.lastEventID = lastEventID
         rescanReason = nil
-        events = []
+        self.events = Array(events.suffix(max(1, retentionLimit)))
         self.retentionLimit = max(1, retentionLimit)
     }
 
@@ -114,6 +120,9 @@ struct ObservationJournal: Sendable {
         guard cursorSequence <= sequence else {
             throw AIShellError.cursorExpired("observation:\(generation):\(cursorSequence)")
         }
+        if events.isEmpty, cursorSequence < sequence {
+            throw AIShellError.cursorExpired("observation:\(generation):\(cursorSequence)")
+        }
         if let first = events.first, cursorSequence + 1 < first.sequence {
             throw AIShellError.cursorExpired("observation:\(generation):\(cursorSequence)")
         }
@@ -136,5 +145,18 @@ struct ObservationJournal: Sendable {
         lastEventID = nil
         rescanReason = nil
         events.removeAll(keepingCapacity: true)
+    }
+
+    mutating func markRescanRequired(_ reason: String) {
+        rescanReason = reason
+    }
+
+    mutating func advanceEventWatermark(to eventID: UInt64) {
+        guard eventID > 0 else { return }
+        lastEventID = max(lastEventID ?? 0, eventID)
+    }
+
+    mutating func discardEvents(through appliedSequence: UInt64) {
+        events.removeAll { $0.sequence <= appliedSequence }
     }
 }

@@ -3,32 +3,27 @@ import Darwin
 import Foundation
 
 public actor WorkspaceStateRuntime {
-    private struct JournalEvent: Sendable {
-        let sequence: UInt64
-        let path: String
-        let eventID: UInt64?
-    }
-
     private struct RootState {
         let root: URL
         let rootIdentity: String
         let rootDigest: String
         let exclusionDigest: String
-        var generation: String
-        var sequence: UInt64
         var entries: [String: WorkspaceEntry]
-        var journal: [JournalEvent]
-        var rescanReason: String?
+        var prefetchedPaths: Set<String>
+        var prefetchedEntries: [String: WorkspaceEntry]
+        var journal: ObservationJournal
         var observer: FSEventsObserver?
         var lastAccessedAt: Date
     }
 
     private let runtimeStore: RuntimeStore
+    private let checkpointStore: WorkspaceCheckpointStore
     private let startsFSEvents: Bool
     private var states: [String: RootState] = [:]
     private let journalLimit: Int
     private let stateLimit = 8
     private var scanInvocationCount = 0
+    private var contentReadCount = 0
 
     public init(
         runtimeStore: RuntimeStore = RuntimeStore(),
@@ -36,6 +31,7 @@ public actor WorkspaceStateRuntime {
         journalLimit: Int = 10_000
     ) {
         self.runtimeStore = runtimeStore
+        checkpointStore = WorkspaceCheckpointStore(baseDirectory: runtimeStore.baseDirectory)
         self.startsFSEvents = startsFSEvents
         self.journalLimit = max(1, journalLimit)
     }
@@ -62,8 +58,7 @@ public actor WorkspaceStateRuntime {
         }
         let newlyInitialized = states[key] == nil
         if newlyInitialized {
-            guard sinceCursor == nil else { throw AIShellError.cursorExpired(sinceCursor!) }
-            try await initialize(root: root, key: key)
+            try await initialize(root: root, key: key, requestedCursor: sinceCursor)
         }
         guard var state = states[key] else { throw AIShellError.invalidPath(root.path) }
         state.lastAccessedAt = Date()
@@ -76,18 +71,21 @@ public actor WorkspaceStateRuntime {
             try await Task.sleep(for: .milliseconds(200))
             guard let refreshed = states[key] else { throw AIShellError.invalidPath(root.path) }
             state = refreshed
-            if let reason = state.rescanReason { throw AIShellError.rescanRequired(reason) }
+            if let reason = state.journal.rescanReason { throw AIShellError.rescanRequired(reason) }
             let parsed = initialCursor
             guard parsed.rootDigest == state.rootDigest,
                   parsed.exclusionDigest == state.exclusionDigest,
-                  parsed.generation == state.generation,
-                  parsed.sequence <= state.sequence else {
+                  parsed.generation == state.journal.generation,
+                  parsed.sequence <= state.journal.sequence else {
                 throw AIShellError.cursorExpired(sinceCursor)
             }
-            if let first = state.journal.first, parsed.sequence + 1 < first.sequence {
+            if state.journal.events.isEmpty, parsed.sequence < state.journal.sequence {
                 throw AIShellError.cursorExpired(sinceCursor)
             }
-            let pendingEvents = state.journal.filter { $0.sequence > parsed.sequence }
+            if let first = state.journal.events.first, parsed.sequence + 1 < first.sequence {
+                throw AIShellError.cursorExpired(sinceCursor)
+            }
+            let pendingEvents = state.journal.events.filter { $0.sequence > parsed.sequence }
             var uniqueEvents: [(path: String, sequence: UInt64)] = []
             for event in pendingEvents where !uniqueEvents.contains(where: { $0.path == event.path }) {
                 uniqueEvents.append((event.path, event.sequence))
@@ -114,7 +112,9 @@ public actor WorkspaceStateRuntime {
                 processedSequence = event.sequence
             }
             let changes = try reconcile(paths: observedPaths, state: &state)
+            state.journal.discardEvents(through: processedSequence)
             states[key] = state
+            try await persistCheckpoint(state)
             let changedEntries = changes.compactMap(\.entry)
             let remainingPaths = Set(pendingEvents.filter { $0.sequence > processedSequence }.map(\.path))
             let git = try gitStatus(root: root)
@@ -141,13 +141,15 @@ public actor WorkspaceStateRuntime {
         }
 
         if !newlyInitialized {
-            state.generation = UUID().uuidString.lowercased()
-            state.sequence = 0
-            state.journal.removeAll(keepingCapacity: true)
+            state.journal.startNewGeneration(UUID().uuidString.lowercased())
             state.entries = try scan(root: root)
+        } else if !state.journal.events.isEmpty {
+            let appliedSequence = state.journal.sequence
+            _ = try reconcile(paths: state.journal.events.map(\.path), state: &state)
+            state.journal.discardEvents(through: appliedSequence)
         }
-        state.rescanReason = nil
         states[key] = state
+        try await persistCheckpoint(state)
         let sorted = state.entries.values.sorted { $0.path < $1.path }
         let visible = Array(sorted.prefix(limit))
         let git = try gitStatus(root: root)
@@ -183,14 +185,14 @@ public actor WorkspaceStateRuntime {
 
     func markRescanRequired(reason: String) {
         for key in states.keys {
-            states[key]?.rescanReason = reason
+            states[key]?.journal.markRescanRequired(reason)
         }
     }
 
     public func recentChangedPaths() -> [String] {
         var result: [String] = []
         for state in states.values {
-            for event in state.journal.suffix(500) where !result.contains(event.path) {
+            for event in state.journal.events.suffix(500) where !result.contains(event.path) {
                 result.append(event.path)
             }
         }
@@ -198,46 +200,97 @@ public actor WorkspaceStateRuntime {
     }
 
     func scanInvocationCountForTests() -> Int { scanInvocationCount }
+    func contentReadCountForTests() -> Int { contentReadCount }
 
-    private func initialize(root: URL, key: String) async throws {
+    private func initialize(root: URL, key: String, requestedCursor: String?) async throws {
         if states.count >= stateLimit,
            let oldest = states.min(by: { $0.value.lastAccessedAt < $1.value.lastAccessedAt })?.key {
             states.removeValue(forKey: oldest)
         }
+        let rootIdentity = try Self.fileIdentity(root)
+        let rootDigest = try Self.rootDigest(root)
+        let restored = try await checkpointStore.load(rootDigest: rootDigest)
+        if restored == nil, let requestedCursor {
+            let parsed = try parseCursor(requestedCursor)
+            if parsed.rootDigest != rootDigest,
+               let previous = try await checkpointStore.load(rootDigest: parsed.rootDigest),
+               previous.rootPath == Self.canonicalPath(root.path).path {
+                throw AIShellError.rescanRequired("workspace root identity changed")
+            }
+            throw AIShellError.cursorExpired(requestedCursor)
+        }
+        if let restored {
+            guard restored.rootIdentity == rootIdentity,
+                  restored.rootPath == Self.canonicalPath(root.path).path else {
+                throw AIShellError.rescanRequired("workspace root identity changed")
+            }
+            guard restored.exclusionDigest == Self.exclusionDigest else {
+                throw AIShellError.rescanRequired("workspace exclusion contract changed")
+            }
+        }
         states[key] = RootState(
             root: root,
-            rootIdentity: try Self.fileIdentity(root),
-            rootDigest: try Self.rootDigest(root),
+            rootIdentity: rootIdentity,
+            rootDigest: rootDigest,
             exclusionDigest: Self.exclusionDigest,
-            generation: UUID().uuidString.lowercased(),
-            sequence: 0,
-            entries: [:],
-            journal: [],
-            rescanReason: nil,
+            entries: restored.map(Self.workspaceEntries) ?? [:],
+            prefetchedPaths: [],
+            prefetchedEntries: [:],
+            journal: ObservationJournal(
+                generation: restored?.generation ?? UUID().uuidString.lowercased(),
+                sequence: restored?.journalSequence ?? 0,
+                lastEventID: restored?.lastEventID,
+                events: restored?.journalEvents ?? [],
+                retentionLimit: journalLimit
+            ),
             observer: nil,
             lastAccessedAt: Date()
         )
         if startsFSEvents {
-            let observer = try FSEventsObserver(path: root.path) { [weak self] events in
+            let observer = try FSEventsObserver(
+                path: root.path,
+                sinceEventID: restored?.lastEventID
+            ) { [weak self] events in
                 Task { await self?.ingest(events) }
             }
             states[key]?.observer = observer
             observer.flush()
             try await Task.sleep(for: .milliseconds(250))
             guard var warmed = states[key] else { throw AIShellError.invalidPath(root.path) }
-            warmed.journal.removeAll(keepingCapacity: true)
+            if restored == nil {
+                warmed.journal.startNewGeneration(warmed.journal.generation)
+            }
+            warmed.journal.advanceEventWatermark(to: FSEventsObserver.currentEventID())
             states[key] = warmed
         }
-        let scannedEntries = try scan(root: root)
+        let dirtyPaths = Set(states[key]?.journal.events.map(\.path) ?? [])
+        let scannedEntries = try scan(
+            root: root,
+            reusableEntries: restored.map(Self.workspaceEntries) ?? [:],
+            dirtyPaths: dirtyPaths
+        )
         if startsFSEvents {
             states[key]?.observer?.flush()
             try await Task.sleep(for: .milliseconds(50))
+            states[key]?.journal.advanceEventWatermark(to: FSEventsObserver.currentEventID())
         }
         guard var scanned = states[key] else { throw AIShellError.invalidPath(root.path) }
-        scanned.entries = scannedEntries
-        let observedDuringScan = scanned.journal.map(\.path)
-        if !observedDuringScan.isEmpty {
-            _ = try reconcile(paths: observedDuringScan, state: &scanned)
+        if let restored {
+            let previousEntries = Self.workspaceEntries(restored)
+            let allPaths = Set(previousEntries.keys).union(scannedEntries.keys)
+            let changedRelativePaths = allPaths.filter {
+                !Self.entriesMetadataEqual(previousEntries[$0], scannedEntries[$0])
+            }
+            let metadataChanged = changedRelativePaths
+                .map { root.appendingPathComponent($0).path }
+            let alreadyObserved = Set(scanned.journal.events.map(\.path))
+            let synthetic = metadataChanged.filter { !alreadyObserved.contains($0) }
+                .map { ObservedFileEvent(path: $0, eventID: 0, flags: 0) }
+            scanned.journal.record(synthetic)
+            scanned.prefetchedPaths = Set(changedRelativePaths)
+            scanned.prefetchedEntries = scannedEntries.filter { changedRelativePaths.contains($0.key) }
+        } else {
+            scanned.entries = scannedEntries
         }
         states[key] = scanned
     }
@@ -245,21 +298,11 @@ public actor WorkspaceStateRuntime {
     private func ingest(_ events: [ObservedFileEvent]) {
         for key in Array(states.keys) {
             guard var state = states[key] else { continue }
-            for event in events where Self.contains(event.path, in: state.root.path) {
-                if event.requiresRescan {
-                    state.rescanReason = "FSEvents gap/root change (flags=\(event.flags), id=\(event.eventID))"
-                }
-                let relative = Self.relativePath(event.path, root: state.root.path)
-                guard !relative.isEmpty, !Self.isExcluded(relative) else { continue }
-                state.sequence &+= 1
-                state.journal.append(JournalEvent(
-                    sequence: state.sequence,
-                    path: event.path,
-                    eventID: event.eventID
-                ))
-            }
-            if state.journal.count > journalLimit {
-                state.journal.removeFirst(state.journal.count - journalLimit)
+            let rootPath = state.root.path
+            let contained = events.filter { Self.contains($0.path, in: rootPath) }
+            state.journal.record(contained) { path in
+                let relative = Self.relativePath(path, root: rootPath)
+                return !relative.isEmpty && !Self.isExcluded(relative)
             }
             states[key] = state
         }
@@ -277,7 +320,12 @@ public actor WorkspaceStateRuntime {
             let relative = Self.relativePath(url.path, root: state.root.path)
             guard !relative.isEmpty, !Self.isExcluded(relative) else { continue }
             let previous = state.entries[relative]
-            let current = try currentEntry(url: url, root: state.root)
+            let current: WorkspaceEntry?
+            if state.prefetchedPaths.remove(relative) != nil {
+                current = state.prefetchedEntries.removeValue(forKey: relative)
+            } else {
+                current = try currentEntry(url: url, root: state.root)
+            }
             switch (previous, current) {
             case let (old?, nil):
                 state.entries.removeValue(forKey: relative)
@@ -336,7 +384,10 @@ public actor WorkspaceStateRuntime {
             index += 1
             let url = URL(fileURLWithPath: absolutePath).standardizedFileURL
             let relative = Self.relativePath(url.path, root: state.root.path)
-            if let current = try currentEntry(url: url, root: state.root) {
+            let prefetched = state.prefetchedPaths.contains(relative)
+                ? state.prefetchedEntries[relative]
+                : try currentEntry(url: url, root: state.root)
+            if let current = prefetched {
                 for (oldPath, oldEntry) in state.entries
                     where oldPath != relative && oldEntry.identity == current.identity {
                     append(state.root.appendingPathComponent(oldPath).path)
@@ -371,7 +422,10 @@ public actor WorkspaceStateRuntime {
         func transition(_ absolutePath: String) throws -> (old: String?, new: String?) {
             let url = URL(fileURLWithPath: absolutePath).standardizedFileURL
             let relative = Self.relativePath(url.path, root: state.root.path)
-            return (state.entries[relative]?.identity, try currentEntry(url: url, root: state.root)?.identity)
+            let current = state.prefetchedPaths.contains(relative)
+                ? state.prefetchedEntries[relative]
+                : try currentEntry(url: url, root: state.root)
+            return (state.entries[relative]?.identity, current?.identity)
         }
         let first = try transition(firstPath)
         let second = try transition(secondPath)
@@ -379,7 +433,11 @@ public actor WorkspaceStateRuntime {
             || (second.old != nil && second.new == nil && first.old == nil && first.new == second.old)
     }
 
-    private func scan(root: URL) throws -> [String: WorkspaceEntry] {
+    private func scan(
+        root: URL,
+        reusableEntries: [String: WorkspaceEntry] = [:],
+        dirtyPaths: Set<String> = []
+    ) throws -> [String: WorkspaceEntry] {
         scanInvocationCount += 1
         var entries: [String: WorkspaceEntry] = [:]
         var traversalError: Error?
@@ -398,7 +456,12 @@ public actor WorkspaceStateRuntime {
                 enumerator.skipDescendants()
                 continue
             }
-            if let entry = try currentEntry(url: url, root: root) {
+            let reusable = reusableEntries[relative]
+            if let entry = try currentEntry(
+                url: url,
+                root: root,
+                reusable: dirtyPaths.contains(url.path) ? nil : reusable
+            ) {
                 entries[relative] = entry
             }
         }
@@ -406,7 +469,11 @@ public actor WorkspaceStateRuntime {
         return entries
     }
 
-    private func currentEntry(url: URL, root: URL) throws -> WorkspaceEntry? {
+    private func currentEntry(
+        url: URL,
+        root: URL,
+        reusable: WorkspaceEntry? = nil
+    ) throws -> WorkspaceEntry? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         guard Self.contains(url.resolvingSymlinksInPath().path, in: root.resolvingSymlinksInPath().path) else {
             return nil
@@ -419,8 +486,17 @@ public actor WorkspaceStateRuntime {
         var info = stat()
         guard lstat(url.path, &info) == 0 else { return nil }
         let size = Int64(values.fileSize ?? 0)
+        let identity = "\(info.st_dev):\(info.st_ino)"
         let hash: String?
-        if !isDirectory, size <= 4 * 1_024 * 1_024 {
+        if !isDirectory,
+           let reusable,
+           reusable.identity == identity,
+           reusable.sizeBytes == size,
+           Self.datesEquivalent(reusable.modifiedAt, values.contentModificationDate),
+           reusable.sha256 != nil {
+            hash = reusable.sha256
+        } else if !isDirectory, size <= 4 * 1_024 * 1_024 {
+            contentReadCount += 1
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
             hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         } else {
@@ -428,7 +504,7 @@ public actor WorkspaceStateRuntime {
         }
         return WorkspaceEntry(
             path: Self.relativePath(url.path, root: root.path),
-            identity: "\(info.st_dev):\(info.st_ino)",
+            identity: identity,
             isDirectory: isDirectory,
             sizeBytes: size,
             modifiedAt: values.contentModificationDate,
@@ -443,7 +519,59 @@ public actor WorkspaceStateRuntime {
     }
 
     private func cursor(for state: RootState, sequence: UInt64? = nil) -> String {
-        "ws2:\(state.rootDigest):\(state.exclusionDigest):\(state.generation):\(sequence ?? state.sequence)"
+        "ws2:\(state.rootDigest):\(state.exclusionDigest):\(state.journal.generation):\(sequence ?? state.journal.sequence)"
+    }
+
+    private func persistCheckpoint(_ state: RootState) async throws {
+        let now = Date()
+        let checkpoint = WorkspaceCheckpoint(
+            rootPath: Self.canonicalPath(state.root.path).path,
+            rootIdentity: state.rootIdentity,
+            rootDigest: state.rootDigest,
+            exclusionDigest: state.exclusionDigest,
+            generation: state.journal.generation,
+            lastEventID: state.journal.lastEventID,
+            journalSequence: state.journal.sequence,
+            journalEvents: state.journal.events,
+            entries: state.entries.values.map(Self.checkpointEntry),
+            createdAt: now,
+            lastAccessedAt: now
+        )
+        _ = try await checkpointStore.save(checkpoint, activeRootDigests: Set(states.values.map(\.rootDigest)))
+    }
+
+    private static func checkpointEntry(_ entry: WorkspaceEntry) -> WorkspaceCheckpointEntry {
+        let hashState: WorkspaceCheckpointHashState
+        if entry.isDirectory { hashState = .notApplicable }
+        else if entry.sha256 == nil { hashState = .deferred }
+        else { hashState = .hashed }
+        return WorkspaceCheckpointEntry(
+            path: entry.path,
+            identity: entry.identity,
+            kind: entry.isDirectory ? .directory : .file,
+            sizeBytes: entry.sizeBytes,
+            modifiedAtNanoseconds: entry.modifiedAt.map {
+                Int64(($0.timeIntervalSince1970 * 1_000_000_000).rounded())
+            },
+            sha256: entry.sha256,
+            hashState: hashState
+        )
+    }
+
+    private static func workspaceEntries(_ checkpoint: WorkspaceCheckpoint) -> [String: WorkspaceEntry] {
+        Dictionary(uniqueKeysWithValues: checkpoint.entries.map { entry in
+            let modifiedAt = entry.modifiedAtNanoseconds.map {
+                Date(timeIntervalSince1970: Double($0) / 1_000_000_000)
+            }
+            return (entry.path, WorkspaceEntry(
+                path: entry.path,
+                identity: entry.identity,
+                isDirectory: entry.kind == .directory,
+                sizeBytes: entry.sizeBytes,
+                modifiedAt: modifiedAt,
+                sha256: entry.sha256
+            ))
+        })
     }
 
     private func parseCursor(_ cursor: String) throws -> (
@@ -569,6 +697,28 @@ public actor WorkspaceStateRuntime {
         case .renamed: 1
         case .created: 2
         case .modified: 3
+        }
+    }
+
+    private static func entriesMetadataEqual(_ lhs: WorkspaceEntry?, _ rhs: WorkspaceEntry?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (lhs?, rhs?):
+            lhs.path == rhs.path
+                && lhs.identity == rhs.identity
+                && lhs.isDirectory == rhs.isDirectory
+                && lhs.sizeBytes == rhs.sizeBytes
+                && datesEquivalent(lhs.modifiedAt, rhs.modifiedAt)
+                && lhs.sha256 == rhs.sha256
+        default: false
+        }
+    }
+
+    private static func datesEquivalent(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (lhs?, rhs?): abs(lhs.timeIntervalSince(rhs)) < 0.000_001
+        default: false
         }
     }
 

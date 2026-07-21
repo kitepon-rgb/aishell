@@ -39,6 +39,8 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
     let exclusionDigest: String
     let generation: String
     let lastEventID: UInt64?
+    let journalSequence: UInt64
+    let journalEvents: [ObservationJournalEvent]
     let entries: [WorkspaceCheckpointEntry]
     let createdAt: Date
     let lastAccessedAt: Date
@@ -52,6 +54,8 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         exclusionDigest: String,
         generation: String,
         lastEventID: UInt64?,
+        journalSequence: UInt64 = 0,
+        journalEvents: [ObservationJournalEvent] = [],
         entries: [WorkspaceCheckpointEntry],
         createdAt: Date,
         lastAccessedAt: Date,
@@ -64,6 +68,8 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         self.exclusionDigest = exclusionDigest
         self.generation = generation
         self.lastEventID = lastEventID
+        self.journalSequence = journalSequence
+        self.journalEvents = journalEvents
         self.entries = entries
         self.createdAt = createdAt
         self.lastAccessedAt = lastAccessedAt
@@ -77,6 +83,8 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         case rootDigest = "root_digest"
         case exclusionDigest = "exclusion_digest"
         case lastEventID = "last_event_id"
+        case journalSequence = "journal_sequence"
+        case journalEvents = "journal_events"
         case createdAt = "created_at"
         case lastAccessedAt = "last_accessed_at"
         case payloadSHA256 = "payload_sha256"
@@ -91,6 +99,8 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
             exclusionDigest: exclusionDigest,
             generation: generation,
             lastEventID: lastEventID,
+            journalSequence: journalSequence,
+            journalEvents: journalEvents.sorted { $0.sequence < $1.sequence },
             entries: entries.sorted { $0.path < $1.path },
             createdAt: createdAt,
             lastAccessedAt: lastAccessedAt,
@@ -164,6 +174,7 @@ actor WorkspaceCheckpointStore {
             throw AIShellError.checkpointCorrupt("payload_sha256が一致しません: \(url.path)")
         }
         try Self.validateEntries(checkpoint.entries, path: url.path)
+        try Self.validateJournal(checkpoint, path: url.path)
         return checkpoint.normalized(payloadSHA256: storedDigest)
     }
 
@@ -177,6 +188,7 @@ actor WorkspaceCheckpointStore {
         }
         _ = try checkpointURL(rootDigest: checkpoint.rootDigest)
         try Self.validateEntries(checkpoint.entries, path: checkpoint.rootPath)
+        try Self.validateJournal(checkpoint, path: checkpoint.rootPath)
         guard checkpoint.entries.count <= quota.maximumEntriesPerRoot else {
             throw AIShellError.checkpointQuotaExceeded(quota.maximumBytesPerRoot)
         }
@@ -298,6 +310,18 @@ actor WorkspaceCheckpointStore {
             default:
                 throw AIShellError.checkpointCorrupt("entry hash invariant違反: \(entry.path)")
             }
+        }
+    }
+
+    private static func validateJournal(_ checkpoint: WorkspaceCheckpoint, path: String) throws {
+        let sequences = checkpoint.journalEvents.map(\.sequence)
+        guard sequences == sequences.sorted(),
+              Set(sequences).count == sequences.count,
+              checkpoint.journalEvents.allSatisfy({ $0.sequence <= checkpoint.journalSequence }),
+              checkpoint.lastEventID.map({ last in
+                  checkpoint.journalEvents.compactMap(\.eventID).allSatisfy { $0 <= last }
+              }) ?? checkpoint.journalEvents.allSatisfy({ $0.eventID == nil }) else {
+            throw AIShellError.checkpointCorrupt("journal invariant違反: \(path)")
         }
     }
 

@@ -19,6 +19,9 @@ struct ObservedFileEvent: Sendable {
 }
 
 final class FSEventsObserver: @unchecked Sendable {
+    static func currentEventID() -> UInt64 {
+        FSEventsGetCurrentEventId()
+    }
     private final class CallbackBox: @unchecked Sendable {
         let callback: @Sendable ([ObservedFileEvent]) -> Void
         init(callback: @escaping @Sendable ([ObservedFileEvent]) -> Void) {
