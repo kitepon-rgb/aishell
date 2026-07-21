@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "d5e3b6c19176c7186ceeca523981396551d62e1c0ca6e07c0a100b1177baa974",
+  "evidence_id": "ace-050-apply-change-set-contract-20260721",
+  "git_blob_oid": "d0482688c98216052af7de6f66b4abd13a9266ad",
+  "media_type": "text/markdown",
+  "path": "docs/adr/0017-apply-change-set-contract.md",
+  "repo_id": "self"
+}
