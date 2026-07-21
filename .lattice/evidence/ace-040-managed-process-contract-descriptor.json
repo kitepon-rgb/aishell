@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "537f4cf5177203e77d798633b71b1849a605433c75b0c961aaf33b312888714c",
+  "evidence_id": "ace-040-managed-process-contract-20260721",
+  "git_blob_oid": "0725ed392dc2cac62f155493e04454fb7cb5cb5d",
+  "media_type": "text/markdown",
+  "path": "docs/adr/0014-managed-process-contract.md",
+  "repo_id": "self"
+}
