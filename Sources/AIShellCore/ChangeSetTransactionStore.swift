@@ -13,6 +13,7 @@ public actor ChangeSetTransactionStore {
         public let references: [Reference]
         public let payload: Data
         public let terminalAt: Date?
+        public let retentionExpiresAt: Date?
         public let revision: UInt64
 
         public init(
@@ -22,6 +23,7 @@ public actor ChangeSetTransactionStore {
             references: [Reference] = [],
             payload: Data = Data(),
             terminalAt: Date? = nil,
+            retentionExpiresAt: Date? = nil,
             revision: UInt64 = 0
         ) {
             self.transactionID = transactionID
@@ -30,6 +32,7 @@ public actor ChangeSetTransactionStore {
             self.references = references
             self.payload = payload
             self.terminalAt = terminalAt
+            self.retentionExpiresAt = retentionExpiresAt
             self.revision = revision
         }
     }
@@ -334,7 +337,8 @@ public actor ChangeSetTransactionStore {
         payload: Data,
         references: [Reference],
         manifestDigest: String,
-        terminalAt: Date? = nil
+        terminalAt: Date? = nil,
+        retentionExpiresAt: Date? = nil
     ) throws -> UInt64 {
         try ensureLoaded()
         guard let directoryName = index.transactionDirectories[transactionID.rawValue] else {
@@ -346,7 +350,8 @@ public actor ChangeSetTransactionStore {
         }
         let candidate = Snapshot(
             transactionID: transactionID, state: expectedState, manifestDigest: manifestDigest,
-            references: references, payload: payload, terminalAt: terminalAt, revision: expectedRevision + 1
+            references: references, payload: payload, terminalAt: terminalAt ?? current.terminalAt,
+            retentionExpiresAt: retentionExpiresAt ?? current.retentionExpiresAt, revision: expectedRevision + 1
         )
         if current.revision == expectedRevision + 1 {
             guard current == candidate else { throw StoreError.snapshotUpdateConflict(expectedRevision: expectedRevision) }
@@ -374,7 +379,7 @@ public actor ChangeSetTransactionStore {
                 let replayCandidate = Snapshot(
                     transactionID: snapshot.transactionID, state: snapshot.state, manifestDigest: snapshot.manifestDigest,
                     references: snapshot.references, payload: snapshot.payload, terminalAt: snapshot.terminalAt,
-                    revision: current.revision
+                    retentionExpiresAt: snapshot.retentionExpiresAt, revision: current.revision
                 )
                 guard current == replayCandidate else { throw StoreError.duplicateTransaction(rawID) }
                 return
@@ -385,7 +390,7 @@ public actor ChangeSetTransactionStore {
             let versioned = Snapshot(
                 transactionID: snapshot.transactionID, state: snapshot.state, manifestDigest: snapshot.manifestDigest,
                 references: snapshot.references, payload: snapshot.payload, terminalAt: snapshot.terminalAt,
-                revision: current.revision + 1
+                retentionExpiresAt: snapshot.retentionExpiresAt, revision: current.revision + 1
             )
             try writeTransition(versioned, fromState: current.state, directoryName: directoryName, kind: .stateTransition)
             return
@@ -425,9 +430,14 @@ public actor ChangeSetTransactionStore {
         }
         if receipts.count > maxRuntimeReceipts {
             let now = Date()
-            let removable = receipts.indices.filter {
-                guard let terminalAt = receipts[$0].terminalAt else { return false }
-                return now.timeIntervalSince(terminalAt) >= terminalRetention
+            var removable: [Int] = []
+            for receiptIndex in receipts.indices {
+                let receipt = receipts[receiptIndex]
+                guard let terminalAt = receipt.terminalAt,
+                      let directoryName = index.transactionDirectories[receipt.transactionID.rawValue] else { continue }
+                let snapshot = try reconcileTransaction(id: receipt.transactionID.rawValue, directoryName: directoryName)
+                let expiresAt = snapshot.retentionExpiresAt ?? terminalAt.addingTimeInterval(terminalRetention)
+                if now >= expiresAt { removable.append(receiptIndex) }
             }
             var removeCount = receipts.count - maxRuntimeReceipts
             let removedIndices = Set(removable.prefix(removeCount))
@@ -450,7 +460,8 @@ public actor ChangeSetTransactionStore {
         _ transactionID: ApplyChangeSetTransactionID,
         state: ApplyChangeSetTransactionState = .finalized,
         payload: Data? = nil,
-        terminalAt: Date = Date()
+        terminalAt: Date = Date(),
+        retentionExpiresAt: Date? = nil
     ) throws {
         guard var snapshot = try load(transactionID) else { throw StoreError.missingTransaction(transactionID.rawValue) }
         snapshot = Snapshot(
@@ -460,6 +471,8 @@ public actor ChangeSetTransactionStore {
             references: snapshot.references,
             payload: payload ?? snapshot.payload,
             terminalAt: terminalAt,
+            retentionExpiresAt: retentionExpiresAt ?? snapshot.retentionExpiresAt
+                ?? terminalAt.addingTimeInterval(terminalRetention),
             revision: snapshot.revision + 1
         )
         try persistTransition(snapshot, expectedState: (try load(transactionID))?.state)
@@ -481,8 +494,9 @@ public actor ChangeSetTransactionStore {
         for rawID in index.transactionDirectories.keys.sorted() {
             guard let directoryName = index.transactionDirectories[rawID] else { continue }
             let snapshot = try reconcileTransaction(id: rawID, directoryName: directoryName)
-            guard Self.isTerminal(snapshot.state), let terminalAt = snapshot.terminalAt,
-                  now.timeIntervalSince(terminalAt) >= terminalRetention else { continue }
+            let expiresAt = snapshot.retentionExpiresAt
+                ?? snapshot.terminalAt.map { $0.addingTimeInterval(terminalRetention) }
+            guard Self.isTerminal(snapshot.state), let expiresAt, now >= expiresAt else { continue }
             try fileManager.removeItem(at: transactionsDirectory.appendingPathComponent(directoryName, isDirectory: true))
             try Self.syncDirectory(transactionsDirectory)
             index.transactionDirectories.removeValue(forKey: rawID)
@@ -564,6 +578,10 @@ public actor ChangeSetTransactionStore {
         directoryName: String,
         kind: JournalKind
     ) throws {
+        if let terminalAt = snapshot.terminalAt, let expiresAt = snapshot.retentionExpiresAt,
+           expiresAt < terminalAt {
+            throw StoreError.corrupt("transaction retention expires before terminal time")
+        }
         let transactionDirectory = transactionsDirectory.appendingPathComponent(directoryName, isDirectory: true)
         let journalURL = transactionDirectory.appendingPathComponent("journal.wal")
         let entries = try readJournal(journalURL)
@@ -604,7 +622,8 @@ public actor ChangeSetTransactionStore {
             if $0.identifier != $1.identifier { return $0.identifier < $1.identifier }
             return $0.digest < $1.digest
         }
-        let expiresAt = snapshot.terminalAt.map { $0.addingTimeInterval(terminalRetention) }
+        let expiresAt = snapshot.retentionExpiresAt
+            ?? snapshot.terminalAt.map { $0.addingTimeInterval(terminalRetention) }
         let runtimeDigest = receipts.first { $0.transactionID == snapshot.transactionID }?.digest
         return TransactionReference(
             transactionID: snapshot.transactionID,
@@ -833,7 +852,7 @@ public actor ChangeSetTransactionStore {
 
     private static func isTerminal(_ state: ApplyChangeSetTransactionState) -> Bool {
         switch state {
-        case .finalized, .committed, .rolledBack, .abortedBeforeSideEffect: true
+        case .finalized, .committed, .abortedBeforeSideEffect: true
         default: false
         }
     }
@@ -848,7 +867,9 @@ public actor ChangeSetTransactionStore {
              (.runtimeCommitted, .trashCommitted),
              (.trashCommitted, .finalized), (.trashCommitted, .committed),
              (.finalized, .committed),
-             (.rollbackDecided, .rolledBack): true
+             (.rollbackDecided, .rolledBack),
+             (.recoveryRequired, .rollbackDecided), (.recoveryRequired, .filesystemCommitted),
+             (.rolledBack, .abortedBeforeSideEffect): true
         default: false
         }
     }

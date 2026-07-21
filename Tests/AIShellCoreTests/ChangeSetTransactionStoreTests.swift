@@ -275,6 +275,89 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
             )
         }
     }
+
+    func testRecoveryRequiredCanRollForwardOrRollbackAcrossCrashBoundaries() async throws {
+        let rollforwardFixture = try Fixture()
+        let rollforward = try rollforwardFixture.makeStore()
+        try await rollforward.persistTransition(rollforwardFixture.snapshot(state: .preparing))
+        try await rollforward.persistTransition(rollforwardFixture.snapshot(state: .recoveryRequired), expectedState: .preparing)
+        let recoverySnapshotURL = rollforwardFixture.transactionDirectory.appendingPathComponent("snapshot.enc")
+        let recoveryBytes = try Data(contentsOf: recoverySnapshotURL)
+        try await rollforward.persistTransition(rollforwardFixture.snapshot(state: .filesystemCommitted), expectedState: .recoveryRequired)
+        try recoveryBytes.write(to: recoverySnapshotURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: recoverySnapshotURL.path)
+        let rollforwardRestarted = try rollforwardFixture.makeStore()
+        let recoveredForward = try await rollforwardRestarted.load(rollforwardFixture.transactionID)
+        XCTAssertEqual(recoveredForward?.state, .filesystemCommitted)
+        XCTAssertEqual(recoveredForward?.revision, 2)
+
+        let rollbackFixture = try Fixture()
+        let rollback = try rollbackFixture.makeStore()
+        try await rollback.persistTransition(rollbackFixture.snapshot(state: .preparing))
+        try await rollback.persistTransition(rollbackFixture.snapshot(state: .recoveryRequired), expectedState: .preparing)
+        try await rollback.persistTransition(rollbackFixture.snapshot(state: .rollbackDecided), expectedState: .recoveryRequired)
+        let rollbackDecidedURL = rollbackFixture.transactionDirectory.appendingPathComponent("snapshot.enc")
+        let rollbackDecidedBytes = try Data(contentsOf: rollbackDecidedURL)
+        try await rollback.persistTransition(
+            rollbackFixture.snapshot(
+                state: .rolledBack,
+                terminalAt: Date(timeIntervalSince1970: 100),
+                retentionExpiresAt: Date(timeIntervalSince1970: 101)
+            ),
+            expectedState: .rollbackDecided
+        )
+        try rollbackDecidedBytes.write(to: rollbackDecidedURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: rollbackDecidedURL.path)
+        let rollbackRestarted = try rollbackFixture.makeStore()
+        let activeAfterRollback = try await rollbackRestarted.listActive()
+        XCTAssertEqual(activeAfterRollback.map(\.state), [.rolledBack])
+        let prematureCleanup = try await rollbackRestarted.cleanup(now: Date(timeIntervalSince1970: 500))
+        XCTAssertTrue(prematureCleanup.isEmpty)
+        let retainedRollback = try await rollbackRestarted.load(rollbackFixture.transactionID)
+        XCTAssertEqual(retainedRollback?.state, .rolledBack)
+        try await rollbackRestarted.persistTransition(
+            rollbackFixture.snapshot(
+                state: .abortedBeforeSideEffect,
+                terminalAt: Date(timeIntervalSince1970: 100),
+                retentionExpiresAt: Date(timeIntervalSince1970: 500)
+            ),
+            expectedState: .rolledBack
+        )
+        let recoveredRollback = try await rollbackRestarted.load(rollbackFixture.transactionID)
+        XCTAssertEqual(recoveredRollback?.state, .abortedBeforeSideEffect)
+        XCTAssertEqual(recoveredRollback?.revision, 4)
+    }
+
+    func testExactTransactionRetentionSurvivesLegacyImportRestartAndCleanup() async throws {
+        let fixture = try Fixture(terminalRetention: 10)
+        let terminal = fixture.snapshot(
+            id: .init("long-retention"), state: .committed, payload: Data("retained-evidence".utf8),
+            terminalAt: Date(timeIntervalSince1970: 100),
+            retentionExpiresAt: Date(timeIntervalSince1970: 500), revision: 9
+        )
+        let store = try fixture.makeStore()
+        try await store.importLegacy([terminal], receipts: [], provenance: "retention-migration")
+        _ = try await store.updateSnapshot(
+            transactionID: .init("long-retention"), expectedState: .committed, expectedRevision: 9,
+            payload: Data("updated-retained-evidence".utf8), references: terminal.references,
+            manifestDigest: terminal.manifestDigest
+        )
+        let earlyCleanup = try await store.cleanup(now: Date(timeIntervalSince1970: 111))
+        XCTAssertTrue(earlyCleanup.isEmpty)
+
+        let restarted = try fixture.makeStore()
+        let references = try await restarted.listTerminalReferences(now: Date(timeIntervalSince1970: 499))
+        XCTAssertEqual(references.first?.retentionExpiresAt, Date(timeIntervalSince1970: 500))
+        XCTAssertFalse(references.first?.cleanupCandidate ?? true)
+        let retained = try await restarted.load(.init("long-retention"))
+        XCTAssertEqual(retained?.payload, Data("updated-retained-evidence".utf8))
+        XCTAssertEqual(retained?.retentionExpiresAt, Date(timeIntervalSince1970: 500))
+
+        let removed = try await restarted.cleanup(now: Date(timeIntervalSince1970: 500))
+        XCTAssertEqual(removed.map(\.rawValue), ["long-retention"])
+        let cleaned = try await restarted.load(.init("long-retention"))
+        XCTAssertNil(cleaned)
+    }
 }
 
 private struct Fixture {
@@ -306,12 +389,14 @@ private struct Fixture {
         state: ApplyChangeSetTransactionState,
         payload: Data = Data("payload".utf8),
         terminalAt: Date? = nil,
+        retentionExpiresAt: Date? = nil,
         revision: UInt64 = 0
     ) -> ChangeSetTransactionStore.Snapshot {
         .init(
             transactionID: id ?? transactionID, state: state, manifestDigest: "manifest-digest",
             references: [.init(kind: "artifact", identifier: "artifact-1", digest: "artifact-digest")],
-            payload: payload, terminalAt: terminalAt, revision: revision
+            payload: payload, terminalAt: terminalAt,
+            retentionExpiresAt: retentionExpiresAt, revision: revision
         )
     }
 
