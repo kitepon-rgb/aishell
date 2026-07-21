@@ -16,8 +16,11 @@ final class MCPTypesTests: XCTestCase {
         ])
         XCTAssertTrue(tools.prefix(5).allSatisfy { $0.outputSchema != nil })
         XCTAssertTrue(tools.prefix(5).allSatisfy {
-            $0.outputSchema?.objectValue?["type"] == .string("object")
-                && $0.outputSchema?.objectValue?["oneOf"]?.arrayValue?.count == 2
+            guard $0.outputSchema?.objectValue?["type"] == .string("object") else { return false }
+            let variantCount = $0.outputSchema?.objectValue?["oneOf"]?.arrayValue?.count
+            return ["workspace_snapshot", "search_context"].contains($0.name)
+                ? variantCount == 3
+                : variantCount == 2
         })
         XCTAssertEqual(tools.suffix(2).map(\.name), ["runtime_status", "runtime_open_manager"])
         XCTAssertTrue(tools.suffix(2).allSatisfy { $0.outputSchema != nil })

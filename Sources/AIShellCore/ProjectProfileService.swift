@@ -269,7 +269,7 @@ public actor ProjectProfileService {
         return try await catalog(rootPath: snapshot.root, observedCursor: snapshot.cursor)
     }
 
-    func catalog(
+    public func catalog(
         rootPath: String? = nil,
         observedCursor: String
     ) async throws -> ProjectProfileCatalogResult {

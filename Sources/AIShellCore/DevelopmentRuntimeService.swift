@@ -17,7 +17,11 @@ public actor DevelopmentRuntimeService {
         )
         let workspace = workspaceRuntime ?? WorkspaceStateRuntime(runtimeStore: runtimeStore)
         self.workspaceRuntime = workspace
-        contextCompiler = ContextCompilerService(runtimeStore: runtimeStore, workspaceRuntime: workspace)
+        contextCompiler = ContextCompilerService(
+            runtimeStore: runtimeStore,
+            workspaceRuntime: workspace,
+            evidenceStore: self.evidenceStore
+        )
     }
 
     public func runCheck(
@@ -94,6 +98,24 @@ public actor DevelopmentRuntimeService {
         )
     }
 
+    public func workspaceSnapshotV2(
+        path: String? = nil,
+        sinceCursor: String? = nil,
+        entryLimit: Int = 500,
+        contextBudget: Int = 16_384,
+        gitDiffRequest: GitDiffContextRequest? = nil,
+        projectProfileRequest: ProjectProfileProjectionRequest? = nil
+    ) async throws -> WorkspaceSnapshotV2Result {
+        try await contextCompiler.workspaceSnapshot(
+            path: path,
+            sinceCursor: sinceCursor,
+            entryLimit: entryLimit,
+            contextBudget: contextBudget,
+            gitDiffRequest: gitDiffRequest,
+            projectProfileRequest: projectProfileRequest
+        )
+    }
+
     public func readContext(
         targets: [String],
         byteBudget: Int = 65_536,
@@ -120,6 +142,13 @@ public actor DevelopmentRuntimeService {
             byteBudget: byteBudget,
             continuation: continuation
         )
+    }
+
+    public func searchContextV2(
+        request: SearchContextRequestV2? = nil,
+        continuation: String? = nil
+    ) async throws -> SearchContextResultV2 {
+        try await contextCompiler.searchContextV2(request: request, continuation: continuation)
     }
 
     private func primaryDiagnostic(for execution: RetainedProcessExecution) async throws -> String? {

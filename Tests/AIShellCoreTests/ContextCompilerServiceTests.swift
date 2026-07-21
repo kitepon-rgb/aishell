@@ -2,6 +2,174 @@ import XCTest
 @testable import AIShellCore
 
 final class ContextCompilerServiceTests: XCTestCase {
+    func testWorkspaceV2IntegratesGitDiffAndProjectProfilesWithoutRemovingV1Fields() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Self.runGit(["init"], at: root)
+        try Self.runGit(["config", "user.email", "fixture@example.invalid"], at: root)
+        try Self.runGit(["config", "user.name", "Fixture"], at: root)
+        let source = root.appendingPathComponent("Source.swift")
+        try "let value = 1\n".write(to: source, atomically: false, encoding: .utf8)
+        try "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n".write(
+            to: root.appendingPathComponent("Cargo.toml"), atomically: false, encoding: .utf8
+        )
+        try Self.runGit(["add", "Source.swift", "Cargo.toml"], at: root)
+        try Self.runGit(["commit", "-m", "fixture"], at: root)
+        try "let value = 2\n".write(to: source, atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let service = ContextCompilerService(runtimeStore: store, workspaceRuntime: runtime)
+
+        let result = try await service.workspaceSnapshot(
+            path: root.path,
+            gitDiffRequest: GitDiffContextRequest(byteBudget: 65_536),
+            projectProfileRequest: ProjectProfileProjectionRequest(mode: .all)
+        )
+
+        XCTAssertEqual(result.schemaVersion, "aishell.workspace-snapshot.v2")
+        XCTAssertEqual(result.gitStatusState, "dirty")
+        XCTAssertTrue(result.manifests.contains("Cargo.toml"))
+        XCTAssertTrue(result.gitDiff?.changes.contains {
+            $0.layer == .unstaged && $0.path == "Source.swift" && $0.kind == .modified
+        } == true)
+        let profiles = result.projectProfiles?.compactMap { item -> ProjectProfile? in
+            guard case let .profile(profile) = item else { return nil }
+            return profile
+        }
+        XCTAssertEqual(profiles?.first(where: { $0.ecosystem == "cargo" })?.status, .partial)
+        XCTAssertEqual(result.projectProfileSummary?.totalProfiles, 1)
+    }
+
+    func testProjectProfileProjectionPagesRetainSnapshotAndAdvanceOpaqueContinuation() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        let nested = root.appendingPathComponent("Nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        try "[package]\nname = \"root\"\nversion = \"0.1.0\"\n".write(
+            to: root.appendingPathComponent("Cargo.toml"), atomically: false, encoding: .utf8
+        )
+        try "[package]\nname = \"nested\"\nversion = \"0.1.0\"\n".write(
+            to: nested.appendingPathComponent("Cargo.toml"), atomically: false, encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let service = ContextCompilerService(runtimeStore: store, workspaceRuntime: runtime)
+
+        let automatic = try await service.workspaceSnapshot(
+            path: root.path,
+            projectProfileRequest: ProjectProfileProjectionRequest(mode: .auto)
+        )
+        let automaticProfiles = automatic.projectProfiles?.compactMap { item -> ProjectProfile? in
+            guard case let .profile(profile) = item else { return nil }
+            return profile
+        }
+        XCTAssertEqual(automaticProfiles?.map(\.projectRoot), [""])
+
+        let first = try await service.workspaceSnapshot(
+            path: root.path,
+            projectProfileRequest: ProjectProfileProjectionRequest(
+                mode: .all, byteBudget: 262_144, profileLimit: 1
+            )
+        )
+        let continuation = try XCTUnwrap(first.projectProfileContinuation)
+        XCTAssertEqual(first.projectProfiles?.count, 1)
+        XCTAssertEqual(first.projectProfileHasMore, true)
+        XCTAssertEqual(first.projectProfileSummary?.returnedProfiles, 1)
+
+        let second = try await service.workspaceSnapshot(
+            path: root.path,
+            projectProfileRequest: ProjectProfileProjectionRequest(
+                byteBudget: 262_144, profileLimit: 1, continuation: continuation
+            )
+        )
+        XCTAssertEqual(second.cursor, first.cursor)
+        XCTAssertEqual(second.projectProfiles?.count, 1)
+        XCTAssertEqual(second.projectProfileHasMore, false)
+        XCTAssertNil(second.projectProfileContinuation)
+        XCTAssertNotEqual(second.projectProfiles, first.projectProfiles)
+    }
+
+    func testOversizedProjectProfileBecomesBoundedLosslessArtifactDescriptor() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let targets = (0..<48).map { ".target(name: \"Target\($0)\")" }.joined(separator: ",\n")
+        try """
+        // swift-tools-version: 6.0
+        import PackageDescription
+        let package = Package(name: "Oversized", targets: [
+        \(targets)
+        ])
+        """.write(to: root.appendingPathComponent("Package.swift"), atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let evidence = EvidenceStore(baseDirectory: fixture.base.appendingPathComponent("evidence"))
+        let service = ContextCompilerService(
+            runtimeStore: store, workspaceRuntime: runtime, evidenceStore: evidence
+        )
+
+        let result = try await service.workspaceSnapshot(
+            path: root.path,
+            projectProfileRequest: ProjectProfileProjectionRequest(
+                mode: .all, byteBudget: 1_024, profileLimit: 1
+            )
+        )
+        let item = try XCTUnwrap(result.projectProfiles?.first)
+        guard case let .oversized(descriptor) = item else {
+            return XCTFail("budget超profileをinlineで返しました。")
+        }
+        XCTAssertGreaterThan(descriptor.requiredBytes, 1_024)
+        XCTAssertLessThanOrEqual(result.projectProfileSummary?.returnedBytes ?? .max, 1_024)
+        XCTAssertEqual(descriptor.sha256, descriptor.artifact.sha256)
+        let recovered = try await evidence.read(
+            handle: descriptor.artifact.handle,
+            mode: .range(offset: 0, length: descriptor.artifact.sizeBytes),
+            byteBudget: descriptor.artifact.sizeBytes
+        )
+        XCTAssertEqual(recovered.returnedBytes, descriptor.artifact.sizeBytes)
+        XCTAssertEqual(recovered.sha256, descriptor.sha256)
+        XCTAssertEqual(result.projectProfileHasMore, false)
+        XCTAssertNil(result.projectProfileContinuation)
+    }
+
+    func testV2SearchUsesRetainedObservationAndDedicatedService() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("Find.swift")
+        try "old value\n".write(to: file, atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let initial = try await runtime.snapshot()
+        try "needle value\n".write(to: file, atomically: false, encoding: .utf8)
+        await runtime.ingestObservedPaths([file.path])
+        let service = ContextCompilerService(runtimeStore: store, workspaceRuntime: runtime)
+
+        let result = try await service.searchContextV2(request: SearchContextRequestV2(
+            path: root.path,
+            queries: [SearchContextQueryV2(id: "q0", kind: .fixed, pattern: "needle")],
+            ranking: [.changed],
+            changedSinceCursor: initial.cursor,
+            maxResults: 10,
+            byteBudget: 65_536
+        ))
+
+        XCTAssertEqual(result.schema, "aishell.search-context.v2")
+        XCTAssertEqual(result.matches.map(\.path), ["Find.swift"])
+        XCTAssertEqual(result.matches.first?.queryIDs, ["q0"])
+        XCTAssertEqual(result.rankingEvidence.fromCursor, initial.cursor)
+        XCTAssertEqual(result.freshness.state, "fresh")
+    }
+
     func testReadContextSharesOneBudgetAndContinuesExplicitly() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
@@ -118,6 +286,20 @@ final class ContextCompilerServiceTests: XCTestCase {
             guard case AIShellError.contentChanged = error else {
                 return XCTFail("想定外のエラー: \(error)")
             }
+        }
+    }
+
+    private static func runGit(_ arguments: [String], at directory: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = directory
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(domain: "ContextCompilerServiceTests.git", code: Int(process.terminationStatus))
         }
     }
 

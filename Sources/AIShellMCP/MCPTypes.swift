@@ -140,23 +140,52 @@ enum ToolCatalog {
             )
         ),
         tool(
-            "workspace_snapshot", "workspace現在状態のpreviewと差分", "初回は現在filesystemを確定してbounded previewを返し、以後はFSEventsで観測したpathだけをidentity/hash照合します。omittedEntriesはpreview外の件数です。event gapや期限切れcursorは黙ってfull scanせず明示errorにします。",
+            "workspace_snapshot", "workspace現在状態のpreviewと差分", "初回は現在filesystemを確定してbounded previewを返し、以後はFSEventsで観測したpathだけをidentity/hash照合します。任意のgit_diffとproject_profileを同じ観測へ束ねられます。event gapや期限切れcursorは黙ってfull scanせず明示errorにします。",
             properties: [
                 "path": string("snapshot root。省略時は先頭許可root"),
                 "since_cursor": string("前回cursor。省略時は明示的なfull snapshot"),
                 "entry_limit": integer("最大entry/change件数。1〜5000、既定500", minimum: 1, maximum: 5_000),
-                "context_budget": integer("guidance・manifest・test・小規模workspace本文、またはdelta本文の共有byte上限。0〜65536、既定16384", minimum: 0, maximum: 65_536)
+                "context_budget": integer("guidance・manifest・test・小規模workspace本文、またはdelta本文の共有byte上限。0〜65536、既定16384", minimum: 0, maximum: 65_536),
+                "git_diff": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "base_ref": string("比較元commit-ish。省略時HEAD"),
+                        "byte_budget": integer("change/patch共有budget。1〜1048576", minimum: 1, maximum: 1_048_576),
+                        "include_patch": boolean("patch previewを含める。既定true"),
+                        "continuation": string("前pageのopaque continuation")
+                    ]),
+                    "additionalProperties": .bool(false)
+                ]),
+                "project_profile": .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "mode": enumString(["auto", "all", "none"], "profile projection mode。既定auto"),
+                        "project_ids": stringArray("返すstable project ID"),
+                        "byte_budget": integer("profile record共有budget。1024〜262144", minimum: 1_024, maximum: 262_144),
+                        "profile_limit": integer("1 pageの最大profile件数。1〜1000", minimum: 1, maximum: 1_000),
+                        "continuation": string("前pageのopaque continuation")
+                    ]),
+                    "additionalProperties": .bool(false)
+                ])
             ],
             required: [], readOnly: true, idempotent: true,
-            outputSchema: objectOutput(
-                schemaVersion: "aishell.workspace-snapshot.v1",
+            outputSchema: objectOutputWithAlternate(
+                primarySchemaKey: "schemaVersion",
+                primarySchemaVersion: "aishell.workspace-snapshot.v1",
+                alternateSchemaKey: "schemaVersion",
+                alternateSchemaVersion: "aishell.workspace-snapshot.v2",
                 required: ["schemaVersion", "root", "cursor", "isFull", "freshness", "entries", "changes", "omittedEntries", "guidanceFiles", "gitStatusState", "gitStatus", "context"],
                 properties: [
                     "root": type("string"), "cursor": type("string"), "isFull": type("boolean"),
                     "freshness": enumType(["fresh"]), "entries": type("array"), "changes": type("array"),
                     "omittedEntries": type("integer"), "checkpointState": type("string"), "guidanceFiles": type("array"),
                     "gitStatusState": enumType(["clean", "dirty", "not_repository"]),
-                    "gitStatus": type("array"), "context": type("array")
+                    "gitStatus": type("array"), "context": type("array"),
+                    "gitDiff": nullableType("object"),
+                    "projectProfiles": nullableType("array"),
+                    "projectProfileSummary": nullableType("object"),
+                    "projectProfileHasMore": nullableType("boolean"),
+                    "projectProfileContinuation": nullableType("string")
                 ]
             )
         ),
@@ -175,22 +204,57 @@ enum ToolCatalog {
             )
         ),
         tool(
-            "search_context", "変更近接性付きlexical検索", "rgをshellなしで直接起動し、OS観測済み変更へ近いmatchを優先して件数・byte budget内に返します。",
+            "search_context", "複数queryの共有budget検索", "fixed、regex、globを一回の非破壊workspace観測へ束ね、dedup・変更/test順位・共有budget・完全証拠を返します。v1 queryも互換受理します。",
             properties: [
                 "query": string("固定文字列query"),
+                "action": enumString(["search"], "v2 action。Phase 2はsearch"),
+                "queries": .object([
+                    "type": .string("array"),
+                    "minItems": .number(1),
+                    "maxItems": .number(32),
+                    "items": .object([
+                        "type": .string("object"),
+                        "required": .array([.string("id"), .string("kind"), .string("pattern")]),
+                        "properties": .object([
+                            "id": string("request内で一意のquery ID"),
+                            "kind": enumString(["fixed", "regex", "glob"], "query kind"),
+                            "pattern": string("検索pattern"),
+                            "case": enumString(["sensitive", "insensitive", "smart"], "case mode"),
+                            "before_lines": integer("前文脈行。0〜20", minimum: 0, maximum: 20),
+                            "after_lines": integer("後文脈行。0〜20", minimum: 0, maximum: 20),
+                            "include_globs": stringArray("include path glob"),
+                            "exclude_globs": stringArray("exclude path glob")
+                        ]),
+                        "additionalProperties": .bool(false)
+                    ])
+                ]),
                 "path": string("検索root。省略時は先頭許可root"),
+                "ranking": .object([
+                    "type": .string("array"),
+                    "items": enumString(["changed", "tests"], "ranking criterion"),
+                    "uniqueItems": .bool(true)
+                ]),
+                "changed_since_cursor": string("changed順位の下限workspace cursor"),
                 "max_results": integer("最大match数。1〜500、既定50", minimum: 1, maximum: 500),
                 "byte_budget": integer("返却上限byte。1〜1048576、既定65536", minimum: 1, maximum: 1_048_576),
                 "continuation": string("前回結果のcontinuation。検索結果変更時はCONTENT_CHANGED")
             ],
-            required: ["query"], readOnly: true, idempotent: true,
-            outputSchema: objectOutput(
-                schemaVersion: "aishell.search-context.v1",
-                required: ["schemaVersion", "query", "worker", "matches", "omittedMatches", "returnedBytes", "omittedBytes", "freshness"],
+            required: [], readOnly: true, idempotent: true,
+            outputSchema: objectOutputWithAlternate(
+                primarySchemaKey: "schemaVersion",
+                primarySchemaVersion: "aishell.search-context.v1",
+                alternateSchemaKey: "schema",
+                alternateSchemaVersion: "aishell.search-context.v2",
+                required: ["matches", "omittedMatches", "returnedBytes", "omittedBytes", "freshness"],
                 properties: [
                     "query": type("string"), "worker": type("string"), "matches": type("array"),
                     "omittedMatches": type("integer"), "returnedBytes": type("integer"),
-                    "omittedBytes": type("integer"), "freshness": enumType(["filesystem-current"])
+                    "omittedBytes": type("integer"),
+                    "contextBlocks": type("array"), "oversizedDescriptors": type("array"),
+                    "evidence": type("object"), "rankingEvidence": type("object"),
+                    "freshness": .object(["oneOf": .array([
+                        enumType(["filesystem-current"]), type("object")
+                    ])])
                 ]
             )
         ),
@@ -458,6 +522,46 @@ enum ToolCatalog {
                     "properties": .object(successProperties),
                     "additionalProperties": .bool(true)
                 ]),
+                .object([
+                    "type": .string("object"),
+                    "required": .array([.string("schemaVersion"), .string("error")]),
+                    "properties": .object([
+                        "schemaVersion": .object(["const": .string("aishell.error.v1")]),
+                        "error": .object([
+                            "type": .string("object"),
+                            "required": .array([.string("code"), .string("message")]),
+                            "additionalProperties": .bool(true)
+                        ])
+                    ]),
+                    "additionalProperties": .bool(true)
+                ])
+            ])
+        ])
+    }
+
+    private static func objectOutputWithAlternate(
+        primarySchemaKey: String,
+        primarySchemaVersion: String,
+        alternateSchemaKey: String,
+        alternateSchemaVersion: String,
+        required: [String],
+        properties: [String: JSONValue]
+    ) -> JSONValue {
+        func success(_ key: String, _ version: String) -> JSONValue {
+            var successProperties = properties
+            successProperties[key] = .object(["const": .string(version)])
+            return .object([
+                "type": .string("object"),
+                "required": .array((required + [key]).map(JSONValue.string)),
+                "properties": .object(successProperties),
+                "additionalProperties": .bool(true)
+            ])
+        }
+        return .object([
+            "type": .string("object"),
+            "oneOf": .array([
+                success(primarySchemaKey, primarySchemaVersion),
+                success(alternateSchemaKey, alternateSchemaVersion),
                 .object([
                     "type": .string("object"),
                     "required": .array([.string("schemaVersion"), .string("error")]),

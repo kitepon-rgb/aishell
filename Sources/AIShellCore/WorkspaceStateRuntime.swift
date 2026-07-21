@@ -278,6 +278,103 @@ public actor WorkspaceStateRuntime {
         return result
     }
 
+    /// 検索consumer向けに、retained observation journalを進めず同じ区間を再生する。
+    /// `snapshot(sinceCursor:)`と異なりeventを破棄せず、複数consumerが同じviewを読める。
+    public func searchContextObservation(
+        path: String? = nil,
+        fromCursor: String,
+        testPaths: Set<String> = [],
+        testClassification: String = "unavailable",
+        projectProfileDigest: String? = nil
+    ) async throws -> SearchContextEnvironment {
+        let resolver = try await activeResolver()
+        let requested = try resolver.resolveExisting(path)
+        guard try requested.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw AIShellError.invalidPath(requested.path)
+        }
+        let canonicalRequested = requested.standardizedFileURL.path
+        guard let root = resolver.rootURLs
+            .filter({ canonicalRequested == $0.path || canonicalRequested.hasPrefix($0.path + "/") })
+            .sorted(by: {
+                let leftDepth = $0.pathComponents.count
+                let rightDepth = $1.pathComponents.count
+                if leftDepth != rightDepth { return leftDepth > rightDepth }
+                return Data($0.path.utf8).lexicographicallyPrecedes(Data($1.path.utf8))
+            }).first else {
+            throw AIShellError.outsideAllowedRoot(requested.path)
+        }
+        let key = root.path
+        if states[key] == nil {
+            try await initialize(root: root, key: key, requestedCursor: fromCursor)
+        }
+        if states[key]?.observer != nil {
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        drainObserver(for: key)
+        guard var state = states[key] else { throw AIShellError.invalidPath(root.path) }
+        if let reason = state.journal.rescanReason { throw AIShellError.rescanRequired(reason) }
+
+        let parsed = try parseCursor(fromCursor)
+        guard parsed.rootDigest == state.rootDigest,
+              parsed.exclusionDigest == state.exclusionDigest,
+              parsed.generation == state.journal.generation,
+              parsed.sequence <= state.journal.sequence else {
+            throw AIShellError.cursorExpired(fromCursor)
+        }
+        if state.journal.events.isEmpty, parsed.sequence < state.journal.sequence {
+            throw AIShellError.cursorExpired(fromCursor)
+        }
+        if let first = state.journal.events.first, parsed.sequence + 1 < first.sequence {
+            throw AIShellError.cursorExpired(fromCursor)
+        }
+
+        let retained = state.journal.events.filter { $0.sequence > parsed.sequence }
+        let reconciled = try reconcile(paths: retained.map(\.path), state: &state)
+        for change in reconciled {
+            if let event = retained.first(where: {
+                Self.relativePath($0.path, root: root.path) == change.path
+                    || Self.relativePath($0.path, root: root.path) == change.previousPath
+            }) {
+                state.knownChangesBySequence[event.sequence] = change
+            }
+        }
+        states[key] = state
+        var changedPaths = Set(retained.map { Self.relativePath($0.path, root: root.path) })
+        for change in state.knownChangesBySequence
+            .filter({ $0.key > parsed.sequence })
+            .map(\.value) {
+            changedPaths.insert(change.path)
+            if let previous = change.previousPath { changedPaths.insert(previous) }
+        }
+        let indexedFiles = state.entries.values.compactMap { entry -> SearchContextIndexedFile? in
+            guard !entry.isDirectory, let sha256 = entry.sha256 else { return nil }
+            return SearchContextIndexedFile(path: entry.path, fileIdentity: entry.identity, contentSHA256: sha256)
+        }.sorted { Data($0.path.utf8).lexicographicallyPrecedes(Data($1.path.utf8)) }
+        let throughCursor = cursor(for: state)
+        let configuration = try await runtimeStore.loadConfiguration()
+        let policyDigest = SHA256.hash(data: Data(configuration.allowedRootPaths.sorted().joined(separator: "\u{0}").utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let changedDigest = SHA256.hash(data: Data(changedPaths.sorted().joined(separator: "\u{0}").utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let viewID = SHA256.hash(data: Data("\(state.rootIdentity)\u{0}\(fromCursor)\u{0}\(throughCursor)\u{0}\(changedDigest)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+
+        return SearchContextEnvironment(
+            effectiveRootIdentity: state.rootIdentity,
+            effectiveRootPolicyDigest: policyDigest,
+            workspaceCursor: throughCursor,
+            observedFrom: fromCursor,
+            observedThrough: throughCursor,
+            observationViewID: viewID,
+            changedPaths: changedPaths,
+            testPaths: testPaths,
+            testClassification: testClassification,
+            projectProfileDigest: projectProfileDigest,
+            indexedFiles: indexedFiles,
+            isFresh: true
+        )
+    }
+
     /// Filesystem commit時に実測した状態を、再scanせずentry indexとdelta journalへ反映する。
     /// transactionIDは同一runtime内のrecovery再送を冪等にし、後着FSEvents echoは実測一致時だけ吸収する。
     @discardableResult

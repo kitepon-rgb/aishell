@@ -178,12 +178,28 @@ final class MCPServer {
                 byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1, maximum: 1_048_576)
             ))
         case "workspace_snapshot":
-            try validateKeys(arguments, allowed: ["path", "since_cursor", "entry_limit", "context_budget"])
+            try validateKeys(arguments, allowed: [
+                "path", "since_cursor", "entry_limit", "context_budget", "git_diff", "project_profile"
+            ])
+            let path = try strictOptionalString("path", in: arguments)
+            let sinceCursor = try strictOptionalString("since_cursor", in: arguments)
+            let entryLimit = try boundedInt("entry_limit", in: arguments, default: 500, minimum: 1, maximum: 5_000)
+            let contextBudget = try boundedInt("context_budget", in: arguments, default: 16_384, minimum: 0, maximum: 65_536)
+            if arguments["git_diff"] != nil || arguments["project_profile"] != nil {
+                return try await .from(development.workspaceSnapshotV2(
+                    path: path,
+                    sinceCursor: sinceCursor,
+                    entryLimit: entryLimit,
+                    contextBudget: contextBudget,
+                    gitDiffRequest: try gitDiffRequest(arguments["git_diff"]),
+                    projectProfileRequest: try projectProfileRequest(arguments["project_profile"])
+                ))
+            }
             return try await .from(development.workspaceSnapshot(
-                path: try strictOptionalString("path", in: arguments),
-                sinceCursor: try strictOptionalString("since_cursor", in: arguments),
-                entryLimit: try boundedInt("entry_limit", in: arguments, default: 500, minimum: 1, maximum: 5_000),
-                contextBudget: try boundedInt("context_budget", in: arguments, default: 16_384, minimum: 0, maximum: 65_536)
+                path: path,
+                sinceCursor: sinceCursor,
+                entryLimit: entryLimit,
+                contextBudget: contextBudget
             ))
         case "read_context":
             try validateKeys(arguments, allowed: ["targets", "byte_budget", "continuation"])
@@ -193,13 +209,34 @@ final class MCPServer {
                 continuation: try strictOptionalString("continuation", in: arguments)
             ))
         case "search_context":
-            try validateKeys(arguments, allowed: ["query", "path", "max_results", "byte_budget", "continuation"])
-            return try await .from(development.searchContext(
-                query: try requiredString("query", in: arguments),
-                path: try strictOptionalString("path", in: arguments),
-                maxResults: try boundedInt("max_results", in: arguments, default: 50, minimum: 1, maximum: 500),
-                byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1, maximum: 1_048_576),
-                continuation: try strictOptionalString("continuation", in: arguments)
+            try validateKeys(arguments, allowed: [
+                "action", "query", "queries", "path", "ranking", "changed_since_cursor",
+                "max_results", "byte_budget", "continuation"
+            ])
+            if arguments["query"] != nil {
+                guard arguments["queries"] == nil, arguments["action"] == nil else {
+                    throw AIShellError.invalidArgument("queryとv2 requestは同時指定できません。")
+                }
+                return try await .from(development.searchContext(
+                    query: try requiredString("query", in: arguments),
+                    path: try strictOptionalString("path", in: arguments),
+                    maxResults: try boundedInt("max_results", in: arguments, default: 50, minimum: 1, maximum: 500),
+                    byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1, maximum: 1_048_576),
+                    continuation: try strictOptionalString("continuation", in: arguments)
+                ))
+            }
+            if let continuation = try strictOptionalString("continuation", in: arguments) {
+                guard arguments.count == 1 else {
+                    throw AIShellError.invalidArgument("continuationと初回fieldは同時指定できません。")
+                }
+                return try await .from(development.searchContextV2(continuation: continuation))
+            }
+            let action = try strictOptionalString("action", in: arguments) ?? "search"
+            guard action == "search" else {
+                throw AIShellError.invalidArgument("Phase 2で利用できるactionはsearchだけです。")
+            }
+            return try await .from(development.searchContextV2(
+                request: try searchContextRequest(arguments)
             ))
         case "runtime_status":
             return try await runtimeStatus()
@@ -421,6 +458,104 @@ final class MCPServer {
         }
     }
 
+    private func gitDiffRequest(_ value: JSONValue?) throws -> GitDiffContextRequest? {
+        guard let value else { return nil }
+        guard let object = value.objectValue else {
+            throw AIShellError.invalidArgument("git_diffはobjectである必要があります。")
+        }
+        try validateKeys(object, allowed: ["base_ref", "byte_budget", "include_patch", "continuation"])
+        let continuation = try strictOptionalString("continuation", in: object)
+        if continuation != nil, Set(object.keys).subtracting(["continuation", "byte_budget"]).isEmpty == false {
+            throw AIShellError.invalidArgument("git_diff continuationと初回fieldは同時指定できません。")
+        }
+        return GitDiffContextRequest(
+            baseRef: try strictOptionalString("base_ref", in: object),
+            byteBudget: try boundedInt("byte_budget", in: object, default: 65_536, minimum: 1, maximum: 1_048_576),
+            includePatch: try strictOptionalBool("include_patch", in: object) ?? true,
+            continuation: continuation
+        )
+    }
+
+    private func projectProfileRequest(_ value: JSONValue?) throws -> ProjectProfileProjectionRequest? {
+        guard let value else { return nil }
+        guard let object = value.objectValue else {
+            throw AIShellError.invalidArgument("project_profileはobjectである必要があります。")
+        }
+        try validateKeys(object, allowed: ["mode", "project_ids", "byte_budget", "profile_limit", "continuation"])
+        let continuation = try strictOptionalString("continuation", in: object)
+        if continuation != nil, Set(object.keys).subtracting(["continuation", "byte_budget", "profile_limit"]).isEmpty == false {
+            throw AIShellError.invalidArgument("project_profile continuationと初回fieldは同時指定できません。")
+        }
+        let modeName = try strictOptionalString("mode", in: object) ?? "auto"
+        guard let mode = ProjectProfileProjectionMode(rawValue: modeName) else {
+            throw AIShellError.invalidArgument("project_profile.modeはauto、all、noneのいずれかです。")
+        }
+        return ProjectProfileProjectionRequest(
+            mode: mode,
+            projectIDs: try stringArray("project_ids", in: object),
+            byteBudget: try boundedInt("byte_budget", in: object, default: 65_536, minimum: 1_024, maximum: 262_144),
+            profileLimit: try boundedInt("profile_limit", in: object, default: 100, minimum: 1, maximum: 1_000),
+            continuation: continuation
+        )
+    }
+
+    private func searchContextRequest(_ arguments: [String: JSONValue]) throws -> SearchContextRequestV2 {
+        guard let queryValues = arguments["queries"]?.arrayValue, !queryValues.isEmpty else {
+            throw AIShellError.invalidArgument("queriesは1件以上必要です。")
+        }
+        let queries = try queryValues.map { value -> SearchContextQueryV2 in
+            guard let object = value.objectValue else {
+                throw AIShellError.invalidArgument("queriesの各要素はobjectである必要があります。")
+            }
+            try validateKeys(object, allowed: [
+                "id", "kind", "pattern", "case", "before_lines", "after_lines", "include_globs", "exclude_globs"
+            ])
+            guard let kind = SearchContextQueryKind(rawValue: try requiredString("kind", in: object)) else {
+                throw AIShellError.invalidArgument("query.kindはfixed、regex、globのいずれかです。")
+            }
+            guard let caseMode = SearchContextCaseMode(rawValue: try strictOptionalString("case", in: object) ?? "sensitive") else {
+                throw AIShellError.invalidArgument("query.caseはsensitive、insensitive、smartのいずれかです。")
+            }
+            return SearchContextQueryV2(
+                id: try requiredString("id", in: object),
+                kind: kind,
+                pattern: try requiredString("pattern", in: object),
+                caseMode: caseMode,
+                beforeLines: try boundedInt("before_lines", in: object, default: 0, minimum: 0, maximum: 20),
+                afterLines: try boundedInt("after_lines", in: object, default: 0, minimum: 0, maximum: 20),
+                includeGlobs: try stringArray("include_globs", in: object),
+                excludeGlobs: try stringArray("exclude_globs", in: object)
+            )
+        }
+        let rankings: [SearchContextRanking]
+        if let values = arguments["ranking"]?.arrayValue {
+            rankings = try values.map { value in
+                guard let raw = value.stringValue, let ranking = SearchContextRanking(rawValue: raw) else {
+                    throw AIShellError.invalidArgument("rankingはchanged、testsの配列です。")
+                }
+                return ranking
+            }
+        } else {
+            rankings = [.changed, .tests]
+        }
+        return SearchContextRequestV2(
+            path: try strictOptionalString("path", in: arguments),
+            queries: queries,
+            ranking: rankings,
+            changedSinceCursor: try strictOptionalString("changed_since_cursor", in: arguments),
+            maxResults: try boundedInt("max_results", in: arguments, default: 50, minimum: 1, maximum: 500),
+            byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1_024, maximum: 1_048_576)
+        )
+    }
+
+    private func strictOptionalBool(_ key: String, in arguments: [String: JSONValue]) throws -> Bool? {
+        guard let value = arguments[key] else { return nil }
+        guard let result = value.boolValue else {
+            throw AIShellError.invalidArgument("\(key)にはbooleanが必要です。")
+        }
+        return result
+    }
+
     private func validateKeys(_ arguments: [String: JSONValue], allowed: Set<String>) throws {
         let unexpected = Set(arguments.keys).subtracting(allowed).sorted()
         guard unexpected.isEmpty else {
@@ -429,6 +564,38 @@ final class MCPServer {
     }
 
     private func stableError(_ error: Error) -> (code: String, message: String) {
+        if let error = error as? SearchContextServiceError {
+            switch error {
+            case .invalidArgument: return ("INVALID_ARGUMENT", String(describing: error))
+            case .invalidRegex: return ("INVALID_REGEX", String(describing: error))
+            case .invalidGlob: return ("INVALID_GLOB", String(describing: error))
+            case .rescanRequired: return ("RESCAN_REQUIRED", String(describing: error))
+            case .cursorExpired: return ("CURSOR_EXPIRED", String(describing: error))
+            case .contentChanged: return ("CONTENT_CHANGED", String(describing: error))
+            case .workerUnavailable: return ("WORKER_UNAVAILABLE", String(describing: error))
+            case .workerTimeout: return ("WORKER_TIMEOUT", String(describing: error))
+            case .outputLimitExceeded: return ("OUTPUT_LIMIT_EXCEEDED", String(describing: error))
+            case .workerFailed: return ("WORKER_FAILED", String(describing: error))
+            case .workerOutputInvalid: return ("WORKER_OUTPUT_INVALID", String(describing: error))
+            case .notTextFile: return ("NOT_TEXT_FILE", String(describing: error))
+            case .artifactStoreFailed: return ("ARTIFACT_STORE_FAILED", String(describing: error))
+            case .resultEncodingFailed: return ("RESULT_ENCODING_FAILED", String(describing: error))
+            }
+        }
+        if let error = error as? GitContextError {
+            switch error {
+            case .notGitRepository: return ("NOT_GIT_REPOSITORY", error.localizedDescription)
+            case .repositoryOutsideAllowedRoot: return ("REPOSITORY_OUTSIDE_ALLOWED_ROOT", error.localizedDescription)
+            case .unresolvedBase: return ("UNRESOLVED_BASE", error.localizedDescription)
+            case .unbornHeadWithExplicitBase: return ("UNBORN_HEAD_WITH_EXPLICIT_BASE", error.localizedDescription)
+            case .pathEncodingUnsupported: return ("PATH_ENCODING_UNSUPPORTED", error.localizedDescription)
+            case .contentChanged: return ("CONTENT_CHANGED", error.localizedDescription)
+            case .invalidContinuation: return ("INVALID_CONTINUATION", error.localizedDescription)
+            case .cursorExpired: return ("CURSOR_EXPIRED", error.localizedDescription)
+            case .gitFailed: return ("GIT_FAILED", error.localizedDescription)
+            case .artifactPublicationFailed: return ("ARTIFACT_PUBLICATION_FAILED", error.localizedDescription)
+            }
+        }
         guard let error = error as? AIShellError else {
             return ("INTERNAL_ERROR", error.localizedDescription)
         }
@@ -529,6 +696,13 @@ final class MCPServer {
                 match.removeValue(forKey: "text")
                 return .object(match)
             })
+            if let blocks = object["contextBlocks"]?.arrayValue {
+                object["contextBlocks"] = .array(blocks.map { value in
+                    guard var block = value.objectValue else { return value }
+                    block.removeValue(forKey: "text")
+                    return .object(block)
+                })
+            }
         }
         return .object(object)
     }
