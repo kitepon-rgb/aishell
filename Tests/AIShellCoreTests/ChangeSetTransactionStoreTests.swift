@@ -256,12 +256,53 @@ final class ChangeSetTransactionStoreTests: XCTestCase {
         await XCTAssertThrowsStoreError(.migrationInProgress("legacy import must be resumed with the exact request")) {
             _ = try await crashing.listReferences()
         }
+        await XCTAssertThrowsStoreError(.migrationInProgress("legacy import must be resumed with the exact request")) {
+            _ = try await crashing.legacyImportReceipt()
+        }
 
         let restarted = try fixture.makeStore()
         try await restarted.importLegacy(snapshots, receipts: [], provenance: "legacy-crash")
         let loaded = try await restarted.listReferences()
         XCTAssertEqual(loaded.map(\.transactionID.rawValue), ["legacy-1", "legacy-2"])
         XCTAssertEqual(loaded.map(\.revision), [2, 5])
+    }
+
+    func testLegacyImportReceiptSurvivesEvolutionCleanupAndRestart() async throws {
+        let fixture = try Fixture(terminalRetention: 1)
+        let emptyStore = try fixture.makeStore()
+        let emptyReceipt = try await emptyStore.legacyImportReceipt()
+        XCTAssertNil(emptyReceipt)
+        let snapshots = [
+            fixture.snapshot(id: .init("evolving"), state: .prepared, payload: Data("v1".utf8), revision: 2),
+            fixture.snapshot(
+                id: .init("cleanup"), state: .committed, terminalAt: Date(timeIntervalSince1970: 100),
+                retentionExpiresAt: Date(timeIntervalSince1970: 101), revision: 6
+            ),
+        ]
+        try await emptyStore.importLegacy(snapshots, receipts: [], provenance: "legacy-provenance")
+        let loadedReceipt = try await emptyStore.legacyImportReceipt()
+        let originalReceipt = try XCTUnwrap(loadedReceipt)
+        XCTAssertEqual(originalReceipt.provenance, "legacy-provenance")
+        XCTAssertEqual(originalReceipt.requestDigest.count, 64)
+
+        _ = try await emptyStore.updateSnapshot(
+            transactionID: .init("evolving"), expectedState: .prepared, expectedRevision: 2,
+            payload: Data("v2".utf8), references: snapshots[0].references, manifestDigest: snapshots[0].manifestDigest
+        )
+        let removed = try await emptyStore.cleanup(now: Date(timeIntervalSince1970: 200))
+        XCTAssertEqual(removed.map(\.rawValue), ["cleanup"])
+        // frozen import requestの再提示は、現在の合法evolution/cleanupを巻き戻さずreceipt replayになる。
+        try await emptyStore.importLegacy(snapshots, receipts: [], provenance: "legacy-provenance")
+        let evolved = try await emptyStore.load(.init("evolving"))
+        XCTAssertEqual(evolved?.payload, Data("v2".utf8))
+        let cleaned = try await emptyStore.load(.init("cleanup"))
+        XCTAssertNil(cleaned)
+        let receiptAfterEvolution = try await emptyStore.legacyImportReceipt()
+        XCTAssertEqual(receiptAfterEvolution, originalReceipt)
+
+        let restarted = try fixture.makeStore()
+        let restartedReceipt = try await restarted.legacyImportReceipt()
+        XCTAssertEqual(restartedReceipt, originalReceipt)
     }
 
     func testLegacyImportRejectsNonemptyStore() async throws {

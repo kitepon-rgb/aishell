@@ -5,6 +5,194 @@ import XCTest
 @testable import AIShellCore
 
 final class ChangeSetServiceTests: XCTestCase {
+    func testAdmissionIntentCrashReconcilesBeforePublicationValidation() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "admission-intent")
+        await fixture.faults.crashOnce(at: .dedicatedAdmissionIntentAfter)
+        do {
+            _ = try await fixture.service.apply(request)
+            XCTFail("admission intent直後のcrashが発生しませんでした")
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .dedicatedAdmissionIntentAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let recovered = try await restarted.apply(request)
+        XCTAssertEqual(recovered.status, .abortedBeforeSideEffect)
+        XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("one.txt"),
+            encoding: .utf8), "before")
+    }
+
+    func testAdmissionRegistryCrashReplaysIntentAndClearsItExactly() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "admission-registry")
+        await fixture.faults.crashOnce(at: .dedicatedAdmissionRegistryAfter)
+        do {
+            _ = try await fixture.service.apply(request)
+            XCTFail("admission registry反映直後のcrashが発生しませんでした")
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .dedicatedAdmissionRegistryAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let firstReplay = try await restarted.apply(request)
+        let secondRestart = try fixture.freshService()
+        let secondReplay = try await secondRestart.apply(request)
+        XCTAssertEqual(firstReplay, secondReplay)
+        XCTAssertEqual(firstReplay.status, .abortedBeforeSideEffect)
+    }
+
+    func testTerminalIntentCrashReconcilesBeforePublicationValidation() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "terminal-intent")
+        await fixture.faults.crashOnce(at: .dedicatedTerminalIntentAfter)
+        do {
+            _ = try await fixture.service.apply(request)
+            XCTFail("terminal intent直後のcrashが発生しませんでした")
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .dedicatedTerminalIntentAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let replay = try await restarted.apply(request)
+        XCTAssertEqual(replay.status, .committed)
+        XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("one.txt"),
+            encoding: .utf8), "terminal-intent")
+    }
+
+    func testTerminalTransactionCrashReconcilesBeforePublicationValidation() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "terminal-transaction")
+        await fixture.faults.crashOnce(at: .dedicatedTerminalTransactionAfter)
+        do {
+            _ = try await fixture.service.apply(request)
+            XCTFail("terminal transaction反映直後のcrashが発生しませんでした")
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .dedicatedTerminalTransactionAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let replay = try await restarted.apply(request)
+        XCTAssertEqual(replay.status, .committed)
+        XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("one.txt"),
+            encoding: .utf8), "terminal-transaction")
+    }
+
+    func testExpiredTerminalIntentStillConvergesBeforePublicationValidation() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "expired-terminal-intent")
+        await fixture.faults.crashOnce(at: .dedicatedTerminalIntentAfter)
+        do {
+            _ = try await fixture.service.apply(request)
+            XCTFail("terminal intent直後のcrashが発生しませんでした")
+        } catch is ApplyChangeSetSimulatedCrash {}
+        await fixture.clock.advance(by: .seconds(request.retentionSeconds + 1))
+
+        let restarted = try fixture.freshService()
+        _ = try await restarted.currentCursor(root: fixture.root)
+        do {
+            _ = try await restarted.apply(request)
+            XCTFail("期限切れreplayが成功しました")
+        } catch let error as ApplyChangeSetError {
+            XCTAssertEqual(error.code, .changeSetExpired)
+        }
+    }
+
+    func testTerminalRegistryCrashReplaysIntentAndClearsItExactly() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "terminal-registry")
+        await fixture.faults.crashOnce(at: .dedicatedTerminalRegistryAfter)
+        do {
+            _ = try await fixture.service.apply(request)
+            XCTFail("registry反映直後のcrashが発生しませんでした")
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .dedicatedTerminalRegistryAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let firstReplay = try await restarted.apply(request)
+        let secondRestart = try fixture.freshService()
+        let secondReplay = try await secondRestart.apply(request)
+        XCTAssertEqual(firstReplay, secondReplay)
+        XCTAssertEqual(firstReplay.status, .committed)
+    }
+
+    func testCompletedCutoverPersistsCoreOnlyStateAndFreshServiceReplays() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "core-only")
+        let first = try await fixture.service.apply(request)
+
+        let durable = try fixture.probe.durableStateSchemaAndKeys()
+        XCTAssertEqual(durable.schema, "aishell.apply-change-set-core-state.v1")
+        XCTAssertTrue(durable.keys.isDisjoint(with: [
+            "slots", "transactions", "runtimeEvents", "runtimeCommitted",
+            "controlReceipts", "consumedOwnerProofIDs",
+        ]))
+
+        let restarted = try fixture.freshService()
+        let replay = try await restarted.apply(request)
+        XCTAssertEqual(replay, first)
+        let restartedDurable = try fixture.probe.durableStateSchemaAndKeys()
+        XCTAssertEqual(restartedDurable.schema, "aishell.apply-change-set-core-state.v1")
+    }
+
+    func testLegacyCommittedRuntimeReceiptCutsOverAndReplaysWithCanonicalDigest() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "legacy-committed")
+        let first = try await fixture.service.apply(request)
+        try await fixture.probe.installLegacyCommittedCutoverFixture(for: request)
+
+        let restarted = try fixture.freshService()
+        let replay = try await restarted.apply(request)
+        XCTAssertEqual(replay, first)
+        XCTAssertEqual(try fixture.probe.durableStateSchemaAndKeys().schema,
+            "aishell.apply-change-set-core-state.v1")
+    }
+
+    func testCoreOnlyModeIgnoresAndDurablyRetiresLegacyJournalResidue() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "journal-retirement")
+        _ = try await fixture.service.apply(request)
+        try fixture.probe.installCorruptLegacyJournalResidue()
+
+        let restarted = try fixture.freshService()
+        _ = try await restarted.currentCursor(root: fixture.root)
+        XCTAssertFalse(fixture.probe.legacyJournalResidueExists())
+    }
+
+    func testLegacyRolledBackCutoverResumesCleanupAfterCrashBeforePublishingStores() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "legacy-rollback")
+        await fixture.faults.crashOnce(at: .stageFSyncAfter)
+        do { _ = try await fixture.service.apply(request); XCTFail("prepared crashが発生しませんでした") }
+        catch is ApplyChangeSetSimulatedCrash {}
+        try await fixture.probe.installLegacyRolledBackCutoverFixture(for: request)
+
+        let cutoverFault = ApplyChangeSetFailureInjector()
+        await cutoverFault.crashOnce(at: .evidenceMetadataReplacementRenameAfter)
+        let interrupted = try fixture.freshService(failureInjector: cutoverFault)
+        do { _ = try await interrupted.apply(request); XCTFail("legacy recovery crashが発生しませんでした") }
+        catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .evidenceMetadataReplacementRenameAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let replay = try await restarted.apply(request)
+        XCTAssertEqual(replay.status, .abortedBeforeSideEffect)
+        XCTAssertEqual(try fixture.probe.durableStateSchemaAndKeys().schema,
+            "aishell.apply-change-set-core-state.v1")
+    }
+
     func testAtomicMixedCommitAndReplay() async throws {
         let fixture = try await Fixture.make()
         defer { fixture.cleanup() }
@@ -92,76 +280,6 @@ final class ChangeSetServiceTests: XCTestCase {
             if $0.last != $1 { $0.append($1) }
         }
         XCTAssertEqual(states, [.preparing, .prepared, .rollbackDecided, .rolledBack, .abortedBeforeSideEffect])
-    }
-
-    func testOrphanJournalTemporaryEntryIsRemovedDuringRecovery() async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.cleanup() }
-        let request = try await fixture.singleWriteRequest(after: "journal-after")
-        let committed = try await fixture.service.apply(request)
-        let journal = fixture.base.appendingPathComponent("state/journals/\(request.transactionIdentity)", isDirectory: true)
-        let temporary = journal.appendingPathComponent(".entry-999999.json.tmp")
-        try Data("{\"partial\"".utf8).write(to: temporary)
-
-        let restarted = try fixture.freshService()
-        let replay = try await restarted.apply(request)
-
-        XCTAssertEqual(replay, committed)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: temporary.path))
-    }
-
-    func testJournalSequenceGapFailsClosedOnRestart() async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.cleanup() }
-        let request = try await fixture.singleWriteRequest(after: "journal-gap")
-        _ = try await fixture.service.apply(request)
-        let directory = fixture.base.appendingPathComponent("state/journals/\(request.transactionIdentity)", isDirectory: true)
-        let entries = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        XCTAssertGreaterThan(entries.count, 2)
-        try FileManager.default.removeItem(at: entries[1])
-        XCTAssertThrowsError(try fixture.freshService()) { error in
-            XCTAssertEqual((error as? ApplyChangeSetError)?.code, .changeSetStoreCorrupt)
-        }
-    }
-
-    func testJournalDigestTamperFailsClosedOnRestart() async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.cleanup() }
-        let request = try await fixture.singleWriteRequest(after: "journal-tamper")
-        _ = try await fixture.service.apply(request)
-        let directory = fixture.base.appendingPathComponent("state/journals/\(request.transactionIdentity)", isDirectory: true)
-        let entry = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }.last!
-        var bytes = try Data(contentsOf: entry)
-        bytes[bytes.index(before: bytes.endIndex)] ^= 0x01
-        try bytes.write(to: entry)
-        XCTAssertThrowsError(try fixture.freshService()) { error in
-            XCTAssertEqual((error as? ApplyChangeSetError)?.code, .changeSetStoreCorrupt)
-        }
-    }
-
-    func testStateLeadingJournalRepairUsesQuotaEntryDirectoryAndSurvivesSecondRestart() async throws {
-        let fixture = try await Fixture.make()
-        defer { fixture.cleanup() }
-        let request = try await fixture.singleWriteRequest(after: "state-leading-repair")
-        await fixture.faults.crashOnce(at: .admissionFSyncAfter)
-        do { _ = try await fixture.service.apply(request); XCTFail("admission crashが発生しませんでした") }
-        catch is ApplyChangeSetSimulatedCrash {}
-        try await fixture.probe.simulateStateLeadingJournalWrite(for: request)
-
-        let restarted = try fixture.freshService()
-        _ = try await restarted.recover(root: fixture.root)
-        let entryDirectory = fixture.base.appendingPathComponent("state/journals/\(request.transactionIdentity)", isDirectory: true)
-        let entries = try FileManager.default.contentsOfDirectory(at: entryDirectory, includingPropertiesForKeys: nil)
-            .filter { $0.pathExtension == "json" }
-        XCTAssertGreaterThanOrEqual(entries.count, 3)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.base
-            .appendingPathComponent("state/journals/\(request.transactionIdentity).jsonl").path))
-
-        let secondRestart = try fixture.freshService()
-        let replay = try await secondRestart.apply(request)
-        XCTAssertEqual(replay.status, .abortedBeforeSideEffect)
     }
 
     func testConcurrentQuotaSnapshotPersistenceDoesNotDeadlockOrLoseNewerMutation() async throws {
@@ -456,6 +574,29 @@ final class ChangeSetServiceTests: XCTestCase {
         } catch let error as ApplyChangeSetError {
             XCTAssertEqual(error.code, .changeSetRecoveryRequired)
         }
+    }
+
+    func testOwnerAbortTerminalIntentCrashReconcilesBeforePublicationValidation() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "owner-abort-intent")
+        await fixture.faults.crashOnce(at: .materializationBefore)
+        do { _ = try await fixture.service.apply(request); XCTFail("prepared crashが発生しませんでした") }
+        catch is ApplyChangeSetSimulatedCrash {}
+
+        await fixture.faults.crashOnce(at: .dedicatedTerminalIntentAfter)
+        do {
+            _ = try await fixture.probe.ownerAbort(
+                ApplyChangeSetTransactionID(request.transactionIdentity), service: fixture.service)
+            XCTFail("owner abort intent直後のcrashが発生しませんでした")
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .dedicatedTerminalIntentAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        let replay = try await fixture.probe.ownerAbort(
+            ApplyChangeSetTransactionID(request.transactionIdentity), service: restarted)
+        XCTAssertEqual(replay.status, .abortedBeforeSideEffect)
     }
 
     func testManifestTamperAfterCommitDecisionFailsAuthenticatedRecovery() async throws {
@@ -834,6 +975,7 @@ final class ChangeSetServiceTests: XCTestCase {
         await fixture.faults.crashOnce(at: .runtimeReceiptFSyncAfter)
         do { _ = try await fixture.service.apply(request); XCTFail("runtime receipt crashが発生しませんでした") }
         catch is ApplyChangeSetSimulatedCrash {}
+        await fixture.clock.advance(by: .seconds(10))
 
         let restarted = try fixture.freshService()
         let recovery = try await restarted.recover(root: fixture.root)
@@ -843,6 +985,25 @@ final class ChangeSetServiceTests: XCTestCase {
         XCTAssertEqual(replay.fromCursor, request.cursor)
         XCTAssertEqual(replay.cursor.sequence, request.cursor.sequence + 1)
         XCTAssertEqual(try String(contentsOf: fixture.root.appendingPathComponent("one.txt"), encoding: .utf8), "runtime-after")
+    }
+
+    func testRuntimeCursorCrashFreshRecoveryCreatesReceiptWithoutSecondAdvance() async throws {
+        let fixture = try await Fixture.make()
+        defer { fixture.cleanup() }
+        let request = try await fixture.singleWriteRequest(after: "runtime-cursor-after")
+        await fixture.faults.crashOnce(at: .runtimeCursorFSyncAfter)
+        do { _ = try await fixture.service.apply(request); XCTFail("runtime cursor crashが発生しませんでした") }
+        catch let crash as ApplyChangeSetSimulatedCrash {
+            XCTAssertEqual(crash.point, .runtimeCursorFSyncAfter)
+        }
+
+        let restarted = try fixture.freshService()
+        _ = try await restarted.recover(root: fixture.root)
+        let replay = try await restarted.apply(request)
+        XCTAssertEqual(replay.status, .committed)
+        XCTAssertEqual(replay.cursor.sequence, request.cursor.sequence + 1)
+        let currentCursor = try await restarted.currentCursor(root: fixture.root)
+        XCTAssertEqual(currentCursor, replay.cursor)
     }
 
     func testExternalUnknownBytesRemainUntouchedAcrossFreshRecovery() async throws {

@@ -487,6 +487,58 @@ public actor ChangeSetClientRegistry {
         return image.generation
     }
 
+    /// Durable cross-store intentの再生専用。process停止中にretention期限を越えても、pendingを
+    /// exact terminal tombstoneへ収束させる。通常の新規terminal化は`markTerminal`を使う。
+    @discardableResult
+    public func reconcileTerminalIntent(
+        clientID: String,
+        epoch: UInt64,
+        sequence: UInt64,
+        state: ChangeSetReplayState,
+        terminalResponseDigest: String,
+        artifact: ChangeSetReplayArtifact?,
+        retentionExpiresAt: Date,
+        expectedRegistryGeneration: UInt64
+    ) throws -> UInt64 {
+        guard state.isTerminal, Self.isSHA256(terminalResponseDigest),
+              artifact.map({ !$0.handle.isEmpty && $0.handle.utf8.count <= 512
+                  && $0.expiresAt >= retentionExpiresAt }) ?? true else {
+            throw ChangeSetClientRegistryError(.invalidEnvelope)
+        }
+        try requireGeneration(expectedRegistryGeneration)
+        let index = try activeSlotIndex(clientID: clientID, epoch: epoch)
+        let replayIndex = ringIndex(sequence)
+        guard var record = image.slots[index].replay[replayIndex],
+              record.sequence == sequence else {
+            throw ChangeSetClientRegistryError(.storeCorrupt,
+                "terminal intent replay slot is missing")
+        }
+        if record.state.isTerminal {
+            guard record.state == state,
+                  record.terminalResponseDigest == terminalResponseDigest,
+                  record.artifact == artifact,
+                  record.retentionExpiresAt == retentionExpiresAt else {
+                throw ChangeSetClientRegistryError(.storeCorrupt,
+                    "terminal intent conflicts with terminal replay")
+            }
+            return image.generation
+        }
+        guard record.state == .pending else {
+            throw ChangeSetClientRegistryError(.storeCorrupt,
+                "terminal intent requires an exact pending replay")
+        }
+        record.state = state
+        record.terminalResponseDigest = terminalResponseDigest
+        record.artifact = artifact
+        record.retentionExpiresAt = retentionExpiresAt
+        var next = image
+        next.generation += 1
+        next.slots[index].replay[replayIndex] = record
+        next.slots[index].slotGeneration += 1
+        try persist(next)
+        return image.generation
+    }
+
     public func allocate(
         controlRequestID: String,
         proofIDDigest: String,

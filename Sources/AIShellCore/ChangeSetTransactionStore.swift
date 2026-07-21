@@ -89,6 +89,13 @@ public actor ChangeSetTransactionStore {
         public let revision: UInt64
     }
 
+    /// legacy cutoverが一度完了した事実だけを表すcompact read model。
+    /// import後のtransaction evolutionやretention cleanupとは独立して不変に残る。
+    public struct LegacyImportReceipt: Codable, Equatable, Sendable {
+        public let provenance: String
+        public let requestDigest: String
+    }
+
     public enum StoreError: Error, Equatable, Sendable {
         case invalidKey
         case invalidTransactionID
@@ -232,6 +239,19 @@ public actor ChangeSetTransactionStore {
         try listReferences(now: now).filter { Self.isTerminal($0.state) }
     }
 
+    public func legacyImportReceipt() throws -> LegacyImportReceipt? {
+        try ensureLoaded()
+        let completeURL = directory.appendingPathComponent("migration-complete.enc")
+        guard fileManager.fileExists(atPath: completeURL.path) else { return nil }
+        let complete = try open(MigrationRecord.self, data: try Self.secureRead(completeURL))
+        guard complete.schema == "aishell.change-set-legacy-migration-complete.v1",
+              complete.request == nil, !complete.provenance.isEmpty,
+              complete.requestDigest.count == 64 else {
+            throw StoreError.corrupt("legacy import receipt is invalid")
+        }
+        return LegacyImportReceipt(provenance: complete.provenance, requestDigest: complete.requestDigest)
+    }
+
     /// 旧monolithic storeからempty storeへ一度だけcutoverする。
     /// intentが残る間、通常APIはpartial importを公開せず、同じrequestだけが再開できる。
     public func importLegacy(
@@ -268,15 +288,6 @@ public actor ChangeSetTransactionStore {
             guard complete.schema == "aishell.change-set-legacy-migration-complete.v1",
                   complete.provenance == provenance, complete.requestDigest == requestDigest else {
                 throw StoreError.migrationConflict
-            }
-            guard receipts == orderedReceipts, index.transactionDirectories.count == orderedSnapshots.count else {
-                throw StoreError.migrationConflict
-            }
-            for snapshot in orderedSnapshots {
-                guard let directoryName = index.transactionDirectories[snapshot.transactionID.rawValue],
-                      try reconcileTransaction(id: snapshot.transactionID.rawValue, directoryName: directoryName) == snapshot else {
-                    throw StoreError.migrationConflict
-                }
             }
             if fileManager.fileExists(atPath: intentURL.path) {
                 try fileManager.removeItem(at: intentURL)
@@ -454,6 +465,15 @@ public actor ChangeSetTransactionStore {
     public func runtimeReceipts() throws -> [RuntimeReceipt] {
         try ensureLoaded()
         return receipts
+    }
+
+    func removeRuntimeReceiptForTesting(_ transactionID: ApplyChangeSetTransactionID) throws {
+        try ensureLoaded()
+        guard receipts.contains(where: { $0.transactionID == transactionID }) else {
+            throw StoreError.missingTransaction(transactionID.rawValue)
+        }
+        receipts.removeAll { $0.transactionID == transactionID }
+        try saveReceipts()
     }
 
     public func finalize(
@@ -862,6 +882,7 @@ public actor ChangeSetTransactionStore {
         return switch (from, to) {
         case (.preparing, .prepared), (.preparing, .rollbackDecided), (.preparing, .abortedBeforeSideEffect),
              (.prepared, .commitDecided), (.prepared, .rollbackDecided),
+             (.prepared, .abortedBeforeSideEffect),
              (.commitDecided, .filesystemCommitted),
              (.filesystemCommitted, .runtimeCommitted),
              (.runtimeCommitted, .trashCommitted),
@@ -869,6 +890,8 @@ public actor ChangeSetTransactionStore {
              (.finalized, .committed),
              (.rollbackDecided, .rolledBack),
              (.recoveryRequired, .rollbackDecided), (.recoveryRequired, .filesystemCommitted),
+             (.recoveryRequired, .runtimeCommitted), (.recoveryRequired, .trashCommitted),
+             (.recoveryRequired, .finalized),
              (.rolledBack, .abortedBeforeSideEffect): true
         default: false
         }

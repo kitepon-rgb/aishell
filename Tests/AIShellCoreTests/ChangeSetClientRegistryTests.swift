@@ -4,6 +4,42 @@ import XCTest
 @testable import AIShellCore
 
 final class ChangeSetClientRegistryTests: XCTestCase {
+    func testTerminalIntentCanConvergeAfterRetentionExpiresAndReplaysExactly() async throws {
+        let fixture = try RegistryFixture()
+        defer { fixture.cleanup() }
+        let registry = try fixture.open()
+        _ = try await registry.allocate(
+            controlRequestID: fixture.uuid(60), proofIDDigest: fixture.digest(60),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            expectedRegistryGeneration: 0)
+        let allocated = await registry.snapshot()
+        let client = try XCTUnwrap(allocated.slots.first {
+            $0.allocationState == .active
+        })
+        let requestDigest = fixture.digest(61)
+        let admitted = try await registry.admit(clientID: client.clientID,
+            epoch: client.currentEpoch, sequence: 1, requestDigest: requestDigest,
+            transactionID: "expired-intent", expectedRegistryGeneration: 1)
+        let expiry = fixture.clock.now().addingTimeInterval(10)
+        fixture.clock.advance(11)
+
+        let terminal = try await registry.reconcileTerminalIntent(
+            clientID: client.clientID, epoch: client.currentEpoch, sequence: 1,
+            state: .committed, terminalResponseDigest: fixture.digest(62),
+            artifact: .init(handle: "expired-artifact", expiresAt: expiry),
+            retentionExpiresAt: expiry, expectedRegistryGeneration: admitted)
+        let replayed = try await registry.reconcileTerminalIntent(
+            clientID: client.clientID, epoch: client.currentEpoch, sequence: 1,
+            state: .committed, terminalResponseDigest: fixture.digest(62),
+            artifact: .init(handle: "expired-artifact", expiresAt: expiry),
+            retentionExpiresAt: expiry, expectedRegistryGeneration: terminal)
+        XCTAssertEqual(replayed, terminal)
+        await XCTAssertRegistryError(.clientExpired) {
+            _ = try await registry.lookup(clientID: client.clientID, epoch: client.currentEpoch,
+                sequence: 1, requestDigest: requestDigest)
+        }
+    }
+
     func testBootstrapPreallocatesFixedOwnerOnlyBanksAndSurvivesRestart() async throws {
         let fixture = try RegistryFixture()
         defer { fixture.cleanup() }

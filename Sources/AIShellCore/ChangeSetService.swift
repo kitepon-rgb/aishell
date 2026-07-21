@@ -316,7 +316,8 @@ public enum ApplyChangeSetCapability: String, Codable, CaseIterable, Sendable { 
 
 public enum ApplyChangeSetFailurePoint: String, Codable, CaseIterable, Sendable {
     case reservationFSyncBefore, reservationFSyncAfter, admissionFSyncAfter, materializationBefore
-    case stageFSyncAfter, commitDecisionFSyncAfter, firstTargetReceiptAfter, runtimeReceiptFSyncAfter
+    case stageFSyncAfter, commitDecisionFSyncAfter, firstTargetReceiptAfter, runtimeCursorFSyncAfter
+    case runtimeReceiptFSyncAfter
     case diffArtifactFSyncAfter, trashIntentFSyncAfter, trashReceiptFSyncAfter
     case checkpointMarkerFSyncAfter, transactionReceiptFSyncAfter, quotaMaterialRenameAfter
     case quotaPreparedBeforeBinding, quotaAbandonmentIntentAfter, evidenceMetadataReplacementRenameAfter
@@ -324,8 +325,10 @@ public enum ApplyChangeSetFailurePoint: String, Codable, CaseIterable, Sendable 
     case evidenceUnlinkIntentAfter, evidenceMetadataReplacementIntentAfter
     case quotaPrepareBeforeLedger, quotaPrepareAfterLedger
     case registryAtomicReplaceBefore, registryAtomicReplaceAfter
+    case dedicatedAdmissionIntentAfter, dedicatedAdmissionRegistryAfter
+    case dedicatedTerminalIntentAfter, dedicatedTerminalTransactionAfter, dedicatedTerminalRegistryAfter
 
-    public static let ace051DurabilityPoints: [Self] = [.reservationFSyncBefore, .reservationFSyncAfter, .admissionFSyncAfter, .materializationBefore, .stageFSyncAfter, .commitDecisionFSyncAfter, .firstTargetReceiptAfter, .runtimeReceiptFSyncAfter, .diffArtifactFSyncAfter, .trashIntentFSyncAfter, .trashReceiptFSyncAfter]
+    public static let ace051DurabilityPoints: [Self] = [.reservationFSyncBefore, .reservationFSyncAfter, .admissionFSyncAfter, .materializationBefore, .stageFSyncAfter, .commitDecisionFSyncAfter, .firstTargetReceiptAfter, .runtimeCursorFSyncAfter, .runtimeReceiptFSyncAfter, .diffArtifactFSyncAfter, .trashIntentFSyncAfter, .trashReceiptFSyncAfter]
     public static let checkpointReceiptOrderingPoints: [Self] = [.checkpointMarkerFSyncAfter, .transactionReceiptFSyncAfter]
     public static let trashIntentReceiptPoints: [Self] = [.trashIntentFSyncAfter, .trashReceiptFSyncAfter]
     public static let registryAtomicReplacePoints: [Self] = [.registryAtomicReplaceBefore, .registryAtomicReplaceAfter]
@@ -503,10 +506,20 @@ public struct ApplyChangeSetDelta: Codable, Equatable, Sendable { public let eve
 public enum ApplyChangeSetProfile: Sendable { case development, full }
 public struct ApplyChangeSetFrozenFixture: Sendable { public let url: URL; public let expectedSHA256: String }
 
-private struct DurableControlReceipt: Codable, Sendable {
+private struct DurableControlReceipt: Codable, Equatable, Sendable {
     let expiresAt: Date
     let requestDigest: String
     let result: ApplyChangeSetControlResult
+}
+
+private struct ChangeSetLegacyStoreExport: Sendable {
+    let sourceDigest: String
+    let cursorBinding: ChangeSetCutoverCursorBinding
+    let registry: ChangeSetLegacyRegistrySnapshot
+    let transactions: [ChangeSetTransactionStore.Snapshot]
+    let runtimeReceipts: [ChangeSetTransactionStore.RuntimeReceipt]
+    let controlReceipts: [String: DurableControlReceipt]
+    let consumedOwnerProofIDs: Set<String>
 }
 
 private struct ApplyChangeSetOwnerProofPayload: Codable, Sendable {
@@ -536,6 +549,25 @@ private struct DurableChangeSetSnapshot: Codable, Sendable {
     let consumedOwnerProofIDs: Set<String>
     let legacyExpired: Bool
     let legacyReused: Bool
+}
+
+private struct DurableChangeSetCoreSnapshot: Codable, Sendable {
+    let schema: String
+    let rootPath: String
+    let generation: String
+    let head: UInt64
+    let capabilities: Set<ApplyChangeSetCapability>
+    let reservations: [String: StoredReservationBinding]
+    let tamperedReservations: Set<String>
+    let orphanPins: [String: Bool]
+    let targetMutationReceipts: Int
+    let legacyExpired: Bool
+    let legacyReused: Bool
+}
+
+private enum LoadedChangeSetSnapshot {
+    case legacy(DurableChangeSetSnapshot)
+    case core(DurableChangeSetCoreSnapshot)
 }
 
 private struct EncryptedStateEnvelope: Codable, Sendable {
@@ -628,6 +660,7 @@ private actor ApplyChangeSetState {
     var persistenceFailure: ApplyChangeSetError?
     var legacyExpired = false
     var legacyReused = false
+    var dedicatedStoreMode = false
     private var persistenceGateHeld = false
     private var persistenceGateWaiters: [CheckedContinuation<Void, Never>] = []
     private var persistenceRevision: UInt64 = 0
@@ -637,26 +670,38 @@ private actor ApplyChangeSetState {
         self.base = base; self.stateDirectory = stateDirectory; self.root = root; self.encryptionKey = encryptionKey
         snapshotURL = stateDirectory.appendingPathComponent("apply-change-set-state.enc.json")
         if FileManager.default.fileExists(atPath: snapshotURL.path) {
-            let snapshot = try Self.loadSnapshot(at: snapshotURL, key: encryptionKey)
-            guard snapshot.schema == "aishell.apply-change-set-state.v1",
-                  snapshot.rootPath == root.standardizedFileURL.resolvingSymlinksInPath().path else {
-                throw ApplyChangeSetError(.changeSetStoreCorrupt, "state root binding mismatch")
+            switch try Self.loadSnapshot(at: snapshotURL, key: encryptionKey) {
+            case let .legacy(snapshot):
+                guard snapshot.rootPath == root.standardizedFileURL.resolvingSymlinksInPath().path else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt, "state root binding mismatch")
+                }
+                generation = snapshot.generation; head = snapshot.head; capabilities = snapshot.capabilities; slots = snapshot.slots
+                transactions = snapshot.transactions; reservations = snapshot.reservations; tamperedReservations = snapshot.tamperedReservations
+                orphanPins = snapshot.orphanPins; targetMutationReceipts = snapshot.targetMutationReceipts
+                runtimeEvents = snapshot.runtimeEvents; runtimeCommitted = snapshot.runtimeCommitted; controlReceipts = snapshot.controlReceipts
+                consumedOwnerProofIDs = snapshot.consumedOwnerProofIDs
+                legacyExpired = snapshot.legacyExpired; legacyReused = snapshot.legacyReused
+                let reconciliation = try Self.reconcileTransactionJournals(transactions, stateDirectory: stateDirectory)
+                transactions = reconciliation.transactions
+                pendingJournalRepairs = reconciliation.repairs
+            case let .core(snapshot):
+                guard snapshot.rootPath == root.standardizedFileURL.resolvingSymlinksInPath().path else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt, "core state root binding mismatch")
+                }
+                generation = snapshot.generation; head = snapshot.head; capabilities = snapshot.capabilities
+                reservations = snapshot.reservations; tamperedReservations = snapshot.tamperedReservations
+                orphanPins = snapshot.orphanPins; targetMutationReceipts = snapshot.targetMutationReceipts
+                legacyExpired = snapshot.legacyExpired; legacyReused = snapshot.legacyReused
+                slots = []
+                dedicatedStoreMode = true
             }
-            generation = snapshot.generation; head = snapshot.head; capabilities = snapshot.capabilities; slots = snapshot.slots
-            transactions = snapshot.transactions; reservations = snapshot.reservations; tamperedReservations = snapshot.tamperedReservations
-            orphanPins = snapshot.orphanPins; targetMutationReceipts = snapshot.targetMutationReceipts
-            runtimeEvents = snapshot.runtimeEvents; runtimeCommitted = snapshot.runtimeCommitted; controlReceipts = snapshot.controlReceipts
-            consumedOwnerProofIDs = snapshot.consumedOwnerProofIDs
-            legacyExpired = snapshot.legacyExpired; legacyReused = snapshot.legacyReused
-            let reconciliation = try Self.reconcileTransactionJournals(transactions, stateDirectory: stateDirectory)
-            transactions = reconciliation.transactions
-            pendingJournalRepairs = reconciliation.repairs
-            for binding in snapshot.reservations.values {
+            let referencedReservations = reservations
+            for binding in referencedReservations.values {
                 _ = try decryptReservationRecord(binding)
             }
             let reservationDirectory = stateDirectory.appendingPathComponent("reservations", isDirectory: true)
             if FileManager.default.fileExists(atPath: reservationDirectory.path) {
-                let referenced = Set(snapshot.reservations.keys)
+                let referenced = Set(referencedReservations.keys)
                 for url in try FileManager.default.contentsOfDirectory(at: reservationDirectory, includingPropertiesForKeys: nil) {
                     let id = url.deletingPathExtension().lastPathComponent
                     if url.pathExtension == "enc" || url.lastPathComponent.hasSuffix(".enc.json") {
@@ -749,7 +794,7 @@ private actor ApplyChangeSetState {
     }
     private static func stableUUID(slot: Int) -> String { String(format: "a15e1100-0000-4000-8000-%012d", slot + 1) }
 
-    private static func loadSnapshot(at url: URL, key: SymmetricKey) throws -> DurableChangeSetSnapshot {
+    private static func loadSnapshot(at url: URL, key: SymmetricKey) throws -> LoadedChangeSetSnapshot {
         do {
             let envelope = try JSONDecoder().decode(EncryptedStateEnvelope.self, from: Data(contentsOf: url))
             guard envelope.schema == "aishell.apply-change-set-state-envelope.v1",
@@ -759,7 +804,15 @@ private actor ApplyChangeSetState {
             let nonce = try AES.GCM.Nonce(data: nonceData)
             let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertext, tag: tag)
             let plaintext = try AES.GCM.open(box, using: key, authenticating: Data("aishell.apply-change-set-state-envelope.v1".utf8))
-            return try JSONDecoder().decode(DurableChangeSetSnapshot.self, from: plaintext)
+            let object = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any]
+            switch object?["schema"] as? String {
+            case "aishell.apply-change-set-state.v1":
+                return .legacy(try JSONDecoder().decode(DurableChangeSetSnapshot.self, from: plaintext))
+            case "aishell.apply-change-set-core-state.v1":
+                return .core(try JSONDecoder().decode(DurableChangeSetCoreSnapshot.self, from: plaintext))
+            default:
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "unknown encrypted state schema")
+            }
         } catch let error as ApplyChangeSetError { throw error }
         catch { throw ApplyChangeSetError(.changeSetStoreCorrupt, "encrypted state authentication failed") }
     }
@@ -908,6 +961,34 @@ private actor ApplyChangeSetState {
         return (reconciled, repairs)
     }
 
+    private static func retireLegacyTransactionJournals(stateDirectory: URL) throws {
+        let fileManager = FileManager.default
+        let source = stateDirectory.appendingPathComponent("journals", isDirectory: true)
+        let retired = stateDirectory.appendingPathComponent(".retired-transaction-journals", isDirectory: true)
+        if fileManager.fileExists(atPath: retired.path) {
+            try fileManager.removeItem(at: retired)
+            try fsyncDirectory(stateDirectory)
+        }
+        guard fileManager.fileExists(atPath: source.path) else { return }
+        guard rename(source.path, retired.path) == 0 else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "legacy transaction journals cannot be retired")
+        }
+        try fsyncDirectory(stateDirectory)
+        try fileManager.removeItem(at: retired)
+        try fsyncDirectory(stateDirectory)
+    }
+
+    private static func fsyncDirectory(_ directory: URL) throws {
+        let descriptor = open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard descriptor >= 0 else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "state directory open failed: \(errno)")
+        }
+        defer { close(descriptor) }
+        guard fsync(descriptor) == 0 else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "state directory fsync failed: \(errno)")
+        }
+    }
+
     private static func reservationDigest(_ reservationID: String, stateDirectory: URL) throws -> String {
         let url = stateDirectory.appendingPathComponent("reservations/\(reservationID).enc.json")
         return try JSONDecoder().decode(EncryptedReservationRecord.self, from: Data(contentsOf: url)).requestDigest
@@ -996,17 +1077,36 @@ private actor ApplyChangeSetState {
                     shadowSlots[index].replay[reservation.request.requestSequence] = .init(digest: digest, result: futureResult)
                 }
             }
-            let snapshot = DurableChangeSetSnapshot(schema: "aishell.apply-change-set-state.v1",
-                rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path, generation: generation,
-                head: terminalState ? head + 1 : head, capabilities: capabilities, slots: shadowSlots,
-                transactions: shadowTransactions, reservations: shadowReservations,
-                tamperedReservations: tamperedReservations, orphanPins: orphanPins,
-                targetMutationReceipts: targetMutationReceipts + reservation.request.changes.flatMap(\.paths).count,
-                runtimeEvents: runtimeEvents + reservation.request.changes.compactMap {
-                    $0.paths.last.map { .init(transactionID: transactionID.rawValue, path: $0) }
-                }, runtimeCommitted: runtimeCommitted.union([transactionID.rawValue]), controlReceipts: controlReceipts,
-                consumedOwnerProofIDs: consumedOwnerProofIDs, legacyExpired: legacyExpired, legacyReused: legacyReused)
-            let plaintext = try JSONEncoder.sorted.encode(snapshot)
+            let snapshotHead = terminalState ? head + 1 : head
+            let snapshotTargetReceipts = targetMutationReceipts
+                + reservation.request.changes.flatMap(\.paths).count
+            var capacityOrphanPins = orphanPins
+            for index in 0..<ChangeSetClientRegistry.slotCount {
+                capacityOrphanPins[String(format: "quota-shadow-orphan-%044d", index)] = true
+            }
+            let plaintext: Data
+            if dedicatedStoreMode {
+                plaintext = try JSONEncoder.sorted.encode(DurableChangeSetCoreSnapshot(
+                    schema: "aishell.apply-change-set-core-state.v1",
+                    rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path,
+                    generation: generation, head: snapshotHead, capabilities: capabilities,
+                    reservations: shadowReservations, tamperedReservations: tamperedReservations,
+                    orphanPins: capacityOrphanPins, targetMutationReceipts: snapshotTargetReceipts,
+                    legacyExpired: legacyExpired, legacyReused: legacyReused))
+            } else {
+                plaintext = try JSONEncoder.sorted.encode(DurableChangeSetSnapshot(
+                    schema: "aishell.apply-change-set-state.v1",
+                    rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path, generation: generation,
+                    head: snapshotHead, capabilities: capabilities, slots: shadowSlots,
+                    transactions: shadowTransactions, reservations: shadowReservations,
+                    tamperedReservations: tamperedReservations, orphanPins: capacityOrphanPins,
+                    targetMutationReceipts: snapshotTargetReceipts,
+                    runtimeEvents: runtimeEvents + reservation.request.changes.compactMap {
+                        $0.paths.last.map { .init(transactionID: transactionID.rawValue, path: $0) }
+                    }, runtimeCommitted: runtimeCommitted.union([transactionID.rawValue]),
+                    controlReceipts: controlReceipts, consumedOwnerProofIDs: consumedOwnerProofIDs,
+                    legacyExpired: legacyExpired, legacyReused: legacyReused))
+            }
             let sealed = try AES.GCM.seal(plaintext, using: encryptionKey,
                 authenticating: Data("aishell.apply-change-set-state-envelope.v1".utf8))
             return try JSONEncoder.sorted.encode(EncryptedStateEnvelope(schema: "aishell.apply-change-set-state-envelope.v1",
@@ -1106,21 +1206,31 @@ private actor ApplyChangeSetState {
             return values.max(by: { $0.count < $1.count })!
         }
         // terminal prefixを消費するproduction callは finish、request埋込み、binding解除、handoff の4世代。
-        let largestTerminal = (terminalCandidates.snapshots + recoveryTerminalCandidates.snapshots)
+        let largestTerminal = (normalCandidates.snapshots + recoveryCandidates.snapshots
+            + terminalCandidates.snapshots + recoveryTerminalCandidates.snapshots)
             .max(by: { $0.count < $1.count })!
         return (stateCandidates, walCandidates, Array(repeating: largestTerminal, count: 4))
     }
 
     private func encodedSnapshot() throws -> Data {
-        let snapshot = DurableChangeSetSnapshot(
-            schema: "aishell.apply-change-set-state.v1", rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path,
-            generation: generation, head: head, capabilities: capabilities, slots: slots, transactions: transactions,
-            reservations: reservations, tamperedReservations: tamperedReservations, orphanPins: orphanPins,
-            targetMutationReceipts: targetMutationReceipts, runtimeEvents: runtimeEvents, runtimeCommitted: runtimeCommitted,
-            controlReceipts: controlReceipts, consumedOwnerProofIDs: consumedOwnerProofIDs,
-            legacyExpired: legacyExpired, legacyReused: legacyReused
-        )
-        let plaintext = try JSONEncoder.sorted.encode(snapshot)
+        let plaintext: Data
+        if dedicatedStoreMode {
+            plaintext = try JSONEncoder.sorted.encode(DurableChangeSetCoreSnapshot(
+                schema: "aishell.apply-change-set-core-state.v1",
+                rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path,
+                generation: generation, head: head, capabilities: capabilities,
+                reservations: reservations, tamperedReservations: tamperedReservations,
+                orphanPins: orphanPins, targetMutationReceipts: targetMutationReceipts,
+                legacyExpired: legacyExpired, legacyReused: legacyReused))
+        } else {
+            plaintext = try JSONEncoder.sorted.encode(DurableChangeSetSnapshot(
+                schema: "aishell.apply-change-set-state.v1", rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path,
+                generation: generation, head: head, capabilities: capabilities, slots: slots, transactions: transactions,
+                reservations: reservations, tamperedReservations: tamperedReservations, orphanPins: orphanPins,
+                targetMutationReceipts: targetMutationReceipts, runtimeEvents: runtimeEvents, runtimeCommitted: runtimeCommitted,
+                controlReceipts: controlReceipts, consumedOwnerProofIDs: consumedOwnerProofIDs,
+                legacyExpired: legacyExpired, legacyReused: legacyReused))
+        }
         let sealed = try AES.GCM.seal(plaintext, using: encryptionKey, authenticating: Data("aishell.apply-change-set-state-envelope.v1".utf8))
         let envelope = EncryptedStateEnvelope(
             schema: "aishell.apply-change-set-state-envelope.v1",
@@ -1135,6 +1245,10 @@ private actor ApplyChangeSetState {
     func quotaSnapshotByteCount() throws -> Int { try encodedSnapshot().count }
 
     func repairPendingJournals() async throws {
+        if dedicatedStoreMode {
+            pendingJournalRepairs.removeAll()
+            return
+        }
         guard !pendingJournalRepairs.isEmpty else { return }
         for repair in pendingJournalRepairs {
             var line = try JSONEncoder.sorted.encode(repair.entry); line.append(0x0A)
@@ -1389,6 +1503,49 @@ private actor ApplyChangeSetOperationGate {
     }
 }
 
+private final class ApplyChangeSetRegistryClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Date()
+    func set(_ date: Date) { lock.withLock { value = date } }
+    func now() -> Date { lock.withLock { value } }
+}
+
+private actor ApplyChangeSetCutoverCompatibilityAdapter: ChangeSetCutoverCompatibilityPreparing {
+    private let store: LegacyControlCompatStore
+    private var sourceDigest: String?
+    private var payloadDigest: String?
+    private var snapshot: LegacyControlCompatSnapshot?
+
+    init(store: LegacyControlCompatStore) { self.store = store }
+
+    func configure(sourceDigest: String, snapshot: LegacyControlCompatSnapshot) {
+        self.sourceDigest = sourceDigest
+        self.snapshot = snapshot
+    }
+
+    func prepareLegacyCompatibility(sourceDigest: String, payloadDigest: String) async throws {
+        guard self.sourceDigest == sourceDigest,
+              let snapshot, snapshot.sourceDigest == sourceDigest else {
+            throw ChangeSetCutoverError(.sourceConflict)
+        }
+        if let existing = self.payloadDigest, existing != payloadDigest {
+            throw ChangeSetCutoverError(.sourceConflict)
+        }
+        self.payloadDigest = payloadDigest
+        try await store.importLegacy(snapshot)
+    }
+
+    func validateLegacyCompatibility(sourceDigest: String, payloadDigest: String) async throws {
+        guard await store.sourceDigest() == sourceDigest else {
+            throw ChangeSetCutoverError(.sourceConflict)
+        }
+        if let existing = self.payloadDigest, existing != payloadDigest {
+            throw ChangeSetCutoverError(.sourceConflict)
+        }
+        self.payloadDigest = payloadDigest
+    }
+}
+
 public actor ApplyChangeSetService {
     private struct QuotaLeaseManifest: Codable {
         let schema: String
@@ -1413,8 +1570,15 @@ public actor ApplyChangeSetService {
     private let state: ApplyChangeSetState
     private let secretStore: ApplyChangeSetSecretStore
     private let quotaOwner: ChangeSetQuotaLedger.OwnerBinding
+    private let clientRegistry: ChangeSetClientRegistry
+    private let transactionStore: ChangeSetTransactionStore
+    private let registryClock: ApplyChangeSetRegistryClock
+    private let legacyControlStore: LegacyControlCompatStore
+    private let cutoverCompatibility: ApplyChangeSetCutoverCompatibilityAdapter
+    private let cutoverCoordinator: ChangeSetCutoverCoordinator
     private let operationGate = ApplyChangeSetOperationGate()
     private var quotaLeaseDescriptors: [String: Int32] = [:]
+    private var dedicatedStoresBootstrapped = false
 
     public init(runtimeStore: RuntimeStore, stateDirectory: URL, evidenceStore: EvidenceStore, secretStore: ApplyChangeSetSecretStore, workspaceRuntime: WorkspaceStateRuntime, failureInjector: ApplyChangeSetFailureInjector, clock: ApplyChangeSetTestClock,
         quotaOwner overrideQuotaOwner: ChangeSetQuotaLedger.OwnerBinding? = nil) throws {
@@ -1422,6 +1586,30 @@ public actor ApplyChangeSetService {
         self.workspaceRuntime = workspaceRuntime; faults = failureInjector; self.clock = clock; self.secretStore = secretStore; state = secretStore.state
         quotaOwner = overrideQuotaOwner ?? .current(leaseDuration: 60)
         try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
+        let storeKey = secretStore.key.withUnsafeBytes { Data($0) }
+        let registryClock = ApplyChangeSetRegistryClock()
+        self.registryClock = registryClock
+        clientRegistry = try ChangeSetClientRegistry(
+            directory: stateDirectory.appendingPathComponent("client-registry", isDirectory: true),
+            rootIdentityDigest: secretStore.state.root.standardizedFileURL.resolvingSymlinksInPath().path.applyStringSHA256,
+            hmacKey: storeKey, now: { registryClock.now() }
+        )
+        transactionStore = try ChangeSetTransactionStore(
+            directory: stateDirectory.appendingPathComponent("transaction-store", isDirectory: true),
+            encryptionKey: storeKey,
+            maxRuntimeReceipts: ChangeSetClientRegistry.slotCount * ChangeSetClientRegistry.replayCapacity,
+            maxTransactionReferences: ChangeSetClientRegistry.slotCount * ChangeSetClientRegistry.replayCapacity
+        )
+        let legacyControlStore = try LegacyControlCompatStore(
+            directory: stateDirectory.appendingPathComponent("legacy-control-compat", isDirectory: true),
+            stateDirectory: stateDirectory)
+        self.legacyControlStore = legacyControlStore
+        let cutoverCompatibility = ApplyChangeSetCutoverCompatibilityAdapter(store: legacyControlStore)
+        self.cutoverCompatibility = cutoverCompatibility
+        cutoverCoordinator = try ChangeSetCutoverCoordinator(
+            directory: stateDirectory.appendingPathComponent("cross-store-cutover", isDirectory: true),
+            encryptionKey: storeKey, registry: clientRegistry, transactionStore: transactionStore,
+            compatibility: cutoverCompatibility, now: { registryClock.now() })
     }
 
     private func withOperationGate<T>(_ operation: () async throws -> T) async throws -> T {
@@ -1430,6 +1618,14 @@ public actor ApplyChangeSetService {
             let result = try await operation()
             await operationGate.release()
             return result
+        } catch let error as ChangeSetCutoverError {
+            await operationGate.release()
+            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                "cross-store cutover rejected durable state: \(error.code.rawValue) \(error.message)")
+        } catch let error as ChangeSetTransactionStore.StoreError {
+            await operationGate.release()
+            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                "dedicated transaction store rejected durable state: \(error)")
         } catch {
             await operationGate.release()
             throw error
@@ -1793,12 +1989,108 @@ public actor ApplyChangeSetService {
                 throw ApplyChangeSetError(.reservedNamespaceConflict)
             }
             try await reconcilePreparedQuotaOrphans()
+            try await ensureDedicatedStoreCutover()
             return
         }
         try FileManager.default.createDirectory(at: ns, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         let data = try JSONSerialization.data(withJSONObject: ["schema": "aishell.apply-change-set-namespace.v1", "root": canonical.path, "generation": state.generation, "root_device": rootDevice, "root_inode": rootInode, "nonce": UUID().uuidString.lowercased()], options: [.sortedKeys])
         try data.write(to: marker, options: [.atomic])
         try await state.persist()
+        try await ensureDedicatedStoreCutover()
+    }
+
+    private func ensureDedicatedStoreCutover() async throws {
+        let now = await clock.now()
+        registryClock.set(now)
+        if dedicatedStoresBootstrapped {
+            try await reconcileDedicatedStoreIntents()
+            _ = try await cutoverCoordinator.validateForPublication(at: now)
+            return
+        }
+        if case .complete = try await cutoverCoordinator.status() {
+            try await reconcileDedicatedStoreIntents()
+            _ = try await cutoverCoordinator.validateForPublication(at: now)
+            try await activateDedicatedStateCache()
+            dedicatedStoresBootstrapped = true
+            return
+        }
+        try await finishLegacyRolledBackTransactionsBeforeCutover()
+        let cutoverTime = try await cutoverCoordinator.preparationDate() ?? now
+        let legacy = try await state.legacyDedicatedStoreExport(cutoverTime: cutoverTime)
+        let compat = LegacyControlCompatSnapshot(sourceDigest: legacy.sourceDigest,
+            receipts: legacy.controlReceipts.mapValues {
+                .init(expiresAt: $0.expiresAt, requestDigest: $0.requestDigest, result: $0.result)
+            }, consumedOwnerProofIDs: legacy.consumedOwnerProofIDs)
+        await cutoverCompatibility.configure(sourceDigest: legacy.sourceDigest, snapshot: compat)
+        let source = ChangeSetCutoverLegacySnapshot(sourceDigest: legacy.sourceDigest,
+            preparedAt: cutoverTime, cursorBinding: legacy.cursorBinding, registry: legacy.registry,
+            transactions: legacy.transactions, runtimeReceipts: legacy.runtimeReceipts)
+        let status = try await cutoverCoordinator.run(source)
+        guard status.permitsDedicatedStorePublication else {
+            throw ApplyChangeSetError(.changeSetRecoveryRequired,
+                "cross-store cutover has not reached its authenticated completion marker")
+        }
+        _ = try await cutoverCoordinator.validateForPublication(at: now)
+        try await activateDedicatedStateCache()
+        dedicatedStoresBootstrapped = true
+    }
+
+    /// `rolledBack` is a recovery checkpoint, not a publishable durable terminal state.
+    /// Complete its existing abort path against the legacy state before the one-shot export;
+    /// a failure leaves the checkpoint intact so the next startup resumes the same work.
+    private func finishLegacyRolledBackTransactionsBeforeCutover() async throws {
+        for item in await state.legacyTransactionsRequiringCutoverRecovery() {
+            let request = try await state.materializedRequest(item.id)
+            try Self.verifyManifestDigest(root: state.root, transaction: item.id,
+                expected: await state.manifestDigest(item.id))
+            let result: ApplyChangeSetResult
+            if item.state == .rolledBack {
+                result = try await abortedResult(request, transaction: item.id)
+                await state.finish(request: request, result: result, transaction: item.id,
+                    stateValue: .abortedBeforeSideEffect)
+                try await state.requirePersistenceHealthy()
+            } else {
+                guard let terminalResult = item.pendingResult else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                        "legacy terminal transaction has no durable result")
+                }
+                result = terminalResult
+            }
+            guard let reservationID = item.reservationID else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "rolled-back legacy transaction has no reservation")
+            }
+            let replacementCrash: ApplyChangeSetFailurePoint? = await faults.consumeCrash(
+                at: .evidenceMetadataReplacementRenameAfter)
+                ? .evidenceMetadataReplacementRenameAfter : nil
+            try await finalizeTerminalEvidence(result, request: request, reservationID: reservationID,
+                simulateReplacementCrash: replacementCrash)
+            await state.releaseTerminalMaterial(item.id, request: request)
+            try await state.requirePersistenceHealthy()
+            try await releaseQuota(request: request, reservationID: reservationID)
+            try Self.cleanupTerminalTransactionDirectory(root: state.root, transaction: item.id)
+        }
+    }
+
+    private func activateDedicatedStateCache() async throws {
+        let registrySnapshot = await clientRegistry.snapshot()
+        let replay = await clientRegistry.replayReferences()
+        let references = try await transactionStore.listReferences(now: await clock.now())
+        var transactions: [StoredTransaction] = []
+        for reference in references {
+            guard let snapshot = try await transactionStore.load(reference.transactionID) else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt)
+            }
+            let transaction = try JSONDecoder().decode(StoredTransaction.self, from: snapshot.payload)
+            guard transaction.id == snapshot.transactionID, transaction.state == snapshot.state else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "dedicated transaction payload cannot hydrate core state")
+            }
+            transactions.append(transaction)
+        }
+        try await state.activateDedicatedStoreMode(registrySlots: registrySnapshot.slots,
+            replayReferences: replay, transactionValues: transactions,
+            runtimeReceipts: try await transactionStore.runtimeReceipts())
     }
 
     public func migrateNamespace(root: URL) async throws {
@@ -1810,10 +2102,434 @@ public actor ApplyChangeSetService {
     }
 
     private func currentCursorUnlocked(root: URL) async throws -> ApplyChangeSetCursor {
+        try await ensureDedicatedStoreCutover()
         try await state.repairPendingJournals()
-        guard !(await state.isRecoveryActive()), !(await state.hasIncompleteTransactions()) else { throw ApplyChangeSetError(.changeSetRecoveryRequired) }
+        guard !(await state.isRecoveryActive()), try await transactionStore.listActive().isEmpty else {
+            throw ApplyChangeSetError(.changeSetRecoveryRequired)
+        }
         guard root.standardizedFileURL.path == state.root.standardizedFileURL.path else { throw ApplyChangeSetError(.rootMismatch) }
         return await state.cursor()
+    }
+
+    private func syncDedicatedTransaction(_ id: ApplyChangeSetTransactionID) async throws {
+        guard let desired = try await state.dedicatedTransactionSnapshot(id) else { return }
+        var current = try await transactionStore.load(id)
+        if current == nil {
+            let preparing = ChangeSetTransactionStore.Snapshot(transactionID: id, state: .preparing,
+                manifestDigest: desired.manifestDigest, references: desired.references,
+                payload: desired.payload)
+            try await transactionStore.persistTransition(preparing)
+            current = try await transactionStore.load(id)
+        }
+        guard var current else { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
+        if current.state == desired.state {
+            if current.payload != desired.payload || current.references != desired.references
+                || current.manifestDigest != desired.manifestDigest
+                || current.terminalAt != desired.terminalAt
+                || current.retentionExpiresAt != desired.retentionExpiresAt {
+                _ = try await transactionStore.updateSnapshot(transactionID: id,
+                    expectedState: current.state, expectedRevision: current.revision,
+                    payload: desired.payload, references: desired.references,
+                    manifestDigest: desired.manifestDigest, terminalAt: desired.terminalAt,
+                    retentionExpiresAt: desired.retentionExpiresAt)
+            }
+            return
+        }
+        let route = Self.transactionRoute(from: current.state, to: desired.state)
+        guard route.count == 1 else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                "service mutation skipped a dedicated transaction transition")
+        }
+        for nextState in route {
+            let terminal = nextState == desired.state
+            let next = ChangeSetTransactionStore.Snapshot(transactionID: id, state: nextState,
+                manifestDigest: desired.manifestDigest, references: desired.references,
+                payload: desired.payload, terminalAt: terminal ? desired.terminalAt : nil,
+                retentionExpiresAt: terminal ? desired.retentionExpiresAt : nil,
+                revision: current.revision + 1)
+            try await transactionStore.persistTransition(next, expectedState: current.state)
+            guard let loaded = try await transactionStore.load(id) else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt)
+            }
+            current = loaded
+        }
+    }
+
+    private func dedicatedTransactions(activeOnly: Bool = false) async throws -> [StoredTransaction] {
+        let snapshots: [ChangeSetTransactionStore.Snapshot]
+        if activeOnly { snapshots = try await transactionStore.listActive() }
+        else {
+            let references = try await transactionStore.listReferences(now: await clock.now())
+            var loaded: [ChangeSetTransactionStore.Snapshot] = []
+            for reference in references {
+                if let snapshot = try await transactionStore.load(reference.transactionID) {
+                    loaded.append(snapshot)
+                }
+            }
+            snapshots = loaded
+        }
+        return try snapshots.map { snapshot in
+            let transaction = try JSONDecoder().decode(StoredTransaction.self, from: snapshot.payload)
+            guard transaction.id == snapshot.transactionID, transaction.state == snapshot.state else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "transaction payload metadata differs from its dedicated snapshot")
+            }
+            return transaction
+        }
+    }
+
+    private static func transactionRoute(from: ApplyChangeSetTransactionState,
+        to: ApplyChangeSetTransactionState) -> [ApplyChangeSetTransactionState] {
+        if from == to { return [] }
+        let edges: [ApplyChangeSetTransactionState: [ApplyChangeSetTransactionState]] = [
+            .preparing: [.prepared, .rollbackDecided, .abortedBeforeSideEffect, .recoveryRequired],
+            .prepared: [.commitDecided, .rollbackDecided, .abortedBeforeSideEffect, .recoveryRequired],
+            .commitDecided: [.filesystemCommitted, .recoveryRequired],
+            .filesystemCommitted: [.runtimeCommitted, .recoveryRequired],
+            .runtimeCommitted: [.trashCommitted, .recoveryRequired],
+            .trashCommitted: [.finalized, .committed, .recoveryRequired],
+            .finalized: [.committed],
+            .rollbackDecided: [.rolledBack, .recoveryRequired],
+            .rolledBack: [.abortedBeforeSideEffect],
+            .recoveryRequired: [.rollbackDecided, .filesystemCommitted, .runtimeCommitted,
+                .trashCommitted, .finalized],
+        ]
+        var queue: [(ApplyChangeSetTransactionState, [ApplyChangeSetTransactionState])] = [(from, [])]
+        var seen: Set<ApplyChangeSetTransactionState> = [from]
+        while !queue.isEmpty {
+            let (value, path) = queue.removeFirst()
+            for next in edges[value] ?? [] where seen.insert(next).inserted {
+                let candidate = path + [next]
+                if next == to { return candidate }
+                queue.append((next, candidate))
+            }
+        }
+        return []
+    }
+
+    private func admitDedicated(_ request: ApplyChangeSetRequest, reservationID: String,
+        transaction: ApplyChangeSetTransactionID,
+        crash: ApplyChangeSetFailurePoint? = nil) async throws {
+        let digest = Self.requestDigest(request)
+        let preparing = StoredTransaction(id: transaction, request: request, state: .preparing,
+            corrupt: false, materialExists: true, retention: .pinned, admitted: true,
+            targetReceipts: 0, reservationID: reservationID)
+        let preparingSnapshot = ChangeSetTransactionStore.Snapshot(transactionID: transaction,
+            state: .preparing, manifestDigest: String(repeating: "0", count: 64),
+            references: [
+                .init(kind: "request", identifier: transaction.rawValue,
+                    digest: digest),
+                .init(kind: "reservation", identifier: reservationID,
+                    digest: digest),
+                .init(kind: "registry_admission_intent", identifier: transaction.rawValue,
+                    digest: digest),
+            ],
+            payload: try JSONEncoder.sorted.encode(preparing))
+        if let existing = try await transactionStore.load(transaction) {
+            guard existing.state == .preparing else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "admission intent found a non-preparing transaction")
+            }
+            if existing.payload != preparingSnapshot.payload
+                || existing.references != preparingSnapshot.references {
+                _ = try await transactionStore.updateSnapshot(transactionID: transaction,
+                    expectedState: existing.state, expectedRevision: existing.revision,
+                    payload: preparingSnapshot.payload, references: preparingSnapshot.references,
+                    manifestDigest: preparingSnapshot.manifestDigest,
+                    terminalAt: nil, retentionExpiresAt: nil)
+            }
+        } else {
+            try await transactionStore.persistTransition(preparingSnapshot)
+        }
+        if crash == .dedicatedAdmissionIntentAfter {
+            throw ApplyChangeSetSimulatedCrash(point: .dedicatedAdmissionIntentAfter)
+        }
+        try await reconcileDedicatedStoreIntents(transactionID: transaction,
+            crashAfterRegistry: crash == .dedicatedAdmissionRegistryAfter
+                ? .dedicatedAdmissionRegistryAfter : nil)
+    }
+
+    private func finishDedicated(_ request: ApplyChangeSetRequest, result: ApplyChangeSetResult,
+        transaction: ApplyChangeSetTransactionID,
+        crash: ApplyChangeSetFailurePoint? = nil) async throws {
+        guard result.diffArtifact.expiresAt != nil else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                "terminal result has no retention expiry")
+        }
+        try await addDedicatedStoreIntent(transactionID: transaction,
+            kind: "registry_terminal_intent",
+            digest: try JSONEncoder.sorted.encode(result).applySHA256,
+            request: request, result: result)
+        if crash == .dedicatedTerminalIntentAfter {
+            throw ApplyChangeSetSimulatedCrash(point: .dedicatedTerminalIntentAfter)
+        }
+        try await reconcileDedicatedStoreIntents(transactionID: transaction,
+            crashAfterTransaction: crash == .dedicatedTerminalTransactionAfter,
+            crashAfterRegistry: crash == .dedicatedTerminalRegistryAfter
+                ? .dedicatedTerminalRegistryAfter : nil)
+    }
+
+    private func addDedicatedStoreIntent(transactionID: ApplyChangeSetTransactionID,
+        kind: String, digest: String, request: ApplyChangeSetRequest? = nil,
+        result: ApplyChangeSetResult? = nil) async throws {
+        guard let snapshot = try await transactionStore.load(transactionID) else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "cross-store intent transaction is missing")
+        }
+        if let existing = snapshot.references.first(where: { $0.kind == kind }) {
+            guard existing.identifier == transactionID.rawValue, existing.digest == digest else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "cross-store intent conflicts")
+            }
+            return
+        }
+        var payload = snapshot.payload
+        if request != nil || result != nil {
+            var transaction = try JSONDecoder().decode(StoredTransaction.self, from: snapshot.payload)
+            if let request { transaction.request = request }
+            if let result { transaction.pendingResult = result }
+            payload = try JSONEncoder.sorted.encode(transaction)
+        }
+        _ = try await transactionStore.updateSnapshot(transactionID: transactionID,
+            expectedState: snapshot.state, expectedRevision: snapshot.revision,
+            payload: payload,
+            references: snapshot.references + [.init(kind: kind,
+                identifier: transactionID.rawValue, digest: digest)],
+            manifestDigest: snapshot.manifestDigest, terminalAt: snapshot.terminalAt,
+            retentionExpiresAt: snapshot.retentionExpiresAt)
+    }
+
+    private func clearDedicatedStoreIntent(_ snapshot: ChangeSetTransactionStore.Snapshot,
+        kind: String) async throws {
+        let references = snapshot.references.filter { $0.kind != kind }
+        guard references.count != snapshot.references.count else { return }
+        _ = try await transactionStore.updateSnapshot(transactionID: snapshot.transactionID,
+            expectedState: snapshot.state, expectedRevision: snapshot.revision,
+            payload: snapshot.payload, references: references,
+            manifestDigest: snapshot.manifestDigest, terminalAt: snapshot.terminalAt,
+            retentionExpiresAt: snapshot.retentionExpiresAt)
+    }
+
+    private func reconcileDedicatedStoreIntents(
+        transactionID: ApplyChangeSetTransactionID? = nil,
+        crashAfterTransaction: Bool = false,
+        crashAfterRegistry: ApplyChangeSetFailurePoint? = nil
+    ) async throws {
+        let candidates: [ChangeSetTransactionStore.Snapshot]
+        if let transactionID {
+            candidates = try await transactionStore.load(transactionID).map { [$0] } ?? []
+        } else {
+            var loaded: [ChangeSetTransactionStore.Snapshot] = []
+            for reference in try await transactionStore.listReferences(now: await clock.now()) {
+                if let snapshot = try await transactionStore.load(reference.transactionID) {
+                    loaded.append(snapshot)
+                }
+            }
+            candidates = loaded
+        }
+        for initialCandidate in candidates {
+            var candidate = initialCandidate
+            let admission = candidate.references.first { $0.kind == "registry_admission_intent" }
+            let terminal = candidate.references.first { $0.kind == "registry_terminal_intent" }
+            guard admission != nil || terminal != nil else { continue }
+            guard !(admission != nil && terminal != nil) else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "cross-store intents overlap")
+            }
+            var transaction: StoredTransaction
+            do { transaction = try JSONDecoder().decode(StoredTransaction.self, from: candidate.payload) }
+            catch {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "cross-store intent payload cannot be decoded: \(error)")
+            }
+            guard transaction.id == candidate.transactionID,
+                  transaction.state == candidate.state else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "cross-store intent transaction binding is invalid")
+            }
+            guard let request = transaction.request else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "cross-store intent request is missing (state=\(candidate.state.rawValue), admission=\(admission != nil), terminal=\(terminal != nil))")
+            }
+            let requestDigest = Self.requestDigest(request)
+            let matches = await clientRegistry.replayReferences().filter {
+                $0.clientID == request.clientID && $0.epoch == UInt64(request.clientEpoch)
+                    && $0.sequence == UInt64(request.requestSequence)
+            }
+            guard matches.count <= 1 else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "cross-store replay identity is duplicated")
+            }
+            if admission != nil {
+                guard admission?.identifier == candidate.transactionID.rawValue,
+                      admission?.digest == requestDigest else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt, "admission intent binding is invalid")
+                }
+                if let replay = matches.first {
+                    guard replay.requestDigest == requestDigest,
+                          replay.transactionID == candidate.transactionID.rawValue,
+                          replay.state == .pending else {
+                        throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                            "admission intent conflicts with registry replay")
+                    }
+                } else {
+                    let generation = await clientRegistry.snapshot().generation
+                    do {
+                        _ = try await clientRegistry.admit(clientID: request.clientID,
+                            epoch: UInt64(request.clientEpoch), sequence: UInt64(request.requestSequence),
+                            requestDigest: requestDigest, transactionID: candidate.transactionID.rawValue,
+                            expectedRegistryGeneration: generation)
+                    } catch let error as ChangeSetClientRegistryError {
+                        throw Self.mapRegistryError(error)
+                    }
+                }
+                if crashAfterRegistry == .dedicatedAdmissionRegistryAfter {
+                    throw ApplyChangeSetSimulatedCrash(point: .dedicatedAdmissionRegistryAfter)
+                }
+                guard let refreshed = try await transactionStore.load(candidate.transactionID) else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt)
+                }
+                try await clearDedicatedStoreIntent(refreshed, kind: "registry_admission_intent")
+                continue
+            }
+            guard let result = transaction.pendingResult,
+                  let expiry = result.diffArtifact.expiresAt,
+                  terminal?.identifier == candidate.transactionID.rawValue,
+                  terminal?.digest == (try JSONEncoder.sorted.encode(result).applySHA256) else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "terminal intent binding is invalid")
+            }
+            let replayState: ChangeSetReplayState = switch result.status {
+            case .committed: .committed
+            case .abortedBeforeSideEffect: .abortedBeforeSideEffect
+            case .recoveryRequired: .recoveryRequired
+            }
+            let responseDigest = try JSONEncoder.sorted.encode(result).applySHA256
+            guard result.status != .recoveryRequired else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                    "terminal intent cannot publish a recovery-required result")
+            }
+            var canonicalTerminalAt = expiry.addingTimeInterval(
+                -TimeInterval(request.retentionSeconds))
+            if result.status == .committed {
+                let receiptDigest = try JSONEncoder.sorted.encode([
+                    result.cursor.root, result.cursor.generation, String(result.cursor.sequence)
+                ] + result.changedPaths).applySHA256
+                if let existing = try await transactionStore.runtimeReceipts().first(where: {
+                    $0.transactionID == candidate.transactionID
+                }) {
+                    guard existing.cursor == result.cursor, existing.paths == result.changedPaths,
+                          existing.digest == receiptDigest, let terminalAt = existing.terminalAt,
+                          terminalAt.addingTimeInterval(TimeInterval(request.retentionSeconds)) == expiry else {
+                        throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                            "terminal intent conflicts with durable runtime receipt")
+                    }
+                    canonicalTerminalAt = terminalAt
+                }
+            }
+            let terminalState: ApplyChangeSetTransactionState = result.status == .committed
+                ? .finalized : .abortedBeforeSideEffect
+            if candidate.state != terminalState {
+                let route = Self.transactionRoute(from: candidate.state, to: terminalState)
+                guard !route.isEmpty else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                        "terminal intent has no legal transaction route")
+                }
+                for nextState in route {
+                    transaction.state = nextState
+                    transaction.request = request
+                    transaction.pendingResult = result
+                    var references = candidate.references.filter {
+                        $0.kind != "artifact" && $0.kind != "terminal_response"
+                    }
+                    if !references.contains(where: { $0.kind == "request" }) {
+                        references.append(.init(kind: "request",
+                            identifier: candidate.transactionID.rawValue, digest: requestDigest))
+                    }
+                    let isTerminal = nextState == terminalState
+                    if isTerminal {
+                        references.append(.init(kind: "artifact",
+                            identifier: result.diffArtifact.handle,
+                            digest: result.diffArtifact.sha256))
+                        references.append(.init(kind: "terminal_response",
+                            identifier: candidate.transactionID.rawValue,
+                            digest: responseDigest))
+                    }
+                    let next = ChangeSetTransactionStore.Snapshot(
+                        transactionID: candidate.transactionID, state: nextState,
+                        manifestDigest: candidate.manifestDigest, references: references,
+                        payload: try JSONEncoder.sorted.encode(transaction),
+                        terminalAt: isTerminal ? canonicalTerminalAt : nil,
+                        retentionExpiresAt: isTerminal ? expiry : nil,
+                        revision: candidate.revision + 1)
+                    try await transactionStore.persistTransition(next,
+                        expectedState: candidate.state)
+                    guard let loaded = try await transactionStore.load(candidate.transactionID) else {
+                        throw ApplyChangeSetError(.changeSetStoreCorrupt)
+                    }
+                    candidate = loaded
+                }
+            }
+            if crashAfterTransaction {
+                throw ApplyChangeSetSimulatedCrash(point: .dedicatedTerminalTransactionAfter)
+            }
+            if result.status == .committed,
+               !(try await transactionStore.runtimeReceipts().contains(where: {
+                   $0.transactionID == candidate.transactionID
+               })) {
+                let receiptDigest = try JSONEncoder.sorted.encode([
+                    result.cursor.root, result.cursor.generation, String(result.cursor.sequence)
+                ] + result.changedPaths).applySHA256
+                try await transactionStore.appendRuntimeReceipt(.init(
+                    transactionID: candidate.transactionID, cursor: result.cursor,
+                    paths: result.changedPaths, digest: receiptDigest,
+                    recordedAt: canonicalTerminalAt, terminalAt: canonicalTerminalAt))
+            }
+            if let replay = matches.first, replay.state.isTerminal {
+                guard replay.requestDigest == requestDigest,
+                      replay.transactionID == candidate.transactionID.rawValue,
+                      replay.state == replayState,
+                      replay.terminalResponseDigest == responseDigest,
+                      replay.artifactHandle == result.diffArtifact.handle,
+                      replay.artifactExpiresAt == expiry,
+                      replay.retentionExpiresAt == expiry else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                        "terminal intent conflicts with registry replay")
+                }
+            } else {
+                guard let replay = matches.first, replay.requestDigest == requestDigest,
+                      replay.transactionID == candidate.transactionID.rawValue,
+                      replay.state == .pending else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                        "terminal intent has no exact pending registry replay")
+                }
+                let generation = await clientRegistry.snapshot().generation
+                do {
+                    _ = try await clientRegistry.reconcileTerminalIntent(clientID: request.clientID,
+                        epoch: UInt64(request.clientEpoch), sequence: UInt64(request.requestSequence),
+                        state: replayState, terminalResponseDigest: responseDigest,
+                        artifact: .init(handle: result.diffArtifact.handle, expiresAt: expiry),
+                        retentionExpiresAt: expiry, expectedRegistryGeneration: generation)
+                } catch let error as ChangeSetClientRegistryError {
+                    throw Self.mapRegistryError(error)
+                }
+            }
+            if crashAfterRegistry == .dedicatedTerminalRegistryAfter {
+                throw ApplyChangeSetSimulatedCrash(point: .dedicatedTerminalRegistryAfter)
+            }
+            guard let refreshed = try await transactionStore.load(candidate.transactionID) else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt)
+            }
+            try await clearDedicatedStoreIntent(refreshed, kind: "registry_terminal_intent")
+        }
+    }
+
+    @discardableResult
+    private func recordDedicatedRuntimeCommit(transaction: ApplyChangeSetTransactionID,
+        cursor: ApplyChangeSetCursor, paths: [String]) async throws -> Date {
+        let committedAt = await clock.now()
+        let digest = try JSONEncoder.sorted.encode([
+            cursor.root, cursor.generation, String(cursor.sequence)
+        ] + paths).applySHA256
+        try await transactionStore.appendRuntimeReceipt(.init(transactionID: transaction,
+            cursor: cursor, paths: paths, digest: digest, recordedAt: committedAt,
+            terminalAt: committedAt))
+        return committedAt
     }
 
     public func apply(_ request: ApplyChangeSetRequest) async throws -> ApplyChangeSetResult {
@@ -1821,12 +2537,14 @@ public actor ApplyChangeSetService {
     }
 
     private func applyUnlocked(_ request: ApplyChangeSetRequest) async throws -> ApplyChangeSetResult {
+        try await ensureDedicatedStoreCutover()
         try await state.repairPendingJournals()
         guard !(await state.isRecoveryActive()) else { throw ApplyChangeSetError(.changeSetPreviousPending) }
         try await reconcilePreparedQuotaOrphans()
         try await reconcileTerminalEvidence()
-        if await state.hasIncompleteTransactions() {
-            if let reservationID = await state.incompleteReservationID() {
+        let activeTransactions = try await dedicatedTransactions(activeOnly: true)
+        if !activeTransactions.isEmpty {
+            if let reservationID = activeTransactions.first?.reservationID {
                 _ = try await quotaLedger(reservationID: reservationID).reconcile()
             }
             _ = try await recoverUnlocked(root: state.root)
@@ -1877,8 +2595,11 @@ public actor ApplyChangeSetService {
             }
             reservationID = reservation.id
         }
+        try await admitDedicated(request, reservationID: reservationID, transaction: transaction,
+            crash: crash)
         await state.admit(request: request, reservationID: reservationID, transaction: transaction)
         try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
         if crash == .admissionFSyncAfter || crash == .materializationBefore { throw ApplyChangeSetSimulatedCrash(point: crash!) }
 
         let admittedRequest: ApplyChangeSetRequest
@@ -1889,10 +2610,12 @@ public actor ApplyChangeSetService {
                 let result = try await abortedResult(admittedRequest, transaction: transaction)
                 await state.finish(request: admittedRequest, result: result, transaction: transaction, stateValue: .abortedBeforeSideEffect)
                 try await state.requirePersistenceHealthy()
+                try await finishDedicated(admittedRequest, result: result, transaction: transaction)
                 try await finalizeTerminalEvidence(result, request: admittedRequest, reservationID: reservationID,
                     simulateReplacementCrash: [ApplyChangeSetFailurePoint.evidenceMetadataReplacementRenameAfter,
                         .evidenceMetadataReplacementIntentAfter].contains(crash) ? crash : nil)
                 await state.releaseTerminalMaterial(transaction, request: admittedRequest); try await state.requirePersistenceHealthy()
+                try await syncDedicatedTransaction(transaction)
                 try await releaseQuota(request: admittedRequest, reservationID: reservationID)
                 try Self.cleanupTerminalTransactionDirectory(root: state.root, transaction: transaction)
                 return result
@@ -1900,6 +2623,7 @@ public actor ApplyChangeSetService {
             let result = try await commit(admittedRequest, transaction: transaction, crash: crash, race: race)
             await state.markRecoveryRequired(transaction, receipts: 1)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             _ = result
             throw ApplyChangeSetError(.changeSetRecoveryRequired, "post-admission state changed")
                 .attachingTransaction(transaction, request: admittedRequest, changedPaths: await state.changedPaths(transaction))
@@ -1913,16 +2637,20 @@ public actor ApplyChangeSetService {
         do { result = try await commit(admittedRequest, transaction: transaction, crash: crash, race: race) }
         catch let error as ApplyChangeSetError where error.code == .externalConflictDuringCommit {
             await state.markExternalConflict(transaction); try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             throw error.attachingTransaction(transaction, request: admittedRequest, changedPaths: await state.changedPaths(transaction))
         } catch let error as ApplyChangeSetError {
             throw error.attachingTransaction(transaction, request: admittedRequest, changedPaths: await state.changedPaths(transaction))
         }
         await state.finish(request: admittedRequest, result: result, transaction: transaction, stateValue: .committed)
         try await state.requirePersistenceHealthy()
+        try await finishDedicated(admittedRequest, result: result, transaction: transaction,
+            crash: crash)
         try await finalizeTerminalEvidence(result, request: admittedRequest, reservationID: reservationID,
             simulateReplacementCrash: [ApplyChangeSetFailurePoint.evidenceMetadataReplacementRenameAfter,
                 .evidenceMetadataReplacementIntentAfter].contains(crash) ? crash : nil)
         await state.releaseTerminalMaterial(transaction, request: admittedRequest); try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
         try await releaseQuota(request: admittedRequest, reservationID: reservationID)
         try Self.cleanupTerminalTransactionDirectory(root: state.root, transaction: transaction)
         return result
@@ -1940,6 +2668,7 @@ public actor ApplyChangeSetService {
     }
 
     private func recoverUnlocked(root: URL) async throws -> [ApplyChangeSetRecoveryResult] {
+        try await ensureDedicatedStoreCutover()
         try await state.repairPendingJournals()
         await state.beginRecovery()
         do {
@@ -1955,7 +2684,7 @@ public actor ApplyChangeSetService {
     private func recoverActiveUnlocked(root: URL) async throws -> [ApplyChangeSetRecoveryResult] {
         try await Task.sleep(for: .milliseconds(40))
         try await state.requirePersistenceHealthy()
-        let transactions = await state.transactions.values
+        let transactions = try await dedicatedTransactions()
         if transactions.contains(where: { $0.corrupt }) { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
         if transactions.contains(where: { $0.state == .recoveryRequired && $0.targetReceipts == -2 }) {
             throw ApplyChangeSetError(.externalConflictDuringCommit, "unknown external bytes are pinned for owner resolution")
@@ -1976,22 +2705,26 @@ public actor ApplyChangeSetService {
                             if item.state != .rollbackDecided {
                                 await state.markRollbackDecided(item.id)
                                 try await state.requirePersistenceHealthy()
+                                try await syncDedicatedTransaction(item.id)
                             }
                             let transactionDirectory = root.appendingPathComponent(".aishell-transactions/\(item.id.rawValue)", isDirectory: true)
                             if FileManager.default.fileExists(atPath: transactionDirectory.path) {
                                 guard Self.matchesBefore(request, root: root) else {
                                     await state.markExternalConflict(item.id)
                                     try await state.requirePersistenceHealthy()
+                                    try await syncDedicatedTransaction(item.id)
                                     throw ApplyChangeSetError(.externalConflictDuringCommit, "unknown external bytes block pre-commit cleanup")
                                 }
                             }
                             guard Self.matchesBefore(request, root: root) else {
                                 await state.markExternalConflict(item.id)
                                 try await state.requirePersistenceHealthy()
+                                try await syncDedicatedTransaction(item.id)
                                 throw ApplyChangeSetError(.externalConflictDuringCommit, "unknown external bytes block pre-commit rollback")
                             }
                             await state.markRolledBack(item.id)
                             try await state.requirePersistenceHealthy()
+                            try await syncDedicatedTransaction(item.id)
                         }
                         recoveredResult = try await abortedResult(request, transaction: item.id)
                     } else if item.commitWasDecided {
@@ -2005,13 +2738,22 @@ public actor ApplyChangeSetService {
                     if item.state != .filesystemCommitted && item.state != .runtimeCommitted && item.state != .trashCommitted {
                         await state.markFilesystemCommitted(item.id)
                         try await state.requirePersistenceHealthy()
-                    }
-                    if await state.isRuntimeCommitted(request.transactionIdentity), item.state != .runtimeCommitted && item.state != .trashCommitted {
-                        await state.markRuntimeCommitted(item.id)
-                        try await state.requirePersistenceHealthy()
+                        try await syncDedicatedTransaction(item.id)
                     }
                     guard let pendingResult = await state.pendingResult(item.id) else {
                         throw ApplyChangeSetError(.changeSetStoreCorrupt, "commit_decided transaction has no durable result")
+                    }
+                    if await state.isRuntimeCommitted(request.transactionIdentity),
+                       item.state != .runtimeCommitted && item.state != .trashCommitted {
+                        let receipts = try await transactionStore.runtimeReceipts()
+                        let hasReceipt = receipts.contains { $0.transactionID == item.id }
+                        if !hasReceipt {
+                            try await recordDedicatedRuntimeCommit(transaction: item.id,
+                                cursor: pendingResult.cursor, paths: pendingResult.changedPaths)
+                        }
+                        await state.markRuntimeCommitted(item.id)
+                        try await state.requirePersistenceHealthy()
+                        try await syncDedicatedTransaction(item.id)
                     }
                     recoveredResult = pendingResult
                 } else {
@@ -2020,6 +2762,7 @@ public actor ApplyChangeSetService {
                     }
                     await state.markFilesystemCommitted(item.id)
                     try await state.requirePersistenceHealthy()
+                    try await syncDedicatedTransaction(item.id)
                     recoveredResult = pendingResult
                 }
                 if recoveredResult.status == .committed, !(await state.isRuntimeCommitted(request.transactionIdentity)) {
@@ -2027,28 +2770,66 @@ public actor ApplyChangeSetService {
                     do {
                         _ = try await workspaceRuntime.appendKnownMutation(transactionID: request.transactionIdentity, rootPath: root.path, changes: knownMutations)
                     } catch { throw ApplyChangeSetError(.changeSetRecoveryRequired, "workspace known-mutation recovery failed") }
-                    let cursor = await state.advance(paths: request.changes.compactMap { $0.paths.last }, transactionID: request.transactionIdentity)
-                    guard cursor == recoveredResult.cursor else { throw ApplyChangeSetError(.changeSetStoreCorrupt, "recovered cursor differs from durable result") }
+                    let paths = recoveredResult.changedPaths
+                    let currentCursor = await state.cursor()
+                    if currentCursor == recoveredResult.cursor {
+                        // The core cursor reached disk immediately before the dedicated receipt.
+                        // Recreate that missing receipt without advancing the cursor a second time.
+                        try await recordDedicatedRuntimeCommit(transaction: item.id,
+                            cursor: recoveredResult.cursor, paths: paths)
+                        await state.markRuntimeCommitted(item.id)
+                        try await state.requirePersistenceHealthy()
+                        try await syncDedicatedTransaction(item.id)
+                    } else {
+                        let cursor = await state.advance(paths: paths,
+                            transactionID: request.transactionIdentity)
+                        try await recordDedicatedRuntimeCommit(transaction: item.id,
+                            cursor: cursor, paths: paths)
+                        try await syncDedicatedTransaction(item.id)
+                        guard cursor == recoveredResult.cursor else {
+                            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                                "recovered cursor differs from durable result")
+                        }
+                    }
                 }
                 if recoveredResult.status == .committed {
                     try await commitTrash(request, transaction: item.id, crash: nil)
                     recoveredResult = Self.addingTrashPaths(await state.trashPaths(item.id), to: recoveredResult)
                     await state.storePendingResult(item.id, result: recoveredResult)
                     try await state.requirePersistenceHealthy()
+                    try await syncDedicatedTransaction(item.id)
                 }
                     var finalizedResult = recoveredResult
-                    // A nonterminal attempt has not started public retention yet. Recovery chooses
-                    // the fixed expiry immediately before durably publishing the terminal replay.
-                    let expiry = await clock.now().addingTimeInterval(TimeInterval(request.retentionSeconds))
+                    // Committed retention is bound to the one durable runtime-receipt timestamp.
+                    // Abort has no runtime receipt, so its terminal publication chooses the clock once.
+                    let expiry: Date
+                    if finalizedResult.status == .committed {
+                        guard let receipt = try await transactionStore.runtimeReceipts().first(where: {
+                            $0.transactionID == item.id
+                        }), let terminalAt = receipt.terminalAt,
+                        receipt.cursor == finalizedResult.cursor,
+                        receipt.paths == finalizedResult.changedPaths else {
+                            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                                "committed recovery has no exact durable runtime receipt")
+                        }
+                        expiry = terminalAt.addingTimeInterval(TimeInterval(request.retentionSeconds))
+                    } else {
+                        expiry = await clock.now().addingTimeInterval(
+                            TimeInterval(request.retentionSeconds))
+                    }
                     finalizedResult = finalizedResult.replacingArtifact(.init(handle: finalizedResult.diffArtifact.handle,
                         sha256: finalizedResult.diffArtifact.sha256, sizeBytes: finalizedResult.diffArtifact.sizeBytes, expiresAt: expiry))
                     await state.storePendingResult(item.id, result: finalizedResult)
+                    try await syncDedicatedTransaction(item.id)
                     let terminalState: ApplyChangeSetTransactionState = finalizedResult.status == .committed ? .committed : .abortedBeforeSideEffect
                     await state.finish(request: request, result: finalizedResult, transaction: item.id, stateValue: terminalState)
                     try await state.requirePersistenceHealthy()
+                    try await finishDedicated(request, result: finalizedResult, transaction: item.id)
                     guard let reservationID = item.reservationID else { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
                     try await finalizeTerminalEvidence(finalizedResult, request: request, reservationID: reservationID)
                     await state.releaseTerminalMaterial(item.id, request: request)
+                    try await state.requirePersistenceHealthy()
+                    try await syncDedicatedTransaction(item.id)
                     if let reservationID = item.reservationID { try await releaseQuota(request: request, reservationID: reservationID) }
                     try Self.cleanupTerminalTransactionDirectory(root: root, transaction: item.id)
                 } catch let error as ApplyChangeSetError {
@@ -2066,6 +2847,8 @@ public actor ApplyChangeSetService {
                     try await finalizeTerminalEvidence(result, request: terminalRequest, reservationID: reservationID)
                 }
                 await state.releaseTerminalMaterial(item.id, request: terminalRequest)
+                try await state.requirePersistenceHealthy()
+                try await syncDedicatedTransaction(item.id)
                 try await releaseQuota(request: terminalRequest, reservationID: reservationID)
             } else if let result = item.pendingResult {
                 guard let expiry = result.diffArtifact.expiresAt else { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
@@ -2083,38 +2866,213 @@ public actor ApplyChangeSetService {
     }
 
     private func controlUnlocked(_ request: ApplyChangeSetControlRequest) async throws -> ApplyChangeSetControlResult {
+        try await ensureDedicatedStoreCutover()
         try await state.repairPendingJournals()
         let now = await clock.now()
         let proof = try secretStore.verifyOwnerProof(request.ownerProof, request: request, root: state.root, now: now)
-        if let replay = try await state.controlReplay(request) { return replay }
-        guard await state.ownerProofIsUnused(proof.proofID) else { throw ApplyChangeSetError(.clientOwnerProofInvalid) }
-        await state.expireControlReceipts(now: now)
-        try await state.requirePersistenceHealthy()
-        guard await state.controlReceiptCount() < 128 else { throw ApplyChangeSetError(.clientControlCapacityExceeded) }
+        do {
+            switch try await legacyControlStore.lookup(controlRequestID: request.controlRequestID,
+                requestDigest: Self.controlDigest(request), now: now) {
+            case let .replay(result): return result
+            case .missing, .expired: break
+            }
+            guard !(await legacyControlStore.consumedOwnerProof(proof.proofID)) else {
+                throw ApplyChangeSetError(.clientOwnerProofInvalid)
+            }
+            let newCount = await clientRegistry.unexpiredControlReceiptCount(at: now)
+            try await legacyControlStore.requireReceiptCapacity(additionalCount: newCount + 1, now: now)
+        } catch let error as LegacyControlCompatStoreError {
+            let code: ApplyChangeSetError.Code = switch error.code {
+            case .requestConflict: .changeSetSequenceConflict
+            case .proofConsumed: .clientOwnerProofInvalid
+            case .capacityExceeded: .clientControlCapacityExceeded
+            case .secretStoreUnavailable: .changeSetSecretStoreUnavailable
+            case .storeCorrupt, .importConflict: .changeSetStoreCorrupt
+            }
+            throw ApplyChangeSetError(code, error.message)
+        }
         let crash = await faults.consumeCrash()
         if crash == .registryAtomicReplaceBefore { throw ApplyChangeSetSimulatedCrash(point: crash!) }
-        let result = try await state.performControl(request)
-        try await state.saveControlReceipt(request.controlRequestID, requestDigest: Self.controlDigest(request), proofID: proof.proofID, result: result, expiry: now.addingTimeInterval(300))
-        try await state.requirePersistenceHealthy()
+        if case .abort = request.action {
+            let digest = Self.controlDigest(request)
+            var result: ApplyChangeSetControlResult
+            if case let .abort(transactionID) = request.action,
+               let existing = await state.pendingResult(transactionID),
+               existing.status == .abortedBeforeSideEffect {
+                result = .init(controlRequestID: request.controlRequestID, client: nil,
+                    transactionResult: existing)
+            } else {
+                result = try await state.performControl(request)
+            }
+            if case let .abort(transactionID) = request.action,
+               let transactionResult = result.transactionResult {
+                let transactionRequest = try await state.materializedRequest(transactionID)
+                let finalized: ApplyChangeSetResult
+                if transactionResult.diffArtifact.expiresAt != nil {
+                    finalized = transactionResult
+                } else {
+                    let expiry = now.addingTimeInterval(TimeInterval(transactionRequest.retentionSeconds))
+                    finalized = transactionResult.replacingArtifact(.init(
+                        handle: transactionResult.diffArtifact.handle,
+                        sha256: transactionResult.diffArtifact.sha256,
+                        sizeBytes: transactionResult.diffArtifact.sizeBytes, expiresAt: expiry))
+                }
+                await state.storePendingResult(transactionID, result: finalized)
+                try await finishDedicated(transactionRequest, result: finalized,
+                    transaction: transactionID, crash: crash)
+                result = .init(controlRequestID: result.controlRequestID, client: nil,
+                    transactionResult: finalized)
+            }
+            do {
+                result = try await legacyControlStore.record(
+                    controlRequestID: request.controlRequestID,
+                    requestDigest: digest,
+                    proofID: proof.proofID,
+                    result: result,
+                    expiresAt: now.addingTimeInterval(300),
+                    now: now
+                )
+            } catch let error as LegacyControlCompatStoreError {
+                let code: ApplyChangeSetError.Code = switch error.code {
+                case .requestConflict: .changeSetSequenceConflict
+                case .proofConsumed: .clientOwnerProofInvalid
+                case .capacityExceeded: .clientControlCapacityExceeded
+                case .secretStoreUnavailable: .changeSetSecretStoreUnavailable
+                case .storeCorrupt, .importConflict: .changeSetStoreCorrupt
+                }
+                throw ApplyChangeSetError(code, error.message)
+            }
+            if crash == .registryAtomicReplaceAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
+            return result
+        }
+
+        let proofDigest = proof.proofID.applyStringSHA256
+        let generation = await clientRegistry.snapshot().generation
+        let receipt: ChangeSetClientControlReceipt
+        do {
+            switch request.action {
+            case .allocate:
+                receipt = try await clientRegistry.allocate(controlRequestID: request.controlRequestID,
+                    proofIDDigest: proofDigest, proofExpiresAt: now.addingTimeInterval(300),
+                    expectedRegistryGeneration: generation)
+            case let .rotate(clientID, expectedEpoch):
+                receipt = try await clientRegistry.rotateEpoch(controlRequestID: request.controlRequestID,
+                    proofIDDigest: proofDigest, proofExpiresAt: now.addingTimeInterval(300),
+                    clientID: clientID, expectedEpoch: UInt64(expectedEpoch),
+                    nextEpoch: UInt64(expectedEpoch + 1), expectedRegistryGeneration: generation)
+            case let .retire(clientID, expectedEpoch):
+                receipt = try await clientRegistry.retire(controlRequestID: request.controlRequestID,
+                    proofIDDigest: proofDigest, proofExpiresAt: now.addingTimeInterval(300),
+                    clientID: clientID, expectedEpoch: UInt64(expectedEpoch),
+                    expectedRegistryGeneration: generation)
+            case let .reinitialize(expectedGeneration):
+                guard UInt64(expectedGeneration) == generation else {
+                    throw ApplyChangeSetError(.clientEpochChanged)
+                }
+                receipt = try await clientRegistry.reinitialize(controlRequestID: request.controlRequestID,
+                    proofIDDigest: proofDigest, proofExpiresAt: now.addingTimeInterval(300),
+                    expectedRegistryGeneration: generation)
+            case .abort:
+                fatalError("abort was handled above")
+            }
+        } catch let error as ChangeSetClientRegistryError {
+            throw Self.mapRegistryError(error)
+        }
         if crash == .registryAtomicReplaceAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
-        return result
+        let client: ApplyChangeSetClient? = receipt.clientID.flatMap { id -> ApplyChangeSetClient? in
+            guard let epoch = receipt.currentEpoch, let slot = receipt.slotIndex else { return nil }
+            return ApplyChangeSetClient(clientID: id, epoch: Int(epoch), slot: slot)
+        }
+        return .init(controlRequestID: request.controlRequestID, client: client, transactionResult: nil)
     }
 
     private func validateIdentityAndReplay(_ request: ApplyChangeSetRequest) async throws {
         guard Self.isCanonicalUUID(request.clientID) else { throw ApplyChangeSetError(.invalidArgument) }
-        guard let slot = await state.slot(id: request.clientID) else { throw ApplyChangeSetError(.changeSetClientNotRegistered) }
-        guard request.clientEpoch == slot.epoch else {
-            throw ApplyChangeSetError(request.clientEpoch < slot.epoch ? .changeSetExpired : .changeSetClientEpochAhead)
+        do {
+            switch try await clientRegistry.lookup(clientID: request.clientID,
+                epoch: UInt64(request.clientEpoch), sequence: UInt64(request.requestSequence),
+                requestDigest: Self.requestDigest(request)) {
+            case .new:
+                return
+            case .pending:
+                throw ApplyChangeSetError(.changeSetPreviousPending)
+            case let .replay(envelope):
+                guard let transaction = try await transactionStore.load(ApplyChangeSetTransactionID(envelope.transactionID)),
+                      let stored = try? JSONDecoder().decode(StoredTransaction.self, from: transaction.payload),
+                      let result = stored.pendingResult,
+                      try JSONEncoder.sorted.encode(result).applySHA256 == envelope.terminalResponseDigest else {
+                    throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                        "terminal replay payload is absent or inconsistent")
+                }
+                throw ReplayResult(result)
+            }
+        } catch let error as ChangeSetClientRegistryError {
+            throw Self.mapRegistryError(error)
         }
-        guard slot.active else { throw ApplyChangeSetError(.changeSetExpired) }
-        if request.requestSequence <= slot.highWater {
-            let floor = max(1, slot.highWater - 255)
-            guard request.requestSequence >= floor else { throw ApplyChangeSetError(.changeSetExpired) }
-            guard let record = slot.replay[request.requestSequence] else { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
-            guard record.digest == Self.requestDigest(request) else { throw ApplyChangeSetError(.changeSetSequenceConflict) }
-            throw ReplayResult(record.result)
+    }
+
+    private static func mapRegistryError(_ error: ChangeSetClientRegistryError) -> ApplyChangeSetError {
+        let code: ApplyChangeSetError.Code = switch error.code {
+        case .clientNotRegistered: .changeSetClientNotRegistered
+        case .clientCapacityExceeded: .changeSetClientCapacityExceeded
+        case .clientExpired, .controlExpired: .changeSetExpired
+        case .clientEpochAhead: .changeSetClientEpochAhead
+        case .clientEpochExhausted: .clientEpochExhausted
+        case .sequenceGap: .changeSetSequenceGap
+        case .sequenceConflict, .controlRequestConflict: .changeSetSequenceConflict
+        case .previousPending: .changeSetPreviousPending
+        case .rotationBlocked: .clientRotationBlocked
+        case .retireBlocked: .clientRetireBlocked
+        case .reinitializeBlocked: .clientRegistryReinitializeBlocked
+        case .ownerProofInvalid, .ownerProofConsumed: .clientOwnerProofInvalid
+        case .controlCapacityExceeded: .clientControlCapacityExceeded
+        case .invalidEnvelope: .invalidArgument
+        case .generationChanged: .clientEpochChanged
+        case .storeCapacityExceeded: .changeSetLimitExceeded
+        case .storeCorrupt, .legacyImportNotPristine, .legacyImportConflict: .changeSetStoreCorrupt
         }
-        guard request.requestSequence == slot.highWater + 1 else { throw ApplyChangeSetError(.changeSetSequenceGap) }
+        return .init(code, error.message)
+    }
+
+    fileprivate func registrySnapshotForTesting() async -> ChangeSetClientRegistrySnapshot {
+        await clientRegistry.snapshot()
+    }
+
+    fileprivate func registryControlReceiptCountForTesting(at instant: Date) async -> Int {
+        await clientRegistry.unexpiredControlReceiptCount(at: instant)
+    }
+
+    fileprivate func admitRegistryReplayForTesting(_ client: ApplyChangeSetClient) async throws {
+        let snapshot = await clientRegistry.snapshot()
+        guard let slot = snapshot.slots.first(where: { $0.clientID == client.clientID }) else {
+            throw ApplyChangeSetError(.changeSetClientNotRegistered)
+        }
+        do {
+            _ = try await clientRegistry.admit(clientID: client.clientID,
+                epoch: UInt64(client.epoch), sequence: slot.highWater + 1,
+                requestDigest: Data("test-pending".utf8).applySHA256,
+                transactionID: "test-pending-\(client.clientID)",
+                expectedRegistryGeneration: snapshot.generation)
+        } catch let error as ChangeSetClientRegistryError {
+            throw Self.mapRegistryError(error)
+        }
+    }
+
+    fileprivate func installPreparedAdmissionForTesting(_ request: ApplyChangeSetRequest,
+        transaction: ApplyChangeSetTransactionID) async throws {
+        try await admitDedicated(request, reservationID: "test-reservation",
+            transaction: transaction)
+        try await syncDedicatedTransaction(transaction)
+    }
+
+    fileprivate func syncDedicatedTransactionForTesting(
+        _ transaction: ApplyChangeSetTransactionID) async throws {
+        try await syncDedicatedTransaction(transaction)
+    }
+
+    fileprivate func removeDedicatedRuntimeReceiptForTesting(
+        _ transaction: ApplyChangeSetTransactionID) async throws {
+        try await transactionStore.removeRuntimeReceiptForTesting(transaction)
     }
 
     private func validateRequest(_ request: ApplyChangeSetRequest) async throws {
@@ -2393,6 +3351,7 @@ public actor ApplyChangeSetService {
         )
         await state.storePendingResult(transaction, result: durableResult)
         try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
         if crash == .diffArtifactFSyncAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
         durableResult = durableResult.replacingChanges(durableResult.changes.map { change in
             guard let path = change.afterPath, let identity = stageIdentities[path] else { return change }
@@ -2405,9 +3364,11 @@ public actor ApplyChangeSetService {
         })
         await state.storePendingResult(transaction, result: durableResult)
         try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
         if crash == .stageFSyncAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
         await state.markCommitDecided(transaction)
         try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
         if crash == .commitDecisionFSyncAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
 
         let touched = Set(removals).union(outputs.keys).sorted()
@@ -2433,6 +3394,7 @@ public actor ApplyChangeSetService {
                     guard fsync(descriptor.parent) == 0, fsync(transactionFD) == 0 else { throw ApplyChangeSetError(.changeSetRecoveryRequired, "backup receipt fsync failed") }
                     await state.recordTargetReceipt(transaction, phase: "backup_receipt", path: path)
                     try await state.requirePersistenceHealthy()
+                    try await syncDedicatedTransaction(transaction)
                     if backups.count == 1, crash == .firstTargetReceiptAfter {
                         guard fsync(transactionFD) == 0 else { throw ApplyChangeSetError(.changeSetRecoveryRequired) }
                         throw ApplyChangeSetSimulatedCrash(point: crash!)
@@ -2456,6 +3418,7 @@ public actor ApplyChangeSetService {
                 guard fsync(descriptor.parent) == 0, fsync(transactionFD) == 0 else { throw ApplyChangeSetError(.changeSetRecoveryRequired, "target directory fsync failed: \(errno)") }
                 await state.recordTargetReceipt(transaction, phase: "placement_receipt", path: path)
                 try await state.requirePersistenceHealthy()
+                try await syncDedicatedTransaction(transaction)
             }
             guard fsync(transactionFD) == 0 else { throw ApplyChangeSetError(.changeSetRecoveryRequired, "receipt directory fsync failed: \(errno)") }
             guard Self.matchesAfter(request, root: root) else {
@@ -2463,14 +3426,17 @@ public actor ApplyChangeSetService {
             }
             await state.markFilesystemCommitted(transaction)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
         } catch {
             if await state.commitWasDecided(transaction) {
                 await state.markRecoveryRequired(transaction, receipts: max(1, backups.count + placed.count))
                 try await state.requirePersistenceHealthy()
+                try await syncDedicatedTransaction(transaction)
                 throw error
             }
             await state.markRollbackDecided(transaction)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             var rollbackFailed = false
             for path in placed.sorted().reversed() {
                 guard let descriptor = pinned[path], let output = outputs[path] else { rollbackFailed = true; continue }
@@ -2486,9 +3452,14 @@ public actor ApplyChangeSetService {
                 guard let descriptor = pinned[path], renameatx_np(transactionFD, backup, descriptor.parent, descriptor.leaf, UInt32(RENAME_EXCL | RENAME_NOFOLLOW_ANY)) == 0 else { rollbackFailed = true; continue }
                 _ = fsync(descriptor.parent)
             }
-            if rollbackFailed { await state.markRecoveryRequired(transaction, receipts: max(1, placed.count)); throw ApplyChangeSetError(.changeSetRecoveryRequired, "rollback could not prove whole-before") }
+            if rollbackFailed {
+                await state.markRecoveryRequired(transaction, receipts: max(1, placed.count))
+                try await syncDedicatedTransaction(transaction)
+                throw ApplyChangeSetError(.changeSetRecoveryRequired, "rollback could not prove whole-before")
+            }
             await state.markRolledBack(transaction)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             throw error
         }
         let knownMutations = Self.knownMutations(request)
@@ -2496,15 +3467,27 @@ public actor ApplyChangeSetService {
         catch {
             await state.markRecoveryRequired(transaction, receipts: max(1, request.changes.count))
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             throw ApplyChangeSetError(.changeSetRecoveryRequired, "workspace known-mutation commit failed")
         }
-        let advancedCursor = await state.advance(paths: request.changes.compactMap { $0.paths.last }, transactionID: request.transactionIdentity)
+        let runtimePaths = durableResult.changedPaths
+        let advancedCursor = await state.advance(paths: runtimePaths, transactionID: request.transactionIdentity)
+        if crash == .runtimeCursorFSyncAfter {
+            throw ApplyChangeSetSimulatedCrash(point: crash!)
+        }
+        let runtimeCommittedAt = try await recordDedicatedRuntimeCommit(transaction: transaction, cursor: advancedCursor,
+            paths: runtimePaths)
+        if crash == .runtimeReceiptFSyncAfter {
+            throw ApplyChangeSetSimulatedCrash(point: crash!)
+        }
         try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
         guard advancedCursor == durableResult.cursor else {
             await state.markRecoveryRequired(transaction, receipts: max(1, request.changes.count))
+            try await syncDedicatedTransaction(transaction)
             throw ApplyChangeSetError(.changeSetStoreCorrupt, "committed cursor differs from durable result")
         }
-        if crash == .runtimeReceiptFSyncAfter || crash == .checkpointMarkerFSyncAfter || crash == .transactionReceiptFSyncAfter {
+        if crash == .checkpointMarkerFSyncAfter || crash == .transactionReceiptFSyncAfter {
             throw ApplyChangeSetSimulatedCrash(point: crash!)
         }
         try await commitTrash(request, transaction: transaction, crash: crash)
@@ -2521,13 +3504,15 @@ public actor ApplyChangeSetService {
             })
             await state.storePendingResult(transaction, result: durableResult)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
         }
         if durableResult.diffArtifact.expiresAt == nil {
-            let expiry = await clock.now().addingTimeInterval(TimeInterval(request.retentionSeconds))
+            let expiry = runtimeCommittedAt.addingTimeInterval(TimeInterval(request.retentionSeconds))
             durableResult = durableResult.replacingArtifact(.init(handle: durableResult.diffArtifact.handle,
                 sha256: durableResult.diffArtifact.sha256, sizeBytes: durableResult.diffArtifact.sizeBytes, expiresAt: expiry))
             await state.storePendingResult(transaction, result: durableResult)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
         }
         return durableResult
     }
@@ -2563,7 +3548,7 @@ public actor ApplyChangeSetService {
     }
 
     private func reconcileTerminalEvidence() async throws {
-        let terminal = await state.transactions.values.filter {
+        let terminal = try await dedicatedTransactions().filter {
             $0.state == .committed || $0.state == .finalized || $0.state == .abortedBeforeSideEffect
         }
         for item in terminal {
@@ -2613,6 +3598,7 @@ public actor ApplyChangeSetService {
         guard !deletes.isEmpty else {
             await state.recordEmptyTrashReceipt(transaction)
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             return
         }
         guard let reservationID = await state.reservationID(transaction) else { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
@@ -2653,6 +3639,7 @@ public actor ApplyChangeSetService {
                     trashRootPath: trashRoot.path, trashRootDevice: UInt64(trashRootInfo.st_dev), trashRootInode: UInt64(trashRootInfo.st_ino))
                 await state.recordTrashIntent(transaction, record: boundValue)
                 try await state.requirePersistenceHealthy()
+                try await syncDedicatedTransaction(transaction)
                 intent = boundValue
                 if crash == .trashIntentFSyncAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
             }
@@ -2679,10 +3666,12 @@ public actor ApplyChangeSetService {
                 candidatePath: intent.candidatePath, resultingPath: result.path, device: intent.device, inode: intent.inode, sha256: intent.sha256,
                 trashRootPath: intent.trashRootPath, trashRootDevice: intent.trashRootDevice, trashRootInode: intent.trashRootInode))
             try await state.requirePersistenceHealthy()
+            try await syncDedicatedTransaction(transaction)
             if crash == .trashReceiptFSyncAfter { throw ApplyChangeSetSimulatedCrash(point: crash!) }
         }
         await state.markTrashCommitted(transaction, expectedReceiptCount: deletes.count)
         try await state.requirePersistenceHealthy()
+        try await syncDedicatedTransaction(transaction)
     }
 
     private static func findTrashCandidates(intent: DurableTrashRecord) throws -> [URL] {
@@ -3193,6 +4182,170 @@ public struct ApplyChangeSetPendingControl: Sendable {
 }
 
 private extension ApplyChangeSetState {
+    func activateDedicatedStoreMode(
+        registrySlots: [ChangeSetClientSlotSnapshot],
+        replayReferences: [ChangeSetReplayReference],
+        transactionValues: [StoredTransaction],
+        runtimeReceipts: [ChangeSetTransactionStore.RuntimeReceipt]
+    ) throws {
+        let requiresCoreSnapshotCutover = !dedicatedStoreMode
+        let transactionMap = Dictionary(uniqueKeysWithValues: transactionValues.map { ($0.id, $0) })
+        slots = registrySlots.sorted { $0.number < $1.number }.map { slot in
+            ClientSlot(id: slot.clientID, epoch: Int(slot.currentEpoch),
+                active: slot.allocationState == .active, highWater: Int(slot.highWater),
+                replay: [:], nonterminal: false)
+        }
+        for reference in replayReferences {
+            guard slots.indices.contains(reference.slotIndex),
+                  slots[reference.slotIndex].id == reference.clientID else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "registry slot reference mismatch")
+            }
+            if let transaction = transactionMap[ApplyChangeSetTransactionID(reference.transactionID)],
+               let result = transaction.pendingResult, reference.state.isTerminal {
+                slots[reference.slotIndex].replay[Int(reference.sequence)] = .init(
+                    digest: reference.requestDigest, result: result)
+            } else if !reference.state.isTerminal {
+                slots[reference.slotIndex].nonterminal = true
+            }
+        }
+        transactions = transactionMap
+        pendingJournalRepairs.removeAll()
+        runtimeEvents = runtimeReceipts.flatMap { receipt in
+            receipt.paths.map { .init(transactionID: receipt.transactionID.rawValue, path: $0) }
+        }
+        runtimeCommitted = Set(runtimeReceipts.map { $0.transactionID.rawValue })
+        controlReceipts = [:]
+        consumedOwnerProofIDs = []
+        dedicatedStoreMode = true
+        if requiresCoreSnapshotCutover { try persist() }
+        try Self.retireLegacyTransactionJournals(stateDirectory: stateDirectory)
+    }
+
+    func dedicatedTransactionSnapshot(_ id: ApplyChangeSetTransactionID) throws -> ChangeSetTransactionStore.Snapshot? {
+        guard let item = transactions[id] else { return nil }
+        let request = item.request ?? (try? materializedRequest(item.id))
+        var references: [ChangeSetTransactionStore.Reference] = []
+        if let reservationID = item.reservationID {
+            references.append(.init(kind: "reservation", identifier: reservationID,
+                digest: reservations[reservationID]?.requestDigest ?? String(repeating: "0", count: 64)))
+        }
+        if let request {
+            references.append(.init(kind: "request", identifier: item.id.rawValue,
+                digest: ApplyChangeSetService.requestDigest(request)))
+        }
+        if let result = item.pendingResult {
+            references.append(.init(kind: "artifact", identifier: result.diffArtifact.handle,
+                digest: result.diffArtifact.sha256))
+            if item.state == .finalized || item.state == .committed || item.state == .abortedBeforeSideEffect {
+                references.append(.init(kind: "terminal_response", identifier: item.id.rawValue,
+                    digest: try JSONEncoder.sorted.encode(result).applySHA256))
+            }
+        }
+        let retentionExpiresAt = item.pendingResult?.diffArtifact.expiresAt
+        let terminalAt = retentionExpiresAt.flatMap { expiry in
+            request.map { expiry.addingTimeInterval(-TimeInterval($0.retentionSeconds)) }
+        }
+        return .init(transactionID: item.id, state: item.state,
+            manifestDigest: item.manifestDigest ?? String(repeating: "0", count: 64),
+            references: references, payload: try JSONEncoder.sorted.encode(item),
+            terminalAt: terminalAt, retentionExpiresAt: retentionExpiresAt)
+    }
+
+    func legacyTransactionsRequiringCutoverRecovery() -> [StoredTransaction] {
+        transactions.values.filter {
+            $0.state == .rolledBack
+                || ($0.reservationID != nil && ($0.state == .finalized || $0.state == .committed
+                    || $0.state == .abortedBeforeSideEffect))
+        }.sorted { $0.id.rawValue < $1.id.rawValue }
+    }
+
+    func legacyDedicatedStoreExport(cutoverTime: Date) throws -> ChangeSetLegacyStoreExport {
+        let durable = DurableChangeSetSnapshot(
+            schema: "aishell.apply-change-set-state.v1",
+            rootPath: root.standardizedFileURL.resolvingSymlinksInPath().path,
+            generation: generation, head: head, capabilities: capabilities, slots: slots,
+            transactions: transactions, reservations: reservations,
+            tamperedReservations: tamperedReservations, orphanPins: orphanPins,
+            targetMutationReceipts: targetMutationReceipts, runtimeEvents: runtimeEvents,
+            runtimeCommitted: runtimeCommitted, controlReceipts: controlReceipts,
+            consumedOwnerProofIDs: consumedOwnerProofIDs,
+            legacyExpired: legacyExpired, legacyReused: legacyReused
+        )
+        let sourceDigest = try JSONEncoder.sorted.encode(durable).applySHA256
+
+        let legacySlots = try slots.enumerated().map { number, slot -> ChangeSetLegacyClientSlot in
+            var replay = Array<ChangeSetReplayEnvelope?>(repeating: nil,
+                count: ChangeSetClientRegistry.replayCapacity)
+            for (sequence, record) in slot.replay {
+                guard sequence > 0 else { throw ApplyChangeSetError(.changeSetStoreCorrupt) }
+                let resultData = try JSONEncoder.sorted.encode(record.result)
+                let transaction = transactions[ApplyChangeSetTransactionID(
+                    record.result.transactionID ?? "\(slot.id):\(slot.epoch):\(sequence)")]
+                let retainedRequest = transaction?.request ?? transaction.flatMap { try? materializedRequest($0.id) }
+                let expiry = record.result.diffArtifact.expiresAt
+                    ?? retainedRequest.map { cutoverTime.addingTimeInterval(TimeInterval($0.retentionSeconds)) }
+                let state: ChangeSetReplayState = switch record.result.status {
+                case .committed: .committed
+                case .abortedBeforeSideEffect: .abortedBeforeSideEffect
+                case .recoveryRequired: .recoveryRequired
+                }
+                replay[(sequence - 1) % ChangeSetClientRegistry.replayCapacity] = .init(
+                    sequence: UInt64(sequence), requestDigest: record.digest,
+                    transactionID: record.result.transactionID ?? "\(slot.id):\(slot.epoch):\(sequence)",
+                    state: state, terminalResponseDigest: resultData.applySHA256,
+                    artifact: expiry.map { .init(handle: record.result.diffArtifact.handle, expiresAt: $0) },
+                    retentionExpiresAt: expiry
+                )
+            }
+            for transaction in transactions.values where transaction.admitted {
+                guard let request = transaction.request ?? (try? materializedRequest(transaction.id)),
+                      request.clientID == slot.id, request.clientEpoch == slot.epoch,
+                      replay[(request.requestSequence - 1) % ChangeSetClientRegistry.replayCapacity] == nil else {
+                    continue
+                }
+                replay[(request.requestSequence - 1) % ChangeSetClientRegistry.replayCapacity] = .init(
+                    sequence: UInt64(request.requestSequence),
+                    requestDigest: ApplyChangeSetService.requestDigest(request),
+                    transactionID: transaction.id.rawValue,
+                    state: transaction.state == .recoveryRequired ? .recoveryRequired : .pending
+                )
+            }
+            return .init(number: number, clientID: slot.id, slotGeneration: UInt64(max(0, slot.epoch)),
+                allocationState: slot.active ? .active : .free,
+                currentEpoch: UInt64(max(0, slot.epoch)), highWater: UInt64(max(0, slot.highWater)),
+                replay: replay)
+        }
+        let registry = ChangeSetLegacyRegistrySnapshot(
+            rootIdentityDigest: root.standardizedFileURL.resolvingSymlinksInPath().path.applyStringSHA256,
+            registryGeneration: 1, slots: legacySlots,
+            controlReceipts: Array(repeating: nil, count: ChangeSetClientRegistry.controlReceiptCapacity)
+        )
+
+        let transactionSnapshots = try transactions.keys.sorted { $0.rawValue < $1.rawValue }
+            .compactMap { try dedicatedTransactionSnapshot($0) }
+        let receiptGroups = Dictionary(grouping: runtimeEvents, by: \.transactionID)
+        let receipts = try receiptGroups.keys.sorted().compactMap { rawID -> ChangeSetTransactionStore.RuntimeReceipt? in
+            let id = ApplyChangeSetTransactionID(rawID)
+            guard let transaction = transactions[id] else { return nil }
+            let events = receiptGroups[rawID] ?? []
+            let cursor = transaction.pendingResult?.cursor ?? self.cursor()
+            let paths = events.map(\.path)
+            let digest = try JSONEncoder.sorted.encode(
+                [cursor.root, cursor.generation, String(cursor.sequence)] + paths
+            ).applySHA256
+            return .init(transactionID: id, cursor: cursor, paths: paths, digest: digest,
+                recordedAt: transaction.pendingResult?.diffArtifact.expiresAt ?? cutoverTime,
+                terminalAt: transaction.pendingResult?.diffArtifact.expiresAt.flatMap { expiry in
+                    transaction.request.map { expiry.addingTimeInterval(-TimeInterval($0.retentionSeconds)) }
+                })
+        }
+        return .init(sourceDigest: sourceDigest,
+            cursorBinding: .init(root: root.standardizedFileURL.resolvingSymlinksInPath().path,
+                generation: generation), registry: registry,
+            transactions: transactionSnapshots, runtimeReceipts: receipts,
+            controlReceipts: controlReceipts, consumedOwnerProofIDs: consumedOwnerProofIDs)
+    }
+
     func appendJournal(_ id: ApplyChangeSetTransactionID, phase: String, path: String? = nil) async {
         guard var transaction = transactions[id] else { persistenceFailure = ApplyChangeSetError(.changeSetStoreCorrupt); return }
         do {
@@ -3205,11 +4358,12 @@ private extension ApplyChangeSetState {
                 manifestDigest: transaction.manifestDigest)
             var framed = Data(previous.utf8); framed.append(try JSONEncoder.sorted.encode(payload))
             let entry = TransactionJournalEntry(payload: payload, digest: framed.applySHA256)
+            transaction.journal.append(entry); transactions[id] = transaction
+            if dedicatedStoreMode { return }
             let directory = stateDirectory.appendingPathComponent("journals", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let url = directory.appendingPathComponent(id.rawValue).appendingPathExtension("jsonl")
             var line = try JSONEncoder.sorted.encode(entry); line.append(0x0A)
-            transaction.journal.append(entry); transactions[id] = transaction
             if let context = try quotaPersistenceContext() {
                 let entryDirectory = directory.appendingPathComponent(id.rawValue, isDirectory: true)
                 try FileManager.default.createDirectory(at: entryDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -3224,7 +4378,8 @@ private extension ApplyChangeSetState {
                 close(fd)
             }
         } catch let error as ApplyChangeSetError { persistenceFailure = error }
-        catch { persistenceFailure = ApplyChangeSetError(.changeSetStoreCorrupt, "journal encoding failed") }
+        catch { persistenceFailure = ApplyChangeSetError(.changeSetStoreCorrupt,
+            "journal persistence failed: \(error)") }
     }
     func persistOrRecord() async {
         guard persistenceFailure == nil else { return }
@@ -3247,7 +4402,8 @@ private extension ApplyChangeSetState {
             persistenceFailure = nil
         }
         catch let error as ApplyChangeSetError { persistenceFailure = error }
-        catch { persistenceFailure = ApplyChangeSetError(.changeSetStoreCorrupt, "state quota persistence failed") }
+        catch { persistenceFailure = ApplyChangeSetError(.changeSetStoreCorrupt,
+            "state quota persistence failed: \(error)") }
     }
     private func persistQuotaHandoff(
         context: (ledger: ChangeSetQuotaLedger, digest: String, reservationID: String),
@@ -3607,6 +4763,35 @@ private extension ApplyChangeSetState {
         await persistOrRecord()
     }
     func hasConcurrencyProbe(_ key: String) -> Bool { orphanPins[key] == true }
+    func persistLegacySnapshotForCutoverTesting() throws {
+        dedicatedStoreMode = false
+        let fileManager = FileManager.default
+        let journalRoot = stateDirectory.appendingPathComponent("journals", isDirectory: true)
+        if fileManager.fileExists(atPath: journalRoot.path) {
+            try fileManager.removeItem(at: journalRoot)
+        }
+        try fileManager.createDirectory(at: journalRoot, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        for (id, transaction) in transactions where !transaction.journal.isEmpty {
+            let directory = journalRoot.appendingPathComponent(id.rawValue, isDirectory: true)
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+            for (offset, entry) in transaction.journal.enumerated() {
+                var line = try JSONEncoder.sorted.encode(entry)
+                line.append(0x0A)
+                try Self.atomicDurableWrite(line, to: directory.appendingPathComponent(
+                    String(format: "entry-%06d.json", offset + 1)))
+            }
+        }
+        try persist()
+    }
+    func restoreLegacyClientForCutoverTesting(_ request: ApplyChangeSetRequest) {
+        guard let index = slots.firstIndex(where: { $0.id == request.clientID }) else { return }
+        slots[index].active = true
+        slots[index].epoch = request.clientEpoch
+        slots[index].highWater = max(slots[index].highWater, request.requestSequence - 1)
+        slots[index].nonterminal = true
+    }
     func expireControlReceipts(now: Date) async { controlReceipts = controlReceipts.filter { $0.value.expiresAt > now }; await persistOrRecord() }
     func saveControlReceipt(_ id: String, requestDigest: String, proofID: String, result: ApplyChangeSetControlResult, expiry: Date) throws { consumedOwnerProofIDs.insert(proofID); controlReceipts[id] = .init(expiresAt: expiry, requestDigest: requestDigest, result: result); try persist() }
 
@@ -3671,6 +4856,7 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
     private let clock: ApplyChangeSetTestClock
     private let sequenceLock = NSLock()
     private var synchronousSequence = 1
+    private var externalCleanupURLs: [URL] = []
 
     deinit { ApplyChangeSetSecretStore.removeKeyForTesting(stateDirectory: stateDirectory) }
 
@@ -3691,15 +4877,44 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
         try FileManager.default.linkItem(at: hardA, to: hardB)
     }
 
+    private func registerExternalCleanup(_ urls: [URL]) {
+        sequenceLock.lock()
+        externalCleanupURLs.append(contentsOf: urls)
+        sequenceLock.unlock()
+    }
+
+    public func cleanupExternalFixtures() {
+        sequenceLock.lock()
+        let urls = externalCleanupURLs
+        externalCleanupURLs.removeAll()
+        sequenceLock.unlock()
+        for url in urls { try? FileManager.default.removeItem(at: url) }
+    }
+
     public func allocateClients(count: Int, service: ApplyChangeSetService) async throws -> [ApplyChangeSetClient] {
         var clients: [ApplyChangeSetClient] = []
         for _ in 0..<count { if let client = try await service.control(controlRequest(action: .allocate)).client { clients.append(client) } }
         return clients
     }
     public func seedControlReceipts(count: Int, service: ApplyChangeSetService) async throws {
-        let now = await clock.now(); for index in 0..<count { let id = String(format: "c011ec70-0000-4000-8000-%012d", index + 1); try await state.saveControlReceipt(id, requestDigest: id, proofID: id, result: .init(controlRequestID: id, client: nil, transactionResult: nil), expiry: now.addingTimeInterval(300)) }
+        while await service.registryControlReceiptCountForTesting(at: await clock.now()) < count {
+            let snapshot = await service.registrySnapshotForTesting()
+            if let slot = snapshot.slots.first(where: { $0.allocationState == .active }) {
+                _ = try await service.control(controlRequest(action: .retire(
+                    clientID: slot.clientID, expectedEpoch: Int(slot.currentEpoch))))
+            } else {
+                _ = try await service.control(controlRequest(action: .allocate))
+            }
+        }
     }
-    public func nextSequence(_ client: ApplyChangeSetClient) async throws -> Int { (await state.slot(id: client.clientID)?.highWater ?? 0) + 1 }
+    public func nextSequence(_ client: ApplyChangeSetClient,
+        service: ApplyChangeSetService) async throws -> Int {
+        let snapshot = await service.registrySnapshotForTesting()
+        guard let slot = snapshot.slots.first(where: { $0.clientID == client.clientID }) else {
+            throw ApplyChangeSetError(.changeSetClientNotRegistered)
+        }
+        return Int(slot.highWater + 1)
+    }
     public func metadata(_ url: URL) throws -> ApplyChangeSetMetadata { .init(mode: UInt16(((try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0))) }
     public func publicTreeDigest(_ directory: URL) throws -> String {
         let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
@@ -3755,10 +4970,97 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
     }
     public func prepareRecoverableTransaction(service: ApplyChangeSetService, request: ApplyChangeSetRequest) async throws -> ApplyChangeSetTransactionID { let id=ApplyChangeSetTransactionID(request.transactionIdentity); await state.storeTransaction(.init(id:id,request:request,state:.recoveryRequired,corrupt:false,materialExists:true,retention:.pinned,admitted:true,targetReceipts:0)); if let index = await state.slots.firstIndex(where:{$0.id==request.clientID}) { await state.setNonterminal(index) }; return id }
     public func deleteRequest(root: URL, client: ApplyChangeSetClient, service: ApplyChangeSetService) async throws -> ApplyChangeSetRequest { let path="delete-only"; try Data("delete".utf8).write(to:root.appendingPathComponent(path)); return try await request(root:root,client:client,service:service,changes:[.delete(id:"delete",path:path,expected:.file(Data("delete".utf8).applySHA256))]) }
-    public func prepareTrashRecovery(service: ApplyChangeSetService, ambiguity: ApplyChangeSetTrashRecoveryAmbiguity) async throws -> ApplyChangeSetTransactionID { let client = await state.firstActiveClient()!; let request = try await deleteRequest(root:root,client:client,service:service); let id=ApplyChangeSetTransactionID(request.transactionIdentity); await state.storeTransaction(.init(id:id,request:request,state:.recoveryRequired,corrupt:false,materialExists:true,retention:.pinned,admitted:true,targetReceipts:-1)); return id }
+    public func installTrashAmbiguity(for request: ApplyChangeSetRequest,
+        ambiguity: ApplyChangeSetTrashRecoveryAmbiguity) async throws {
+        let transaction = ApplyChangeSetTransactionID(request.transactionIdentity)
+        guard let deletion = request.changes.compactMap({ change -> (String, String)? in
+            if case let .delete(id, path, _) = change { return (id, path) }
+            return nil
+        }).first, let intent = await state.trashIntent(transaction, changeID: deletion.0) else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "trash intent fixture is absent")
+        }
+        let candidate = URL(fileURLWithPath: intent.candidatePath)
+        switch ambiguity {
+        case .missingReceipt:
+            try FileManager.default.removeItem(at: candidate)
+        case .multipleCandidates:
+            var resultURL: NSURL?
+            try FileManager.default.trashItem(at: candidate, resultingItemURL: &resultURL)
+            guard let result = resultURL as URL? else {
+                throw ApplyChangeSetError(.changeSetRecoveryRequired, "trash fixture result is absent")
+            }
+            let duplicate = result.deletingLastPathComponent()
+                .appendingPathComponent("\(result.lastPathComponent)-duplicate-\(UUID().uuidString)")
+            try FileManager.default.linkItem(at: result, to: duplicate)
+            registerExternalCleanup([result, duplicate])
+        case .identityMismatch:
+            var resultURL: NSURL?
+            try FileManager.default.trashItem(at: candidate, resultingItemURL: &resultURL)
+            guard let result = resultURL as URL? else {
+                throw ApplyChangeSetError(.changeSetRecoveryRequired, "trash fixture result is absent")
+            }
+            try FileManager.default.removeItem(at: result)
+            try Data("different-trash-identity".utf8).write(to: result)
+            registerExternalCleanup([result])
+        }
+    }
     public func transactionState(for request: ApplyChangeSetRequest) async throws -> ApplyChangeSetTransactionState { await state.transactions[ApplyChangeSetTransactionID(request.transactionIdentity)]?.state ?? .prepared }
     public func transactionJournalStates(for request: ApplyChangeSetRequest) async throws -> [ApplyChangeSetTransactionState] {
         await state.transactions[ApplyChangeSetTransactionID(request.transactionIdentity)]?.journal.map(\.payload.state) ?? []
+    }
+    public func installLegacyRolledBackCutoverFixture(for request: ApplyChangeSetRequest) async throws {
+        let id = ApplyChangeSetTransactionID(request.transactionIdentity)
+        await state.markRollbackDecided(id)
+        try await state.requirePersistenceHealthy()
+        await state.markRolledBack(id)
+        try await state.requirePersistenceHealthy()
+        await state.restoreLegacyClientForCutoverTesting(request)
+        guard let reservationID = await state.reservationID(id) else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt)
+        }
+        try await state.persistLegacySnapshotForCutoverTesting()
+        let reservationDirectory = stateDirectory.appendingPathComponent("reservations", isDirectory: true)
+        let quotaPrefix = ".aishell-quota-\(reservationID)"
+        let quotaArtifacts = (FileManager.default.enumerator(at: base,
+            includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? []).filter {
+                $0.lastPathComponent.hasPrefix(quotaPrefix)
+            }
+        for url in quotaArtifacts.sorted(by: { $0.path.count > $1.path.count }) {
+            try FileManager.default.removeItem(at: url)
+        }
+        let ledgerURL = reservationDirectory.appendingPathComponent("quota-\(reservationID).json")
+        if FileManager.default.fileExists(atPath: ledgerURL.path) {
+            try FileManager.default.removeItem(at: ledgerURL)
+        }
+        _ = try await prepareTestingQuota(.init(id: reservationID,
+            requestDigest: ApplyChangeSetService.requestDigest(request), request: request))
+        for name in ["client-registry", "transaction-store", "legacy-control-compat", "cross-store-cutover"] {
+            let url = stateDirectory.appendingPathComponent(name, isDirectory: true)
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+    public func installLegacyCommittedCutoverFixture(for request: ApplyChangeSetRequest) async throws {
+        await state.restoreLegacyClientForCutoverTesting(request)
+        try await state.persistLegacySnapshotForCutoverTesting()
+        for name in ["client-registry", "transaction-store", "legacy-control-compat", "cross-store-cutover"] {
+            let url = stateDirectory.appendingPathComponent(name, isDirectory: true)
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+    }
+    public func installCorruptLegacyJournalResidue() throws {
+        let directory = stateDirectory.appendingPathComponent("journals", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700])
+        try Data("not-a-journal".utf8).write(to: directory.appendingPathComponent("stale.jsonl"))
+    }
+    public func legacyJournalResidueExists() -> Bool {
+        FileManager.default.fileExists(atPath: stateDirectory.appendingPathComponent("journals").path)
+            || FileManager.default.fileExists(atPath: stateDirectory
+                .appendingPathComponent(".retired-transaction-journals").path)
     }
     public func simulateStateLeadingJournalWrite(for request: ApplyChangeSetRequest) async throws {
         try await state.simulateStateLeadingJournalWrite(ApplyChangeSetTransactionID(request.transactionIdentity))
@@ -3778,9 +5080,38 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
         for key in keys where !(await state.hasConcurrencyProbe(key)) { return false }
         return true
     }
-    public func corrupt(transaction: ApplyChangeSetTransactionID, as corruption: ApplyChangeSetStoreCorruption) async throws { await state.corrupt(transaction) }
+    public func corrupt(transaction: ApplyChangeSetTransactionID,
+        as corruption: ApplyChangeSetStoreCorruption, service: ApplyChangeSetService) async throws {
+        let transactionDirectory = stateDirectory
+            .appendingPathComponent("transaction-store/transactions", isDirectory: true)
+            .appendingPathComponent(ChangeSetTransactionStore.directoryName(for: transaction.rawValue),
+                isDirectory: true)
+        switch corruption {
+        case .missingManifest:
+            try FileManager.default.removeItem(at: transactionDirectory.appendingPathComponent("journal.wal"))
+        case .malformedManifest:
+            let journal = transactionDirectory.appendingPathComponent("journal.wal")
+            let handle = try FileHandle(forWritingTo: journal)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data("{\"complete\":\"invalid\"}\n".utf8))
+            try handle.synchronize()
+        case .digestMismatch:
+            try Data("invalid-encrypted-snapshot".utf8).write(
+                to: transactionDirectory.appendingPathComponent("snapshot.enc"), options: .atomic)
+        case .receiptGap:
+            try await service.syncDedicatedTransactionForTesting(transaction)
+            try await service.removeDedicatedRuntimeReceiptForTesting(transaction)
+        }
+    }
     public func corruptCheckpoint(transaction: ApplyChangeSetTransactionID, as corruption: ApplyChangeSetCheckpointCorruption) async throws { await state.corrupt(transaction) }
-    public func transactionMaterialExists(_ transaction: ApplyChangeSetTransactionID) async throws -> Bool { await state.transactions[transaction]?.materialExists ?? false }
+    public func transactionMaterialExists(_ transaction: ApplyChangeSetTransactionID) async throws -> Bool {
+        let directory = stateDirectory
+            .appendingPathComponent("transaction-store/transactions", isDirectory: true)
+            .appendingPathComponent(ChangeSetTransactionStore.directoryName(for: transaction.rawValue),
+                isDirectory: true)
+        return FileManager.default.fileExists(atPath: directory.path)
+    }
     public func hasStablePartialGraph() async throws -> Bool {
         let transactions = await state.transactions.values
         for transaction in transactions where transaction.admitted && transaction.state != .committed && transaction.state != .finalized && transaction.state != .abortedBeforeSideEffect {
@@ -3789,9 +5120,14 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
         }
         return false
     }
-    public func deliverFSEventsEcho(for request: ApplyChangeSetRequest) async throws {}
-    public func delta(from cursor: ApplyChangeSetCursor) async throws -> ApplyChangeSetDelta { .init(events: await state.runtimeEvents) }
-    public func fullRescanCount() async throws -> Int { await state.fullRescans }
+    public func workspaceSnapshot(since cursor: String? = nil) async throws -> WorkspaceSnapshot {
+        try await workspaceRuntime.snapshot(path: root.path, sinceCursor: cursor)
+    }
+    public func workspaceScanCount() async -> Int { await workspaceRuntime.scanInvocationCountForTests() }
+    public func deliverFSEventsEcho(for request: ApplyChangeSetRequest) async throws {
+        let paths = Set(request.changes.flatMap(\.paths)).map { root.appendingPathComponent($0).path }
+        await workspaceRuntime.ingestObservedPaths(paths.sorted())
+    }
     public func runtimeCommitCount(_ request: ApplyChangeSetRequest) async throws -> Int { await state.runtimeCommitted.contains(request.transactionIdentity) ? 1 : 0 }
     public func trashReceiptCount(_ request: ApplyChangeSetRequest) async throws -> Int { await state.trashReceiptCount(ApplyChangeSetTransactionID(request.transactionIdentity)) }
     public func internalDeleteBackupWasPinnedUntilReceipt(_ request: ApplyChangeSetRequest) async throws -> Bool {
@@ -3822,15 +5158,35 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
     public func removeReplaySlot(sequence: Int) async throws { await state.removeReplay(sequence:sequence) }
 
     public func allocateClient(service: ApplyChangeSetService) async throws -> ApplyChangeSetClient { guard let c=try await service.control(controlRequest(action:.allocate)).client else { throw ApplyChangeSetError(.changeSetClientCapacityExceeded) }; return c }
-    public func retireTerminalClient(slot: Int, service: ApplyChangeSetService) async throws -> ApplyChangeSetClient { let c=await state.client(slot:slot); _=try await service.control(controlRequest(action:.retire(clientID:c.clientID,expectedEpoch:c.epoch))); return c }
-    public func registrySlotCount() async throws -> Int { await state.slots.count }
+    public func retireTerminalClient(slot: Int, service: ApplyChangeSetService) async throws -> ApplyChangeSetClient {
+        let value = (await service.registrySnapshotForTesting()).slots[slot]
+        let client = ApplyChangeSetClient(clientID: value.clientID,
+            epoch: Int(value.currentEpoch), slot: slot)
+        _ = try await service.control(controlRequest(action: .retire(
+            clientID: client.clientID, expectedEpoch: client.epoch)))
+        return client
+    }
+    public func registrySlotCount(service: ApplyChangeSetService) async throws -> Int {
+        await service.registrySnapshotForTesting().slots.count
+    }
     public func performControl(with tamper: ApplyChangeSetOwnerProofTamper, service: ApplyChangeSetService) async throws -> ApplyChangeSetControlResult { try await service.control(.init(action:.allocate,ownerProof:"tampered-\(tamper)")) }
-    public func makeClientNonterminal(_ client: ApplyChangeSetClient) async throws { await state.makeNonterminal(client) }
+    public func makeClientNonterminal(_ client: ApplyChangeSetClient,
+        service: ApplyChangeSetService) async throws {
+        try await service.admitRegistryReplayForTesting(client)
+    }
     public func rotate(_ client: ApplyChangeSetClient, service: ApplyChangeSetService) async throws -> ApplyChangeSetControlResult { try await service.control(controlRequest(action:.rotate(clientID:client.clientID,expectedEpoch:client.epoch))) }
     public func retire(_ client: ApplyChangeSetClient, service: ApplyChangeSetService) async throws -> ApplyChangeSetControlResult { try await service.control(controlRequest(action:.retire(clientID:client.clientID,expectedEpoch:client.epoch))) }
-    public func reinitializeRegistry(service: ApplyChangeSetService) async throws -> ApplyChangeSetControlResult { try await service.control(controlRequest(action:.reinitialize(expectedGeneration:1))) }
+    public func reinitializeRegistry(service: ApplyChangeSetService) async throws -> ApplyChangeSetControlResult {
+        let generation = await service.registrySnapshotForTesting().generation
+        return try await service.control(controlRequest(action: .reinitialize(
+            expectedGeneration: Int(generation))))
+    }
     public func runControlRace(_ race: ApplyChangeSetControlRace, service: ApplyChangeSetService) async throws -> [Result<ApplyChangeSetControlResult,Error>] { let success=try await service.control(controlRequest(action:.allocate)); return [.success(success),.failure(ApplyChangeSetError(.clientEpochChanged))] }
-    public func registryIsInternallyConsistent() async throws -> Bool { await state.registryConsistent() }
+    public func registryIsInternallyConsistent(service: ApplyChangeSetService) async throws -> Bool {
+        let slots = await service.registrySnapshotForTesting().slots
+        return slots.count == ChangeSetClientRegistry.slotCount
+            && Set(slots.map(\.clientID)).count == ChangeSetClientRegistry.slotCount
+    }
     public func pendingControlOperation(service: ApplyChangeSetService) async throws -> ApplyChangeSetPendingControl { .init(request:try await controlRequest(action:.allocate)) }
     public func performFreshControl(service: ApplyChangeSetService) async throws -> ApplyChangeSetControlResult { try await service.control(controlRequest(action:.allocate)) }
 
@@ -3916,9 +5272,9 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
     }
     public func isAdmitted(_ request: ApplyChangeSetRequest) async throws -> Bool { await state.transactions[ApplyChangeSetTransactionID(request.transactionIdentity)]?.admitted ?? false }
     public func admissionCount(_ request: ApplyChangeSetRequest) async throws -> Int { try await isAdmitted(request) ? 1 : 0 }
-    public func installOrphan(_ orphan: ApplyChangeSetOrphanCase) async throws -> String {
+    public func installOrphan(_ orphan: ApplyChangeSetOrphanCase,
+        client: ApplyChangeSetClient) async throws -> String {
         let id = UUID().uuidString.lowercased()
-        let client = await state.firstActiveClient()!
         let request = ApplyChangeSetRequest(clientID: client.clientID, clientEpoch: client.epoch, requestSequence: 1,
             cursor: await state.cursor(), changes: [.create(id: "o", path: "o", expected: .absent, content: .utf8("o"))],
             diffByteBudget: 1, retentionSeconds: 1)
@@ -3931,12 +5287,22 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
         return id
     }
     public func reservationExists(_ id: String) async throws -> Bool { await state.reservations[id] != nil }
-    public func installReservationTerminalCase(_ terminal: ApplyChangeSetReservationTerminalCase) async throws -> ApplyChangeSetTransactionID {
-        let client = await state.firstActiveClient()!
+    public func installReservationTerminalCase(_ terminal: ApplyChangeSetReservationTerminalCase,
+        client: ApplyChangeSetClient, service: ApplyChangeSetService) async throws -> ApplyChangeSetTransactionID {
         let request = ApplyChangeSetRequest(clientID: client.clientID, clientEpoch: client.epoch, requestSequence: 1, cursor: await state.cursor(), changes: [.create(id: "t", path: "t", expected: .absent, content: .utf8("t"))], diffByteBudget: 1, retentionSeconds: 1)
         let id = ApplyChangeSetTransactionID()
-        let transactionState: ApplyChangeSetTransactionState = terminal == .commitDecided ? .commitDecided : (terminal == .pristine ? .prepared : .recoveryRequired)
-        await state.storeTransaction(.init(id: id, request: request, state: transactionState, corrupt: terminal == .corruptUnknown, materialExists: true, retention: .pinned, admitted: true, targetReceipts: terminal == .hasTargetReceipt ? 1 : 0))
+        await state.storeTransaction(.init(id: id, request: request, state: .prepared,
+            corrupt: false, materialExists: true, retention: .pinned, admitted: true,
+            targetReceipts: 0))
+        try await service.installPreparedAdmissionForTesting(request, transaction: id)
+        if terminal != .pristine {
+            let transactionState: ApplyChangeSetTransactionState = terminal == .commitDecided
+                ? .commitDecided : .recoveryRequired
+            await state.storeTransaction(.init(id: id, request: request, state: transactionState,
+                corrupt: terminal == .corruptUnknown, materialExists: true, retention: .pinned,
+                admitted: true, targetReceipts: terminal == .hasTargetReceipt ? 1 : 0))
+            try await service.syncDedicatedTransactionForTesting(id)
+        }
         return id
     }
     public func ownerAbort(_ transaction: ApplyChangeSetTransactionID, service: ApplyChangeSetService) async throws -> ApplyChangeSetResult { guard let r=try await service.control(controlRequest(action:.abort(transaction:transaction))).transactionResult else { throw ApplyChangeSetError(.changeSetRecoveryRequired) }; return r }
@@ -3948,6 +5314,23 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
     public func installLegacyCursorAndCheckpoint() async throws { await state.clearLegacyFlags() }
     public func legacyCursorIsExpired() async throws -> Bool { await state.legacyExpired }
     public func legacyCheckpointEntriesWereReused() async throws -> Bool { await state.legacyReused }
+    public func durableStateSchemaAndKeys() throws -> (schema: String, keys: Set<String>) {
+        let url = stateDirectory.appendingPathComponent("apply-change-set-state.enc.json")
+        let envelope = try JSONDecoder().decode(EncryptedStateEnvelope.self, from: Data(contentsOf: url))
+        guard let nonce = Data(base64Encoded: envelope.nonce),
+              let ciphertext = Data(base64Encoded: envelope.ciphertext),
+              let tag = Data(base64Encoded: envelope.tag) else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt)
+        }
+        let box = try AES.GCM.SealedBox(nonce: .init(data: nonce), ciphertext: ciphertext, tag: tag)
+        let plaintext = try AES.GCM.open(box, using: secretStore.key,
+            authenticating: Data("aishell.apply-change-set-state-envelope.v1".utf8))
+        guard let object = try JSONSerialization.jsonObject(with: plaintext) as? [String: Any],
+              let schema = object["schema"] as? String else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt)
+        }
+        return (schema, Set(object.keys))
+    }
     public func assertReservedNamespaceExcludedFromEveryReader(_ root: URL) async throws { let digest=try publicTreeDigest(root); guard !digest.isEmpty else { throw ApplyChangeSetError(.reservedNamespaceConflict) } }
     public func replaceNamespace(with corruption: ApplyChangeSetNamespaceCorruption) async throws {
         let namespace = root.appendingPathComponent(".aishell-transactions", isDirectory: true)
@@ -3980,7 +5363,7 @@ public final class ApplyChangeSetTestProbe: @unchecked Sendable {
         try data.write(to: marker, options: .atomic)
     }
 
-    private func request(root: URL, client: ApplyChangeSetClient, service: ApplyChangeSetService, changes: [ApplyChangeSetChange]) async throws -> ApplyChangeSetRequest { .init(clientID:client.clientID,clientEpoch:client.epoch,requestSequence:try await nextSequence(client),cursor:try await service.currentCursor(root:root),changes:changes,diffByteBudget:65_536,retentionSeconds:3_600) }
+    private func request(root: URL, client: ApplyChangeSetClient, service: ApplyChangeSetService, changes: [ApplyChangeSetChange]) async throws -> ApplyChangeSetRequest { .init(clientID:client.clientID,clientEpoch:client.epoch,requestSequence:try await nextSequence(client, service:service),cursor:try await service.currentCursor(root:root),changes:changes,diffByteBudget:65_536,retentionSeconds:3_600) }
     private func controlRequest(action: ApplyChangeSetControlAction) async throws -> ApplyChangeSetControlRequest {
         let id = UUID().uuidString.lowercased()
         let proof = try secretStore.issueOwnerProof(controlRequestID: id, action: action, root: root, expiresAt: await clock.now().addingTimeInterval(300))

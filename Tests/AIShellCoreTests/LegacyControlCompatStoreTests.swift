@@ -5,6 +5,79 @@ import XCTest
 @testable import AIShellCore
 
 final class LegacyControlCompatStoreTests: XCTestCase {
+    func testRecordPersistsExactReplayAndConsumesProofAcrossRestart() async throws {
+        let fixture = try Fixture()
+        let store = try fixture.store()
+        try await store.importLegacy(fixture.emptySnapshot())
+
+        let recorded = try await store.record(
+            controlRequestID: fixture.requestID,
+            requestDigest: fixture.requestDigest,
+            proofID: fixture.proofID,
+            result: fixture.result,
+            expiresAt: fixture.now.addingTimeInterval(60),
+            now: fixture.now)
+        XCTAssertEqual(recorded, fixture.result)
+
+        let restarted = try fixture.store()
+        let replay = try await restarted.record(
+            controlRequestID: fixture.requestID,
+            requestDigest: fixture.requestDigest,
+            proofID: fixture.proofID,
+            result: fixture.result,
+            expiresAt: fixture.now.addingTimeInterval(120),
+            now: fixture.now)
+        XCTAssertEqual(replay, fixture.result)
+        let proofConsumedAfterRestart = await restarted.consumedOwnerProof(fixture.proofID)
+        XCTAssertTrue(proofConsumedAfterRestart)
+
+        await XCTAssertCompatError(.requestConflict) {
+            _ = try await restarted.record(
+                controlRequestID: fixture.requestID,
+                requestDigest: fixture.digest("different-request"),
+                proofID: "other-proof",
+                result: fixture.result,
+                expiresAt: fixture.now.addingTimeInterval(60),
+                now: fixture.now)
+        }
+        await XCTAssertCompatError(.proofConsumed) {
+            _ = try await restarted.record(
+                controlRequestID: "control-request-2",
+                requestDigest: fixture.digest("request-2"),
+                proofID: fixture.proofID,
+                result: ApplyChangeSetControlResult(
+                    controlRequestID: "control-request-2", client: nil, transactionResult: nil),
+                expiresAt: fixture.now.addingTimeInterval(60),
+                now: fixture.now)
+        }
+    }
+
+    func testRecordCrashAfterRenameIsExactlyRestartable() async throws {
+        let fixture = try Fixture()
+        let initial = try fixture.store()
+        try await initial.importLegacy(fixture.emptySnapshot())
+
+        let crashing = try fixture.store(failurePoint: .afterRename)
+        await XCTAssertCompatError(.storeCorrupt) {
+            _ = try await crashing.record(
+                controlRequestID: fixture.requestID,
+                requestDigest: fixture.requestDigest,
+                proofID: fixture.proofID,
+                result: fixture.result,
+                expiresAt: fixture.now.addingTimeInterval(60),
+                now: fixture.now)
+        }
+
+        let restarted = try fixture.store()
+        let replay = try await restarted.lookup(
+            controlRequestID: fixture.requestID,
+            requestDigest: fixture.requestDigest,
+            now: fixture.now)
+        XCTAssertEqual(replay, .replay(fixture.result))
+        let proofConsumedAfterCrash = await restarted.consumedOwnerProof(fixture.proofID)
+        XCTAssertTrue(proofConsumedAfterCrash)
+    }
+
     func testLegacyReceiptExactReplaySurvivesRestartAndDigestConflictFailsClosed() async throws {
         let fixture = try Fixture()
         let snapshot = fixture.snapshot(expiresAt: fixture.now.addingTimeInterval(60))
@@ -318,6 +391,13 @@ private struct Fixture {
             receipts: [requestID: LegacyControlCompatReceipt(
                 expiresAt: expiresAt, requestDigest: requestDigest, result: result)],
             consumedOwnerProofIDs: proofIDs ?? [proofID])
+    }
+
+    func emptySnapshot() -> LegacyControlCompatSnapshot {
+        LegacyControlCompatSnapshot(
+            sourceDigest: sourceDigest,
+            receipts: [:],
+            consumedOwnerProofIDs: [])
     }
 
     func twoReceiptSnapshot(firstExpiry: Date, secondExpiry: Date) -> LegacyControlCompatSnapshot {

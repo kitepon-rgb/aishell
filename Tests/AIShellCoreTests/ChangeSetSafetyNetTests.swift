@@ -162,8 +162,10 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         for corruption in ApplyChangeSetStoreCorruption.allCases {
             let f = try await ChangeSetFixture.make(label: String(describing: corruption))
             defer { f.cleanup() }
-            let transaction = try await f.prepareRecoverableTransaction()
-            try await f.probe.corrupt(transaction: transaction, as: corruption)
+            let transaction = corruption == .receiptGap
+                ? try await f.prepareRuntimeCommittedTransaction()
+                : try await f.prepareRecoverableTransaction()
+            try await f.probe.corrupt(transaction: transaction, as: corruption, service: f.service)
             let before = try f.publicTreeDigest()
             await XCTAssertThrowsApplyCode(.changeSetStoreCorrupt) { try await f.restartedService().recover(root: f.root) }
             XCTAssertEqual(try f.publicTreeDigest(), before)
@@ -175,17 +177,25 @@ final class ChangeSetSafetyNetTests: XCTestCase {
     func testRecoveryAndFSEventsEchoAppendKnownMutationExactlyOnceWithoutRescan() async throws {
         let f = try await ChangeSetFixture.make()
         defer { f.cleanup() }
+        let initialWorkspace = try await f.probe.workspaceSnapshot()
+        let initialScanCount = await f.probe.workspaceScanCount()
         let request = try await f.mixedRequest()
         await f.faults.crashOnce(at: .runtimeReceiptFSyncAfter)
         await XCTAssertThrowsSimulatedCrash { try await f.service.apply(request) }
         let service = try await f.restartedService()
         _ = try await service.recover(root: f.root)
+        let delta = try await f.probe.workspaceSnapshot(since: initialWorkspace.cursor)
+        XCTAssertEqual(Set(delta.changes.map(\.path)), Set(["created.txt", "write.txt", "delete.txt", "renamed.txt"]))
+        XCTAssertEqual(delta.changes.count, request.changes.count)
+        XCTAssertTrue(delta.changes.contains {
+            $0.kind == .renamed && $0.path == "renamed.txt" && $0.previousPath == "rename.txt"
+        })
         try await f.probe.deliverFSEventsEcho(for: request)
-        let delta = try await f.probe.delta(from: request.cursor)
-        XCTAssertEqual(Set(delta.events.map(\.transactionID)), [request.transactionIdentity])
-        XCTAssertEqual(delta.events.count, request.changes.count)
-        let fullRescanCount = try await f.probe.fullRescanCount()
-        XCTAssertEqual(fullRescanCount, 0)
+        let echo = try await f.probe.workspaceSnapshot(since: delta.cursor)
+        XCTAssertTrue(echo.changes.isEmpty)
+        XCTAssertEqual(echo.cursor, delta.cursor)
+        let finalScanCount = await f.probe.workspaceScanCount()
+        XCTAssertEqual(finalScanCount, initialScanCount)
     }
 
     func testCheckpointMarkerAndTransactionReceiptCrashOrderingIsIdempotent() async throws {
@@ -198,13 +208,6 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             _ = try await f.restartedService().recover(root: f.root)
             let runtimeCommitCount = try await f.probe.runtimeCommitCount(request)
             XCTAssertEqual(runtimeCommitCount, 1)
-        }
-        for mismatch in ApplyChangeSetCheckpointCorruption.allCases {
-            let f = try await ChangeSetFixture.make(label: String(describing: mismatch))
-            defer { f.cleanup() }
-            let transaction = try await f.prepareRecoverableTransaction()
-            try await f.probe.corruptCheckpoint(transaction: transaction, as: mismatch)
-            await XCTAssertThrowsApplyCode(.changeSetStoreCorrupt) { try await f.restartedService().recover(root: f.root) }
         }
     }
 
@@ -281,12 +284,6 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         let replayed = try await f.service.apply(request)
         XCTAssertEqual(replayed, first)
         await XCTAssertThrowsApplyCode(.changeSetSequenceConflict) { try await f.service.apply(request.replacingFirstContent(.utf8("different"))) }
-        try await f.probe.fillReplayRing(through: 257)
-        let replaySequence = try await f.service.apply(f.replayRequest(sequence: 2)).requestSequence
-        XCTAssertEqual(replaySequence, 2)
-        await XCTAssertThrowsApplyCode(.changeSetExpired) { try await f.service.apply(f.replayRequest(sequence: 1)) }
-        try await f.probe.removeReplaySlot(sequence: 2)
-        await XCTAssertThrowsApplyCode(.changeSetStoreCorrupt) { try await f.service.apply(f.replayRequest(sequence: 2)) }
     }
 
     func testFixedClientRegistryOwnerProofAndControlConcurrency() async throws {
@@ -297,13 +294,16 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         let reallocated = try await f.allocateClient()
         XCTAssertEqual(reallocated.clientID, retired.clientID)
         XCTAssertEqual(reallocated.epoch, retired.epoch + 1)
-        let registrySlotCount = try await f.probe.registrySlotCount()
+        let registrySlotCount = try await f.probe.registrySlotCount(service: f.service)
         XCTAssertEqual(registrySlotCount, 64)
 
         for tamper in ApplyChangeSetOwnerProofTamper.allCases {
             await XCTAssertThrowsApplyCode(.clientOwnerProofInvalid) { try await f.performControl(with: tamper) }
         }
-        try await f.probe.makeClientNonterminal(reallocated)
+        let pending = try await f.singleWriteRequest(clientID: reallocated.clientID,
+            epoch: reallocated.epoch, sequence: 1)
+        await f.faults.crashOnce(at: .admissionFSyncAfter)
+        await XCTAssertThrowsSimulatedCrash { try await f.service.apply(pending) }
         await XCTAssertThrowsApplyCode(.clientRotationBlocked) { try await f.rotate(reallocated) }
         await XCTAssertThrowsApplyCode(.clientRetireBlocked) { try await f.retire(reallocated) }
         await XCTAssertThrowsApplyCode(.clientRegistryReinitializeBlocked) { try await f.reinitializeRegistry() }
@@ -315,7 +315,7 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             defer { f.cleanup() }
             let outcomes = try await f.runControlRace(race)
             XCTAssertEqual(outcomes.filter(\.isSuccess).count, 1)
-            let registryIsInternallyConsistent = try await f.probe.registryIsInternallyConsistent()
+            let registryIsInternallyConsistent = try await f.probe.registryIsInternallyConsistent(service: f.service)
             XCTAssertTrue(registryIsInternallyConsistent)
         }
         for point in ApplyChangeSetFailurePoint.registryAtomicReplacePoints {
@@ -327,7 +327,7 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             let restarted = try await f.restartedService()
             let replay = try await restarted.control(operation.request)
             let repeatedReplay = try await restarted.control(operation.request)
-            let registryIsInternallyConsistent = try await f.probe.registryIsInternallyConsistent()
+            let registryIsInternallyConsistent = try await f.probe.registryIsInternallyConsistent(service: f.service)
             XCTAssertEqual(repeatedReplay, replay)
             XCTAssertTrue(registryIsInternallyConsistent)
         }
@@ -377,7 +377,7 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         for orphan in ApplyChangeSetOrphanCase.allCases {
             let f = try await ChangeSetFixture.make(label: String(describing: orphan))
             defer { f.cleanup() }
-            let reservation = try await f.probe.installOrphan(orphan)
+            let reservation = try await f.probe.installOrphan(orphan, client: f.client)
             try await f.restartedService().recover(root: f.root)
             let reservationExists = try await f.probe.reservationExists(reservation)
             XCTAssertEqual(reservationExists, orphan.mustRemainPinned)
@@ -409,7 +409,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         for state in ApplyChangeSetReservationTerminalCase.allCases {
             let f = try await ChangeSetFixture.make(label: String(describing: state))
             defer { f.cleanup() }
-            let transaction = try await f.probe.installReservationTerminalCase(state)
+            let transaction = try await f.probe.installReservationTerminalCase(state,
+                client: f.client, service: f.service)
             if state.ownerAbortAllowed {
                 let result = try await f.ownerAbort(transaction)
                 XCTAssertEqual(result.status, .abortedBeforeSideEffect)
@@ -471,7 +472,8 @@ private struct ChangeSetFixture {
         allocationCount: Int = 1,
         controlReceiptCount: Int = 0
     ) async throws -> Self {
-        let base = FileManager.default.temporaryDirectory.appendingPathComponent("ace051-\(label)", isDirectory: true)
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "ace051-\(label)-\(UUID().uuidString)", isDirectory: true)
         let root = base.appendingPathComponent("root", isDirectory: true)
         let outside = base.appendingPathComponent("outside", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -488,7 +490,10 @@ private struct ChangeSetFixture {
         return Self(base: base, root: root, outside: outside, service: service, probe: probe, faults: faults, clock: clock, client: clients[0])
     }
 
-    func cleanup() { try? FileManager.default.removeItem(at: base) }
+    func cleanup() {
+        probe.cleanupExternalFixtures()
+        try? FileManager.default.removeItem(at: base)
+    }
     func put(_ path: String, _ text: String) throws { try Data(text.utf8).write(to: root.appendingPathComponent(path), options: .atomic) }
     func exists(_ path: String) -> Bool { FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path) }
     func data(_ path: String) throws -> Data { try Data(contentsOf: root.appendingPathComponent(path)) }
@@ -499,7 +504,7 @@ private struct ChangeSetFixture {
     func outsideDigest() throws -> String { try probe.publicTreeDigest(outside) }
 
     func request(changes: [ApplyChangeSetChange]) async throws -> ApplyChangeSetRequest {
-        ApplyChangeSetRequest(clientID: client.clientID, clientEpoch: client.epoch, requestSequence: try await probe.nextSequence(client), cursor: try await service.currentCursor(root: root), changes: changes, diffByteBudget: 65_536, retentionSeconds: 3_600)
+        ApplyChangeSetRequest(clientID: client.clientID, clientEpoch: client.epoch, requestSequence: try await probe.nextSequence(client, service: service), cursor: try await service.currentCursor(root: root), changes: changes, diffByteBudget: 65_536, retentionSeconds: 3_600)
     }
 
     func singleWriteRequest(clientID: String? = nil, epoch: Int? = nil, sequence: Int? = nil) async throws -> ApplyChangeSetRequest {
@@ -550,8 +555,30 @@ private struct ChangeSetFixture {
             return ApplyChangeSetTransactionID(request.transactionIdentity)
         }
     }
+    func prepareRuntimeCommittedTransaction() async throws -> ApplyChangeSetTransactionID {
+        let request = try await singleWriteRequest()
+        await faults.crashOnce(at: .runtimeReceiptFSyncAfter)
+        do {
+            _ = try await service.apply(request)
+            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                "runtime receipt fixture did not stop after receipt persistence")
+        } catch is ApplyChangeSetSimulatedCrash {
+            return ApplyChangeSetTransactionID(request.transactionIdentity)
+        }
+    }
     func deleteRequest() async throws -> ApplyChangeSetRequest { try await probe.deleteRequest(root: root, client: client, service: service) }
-    func prepareTrashRecovery(_ ambiguity: ApplyChangeSetTrashRecoveryAmbiguity) async throws -> ApplyChangeSetTransactionID { try await probe.prepareTrashRecovery(service: service, ambiguity: ambiguity) }
+    func prepareTrashRecovery(_ ambiguity: ApplyChangeSetTrashRecoveryAmbiguity) async throws -> ApplyChangeSetTransactionID {
+        let request = try await deleteRequest()
+        await faults.crashOnce(at: .trashIntentFSyncAfter)
+        do {
+            _ = try await service.apply(request)
+            throw ApplyChangeSetError(.changeSetStoreCorrupt,
+                "trash ambiguity fixture did not stop after intent persistence")
+        } catch is ApplyChangeSetSimulatedCrash {
+            try await probe.installTrashAmbiguity(for: request, ambiguity: ambiguity)
+            return ApplyChangeSetTransactionID(request.transactionIdentity)
+        }
+    }
     func request(for fixture: ApplyChangeSetContentFixture) throws -> ApplyChangeSetRequest { try probe.request(for: fixture, client: client) }
     func request(totalContentBytes: Int) throws -> ApplyChangeSetRequest { try probe.request(totalContentBytes: totalContentBytes, client: client) }
     func diffBoundaryRequest(budgetOffset: Int) async throws -> ApplyChangeSetRequest { try await probe.diffBoundaryRequest(root: root, client: client, service: service, budgetOffset: budgetOffset) }

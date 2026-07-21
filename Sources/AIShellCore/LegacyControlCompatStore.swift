@@ -43,6 +43,7 @@ public struct LegacyControlCompatStoreError: Error, Equatable, Sendable {
         case secretStoreUnavailable = "CHANGE_SET_SECRET_STORE_UNAVAILABLE"
         case importConflict = "LEGACY_CONTROL_COMPAT_IMPORT_CONFLICT"
         case requestConflict = "CLIENT_CONTROL_REQUEST_CONFLICT"
+        case proofConsumed = "CLIENT_OWNER_PROOF_INVALID"
         case capacityExceeded = "CLIENT_CONTROL_CAPACITY_EXCEEDED"
     }
 
@@ -74,7 +75,7 @@ public actor LegacyControlCompatStore {
         var generation: UInt64
         var receipts: [String: LegacyControlCompatReceipt]
         /// proof IDはreceipt expiryやpayload cleanupと独立したgrow-only setである。
-        let consumedOwnerProofIDs: Set<String>
+        var consumedOwnerProofIDs: Set<String>
     }
 
     private struct Envelope: Codable, Sendable {
@@ -212,6 +213,50 @@ public actor LegacyControlCompatStore {
         }
     }
 
+    /// cutover後にcompat surfaceが所有するcontrol（現在はowner abort）を、receiptとproof消費を
+    /// 一つのA/B generationへ原子的に保存する。同じrequestの再試行だけをexact replayする。
+    @discardableResult
+    public func record(
+        controlRequestID: String,
+        requestDigest: String,
+        proofID: String,
+        result: ApplyChangeSetControlResult,
+        expiresAt: Date,
+        now: Date
+    ) throws -> ApplyChangeSetControlResult {
+        guard var next = image else {
+            throw LegacyControlCompatStoreError(.storeCorrupt, "compatibility store is not initialized")
+        }
+        if let existing = next.receipts[controlRequestID] {
+            guard existing.requestDigest == requestDigest else {
+                throw LegacyControlCompatStoreError(.requestConflict)
+            }
+            guard existing.expiresAt > now else {
+                throw LegacyControlCompatStoreError(.requestConflict, "expired control request ID cannot be reused")
+            }
+            return existing.result
+        }
+        guard !next.consumedOwnerProofIDs.contains(proofID) else {
+            throw LegacyControlCompatStoreError(.proofConsumed)
+        }
+        next.receipts = next.receipts.filter { $0.value.expiresAt > now }
+        guard next.receipts.count < receiptCapacity else {
+            throw LegacyControlCompatStoreError(.capacityExceeded)
+        }
+        next.receipts[controlRequestID] = .init(
+            expiresAt: expiresAt,
+            requestDigest: requestDigest,
+            result: result
+        )
+        next.consumedOwnerProofIDs.insert(proofID)
+        guard next.generation < UInt64.max else {
+            throw LegacyControlCompatStoreError(.storeCorrupt, "compatibility generation exhausted")
+        }
+        next.generation += 1
+        try persist(next)
+        return result
+    }
+
     /// 期限切れpayloadだけを削除する。proof消費集合は一切縮めない。
     @discardableResult
     public func cleanupExpired(now: Date) throws -> Int {
@@ -341,7 +386,7 @@ public actor LegacyControlCompatStore {
         }
     }
 
-    /// 認証済みbank同士も、単一の単調なcleanup履歴として接続できなければforkである。
+    /// 認証済みbank同士も、単一のcleanup又はcontrol追加として接続できなければforkである。
     private static func validateAuthenticatedPair(_ lhs: Image, _ rhs: Image) throws {
         if lhs.generation == rhs.generation {
             guard lhs == rhs else {
@@ -353,10 +398,20 @@ public actor LegacyControlCompatStore {
         let high: Image
         if lhs.generation < rhs.generation { (low, high) = (lhs, rhs) }
         else { (low, high) = (rhs, lhs) }
+        let commonReceiptsAreStable = high.receipts.allSatisfy { id, receipt in
+            guard let previous = low.receipts[id] else { return true }
+            return previous == receipt
+        }
+        let addedReceiptCount = high.receipts.keys.filter { low.receipts[$0] == nil }.count
+        let proofGrowth = high.consumedOwnerProofIDs.subtracting(low.consumedOwnerProofIDs)
+        let cleanupTransition = high.consumedOwnerProofIDs == low.consumedOwnerProofIDs
+            && addedReceiptCount == 0
+            && high.receipts.allSatisfy({ id, receipt in low.receipts[id] == receipt })
+        let recordTransition = high.consumedOwnerProofIDs.isSuperset(of: low.consumedOwnerProofIDs)
+            && proofGrowth.count == 1 && addedReceiptCount == 1 && commonReceiptsAreStable
         guard low.generation < UInt64.max, high.generation == low.generation + 1,
               high.sourceDigest == low.sourceDigest,
-              high.consumedOwnerProofIDs == low.consumedOwnerProofIDs,
-              high.receipts.allSatisfy({ id, receipt in low.receipts[id] == receipt }) else {
+              cleanupTransition || recordTransition else {
             throw LegacyControlCompatStoreError(.storeCorrupt, "authenticated compatibility bank fork")
         }
     }
