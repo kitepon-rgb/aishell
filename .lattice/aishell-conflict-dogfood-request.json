@@ -1,0 +1,66 @@
+{
+  "schema": "lattice.run_request.v1",
+  "request_id": "aishell-changeset-conflict-dogfood-20260722",
+  "repo": {
+    "base_sha": "4f26475a46be5171a883181a00683f6e20258d43",
+    "root_kind": "git-worktree"
+  },
+  "capacity": {
+    "executors": 2
+  },
+  "todos": [
+    { "todo_id": "changeset-service" },
+    { "todo_id": "cutover-store" }
+  ],
+  "manual_witness": {
+    "changeset-service": {
+      "owns": [
+        { "kind": "path", "target": "Sources/AIShellCore/ChangeSetService.swift" }
+      ],
+      "reads": ["Sources/AIShellCore/ChangeSetTransactionStore.swift"],
+      "writes": [
+        "Sources/AIShellCore/ChangeSetService.swift",
+        "Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift"
+      ],
+      "resources": [],
+      "state_effects": [],
+      "sensor_provenance": { "queries": [
+        { "query_id": "q-service", "expect": { "kind": "path", "path": "Sources/AIShellCore/ChangeSetService.swift" } }
+      ] },
+      "affected_tests": ["Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift"],
+      "unknowns": []
+    },
+    "cutover-store": {
+      "owns": [
+        { "kind": "path", "target": "Sources/AIShellCore/ChangeSetService.swift" },
+        { "kind": "path", "target": "Sources/AIShellCore/ChangeSetCutoverCoordinator.swift" }
+      ],
+      "reads": ["Sources/AIShellCore/ChangeSetTransactionStore.swift"],
+      "writes": [
+        "Sources/AIShellCore/ChangeSetService.swift",
+        "Sources/AIShellCore/ChangeSetCutoverCoordinator.swift",
+        "Tests/AIShellCoreTests/ChangeSetCutoverCoordinatorTests.swift"
+      ],
+      "resources": [],
+      "state_effects": [],
+      "sensor_provenance": { "queries": [
+        { "query_id": "q-service", "expect": { "kind": "path", "path": "Sources/AIShellCore/ChangeSetService.swift" } },
+        { "query_id": "q-coordinator", "expect": { "kind": "path", "path": "Sources/AIShellCore/ChangeSetCutoverCoordinator.swift" } }
+      ] },
+      "affected_tests": ["Tests/AIShellCoreTests/ChangeSetCutoverCoordinatorTests.swift"],
+      "unknowns": []
+    }
+  },
+  "sensor_query_set": {
+    "queries": [
+      { "id": "q-status", "operation": "status" },
+      { "id": "q-service", "operation": "query", "target": "Sources/AIShellCore/ChangeSetService.swift" },
+      { "id": "q-coordinator", "operation": "query", "target": "Sources/AIShellCore/ChangeSetCutoverCoordinator.swift" }
+    ]
+  },
+  "executor_capability": {
+    "adapters": ["scripted"]
+  },
+  "claim_mode": "exact_minimum",
+  "request_digest": "a9e4c47bf597f90919b1bea208ed5e91e0f0353d3d7a91f28e9a7e6875e27062"
+}

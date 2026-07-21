@@ -5,6 +5,7 @@ dist/
 .backups/
 .npmrc
 *.tgz
+.lattice/runs/
 
 **/xcuserdata/
 
