@@ -30,7 +30,11 @@ final class FSEventsObserver: @unchecked Sendable {
     private let queue: DispatchQueue
     private var stream: FSEventStreamRef?
 
-    init(path: String, callback: @escaping @Sendable ([ObservedFileEvent]) -> Void) throws {
+    init(
+        path: String,
+        sinceEventID: UInt64? = nil,
+        callback: @escaping @Sendable ([ObservedFileEvent]) -> Void
+    ) throws {
         box = CallbackBox(callback: callback)
         queue = DispatchQueue(label: "jp.quolu.aishell.fsevents.\(UUID().uuidString)")
         var context = FSEventStreamContext(
@@ -65,7 +69,7 @@ final class FSEventsObserver: @unchecked Sendable {
             callback,
             &context,
             [path] as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            sinceEventID ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0.1,
             createFlags
         ) else {
