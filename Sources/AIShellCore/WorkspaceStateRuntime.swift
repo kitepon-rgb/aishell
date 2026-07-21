@@ -3,6 +3,18 @@ import Darwin
 import Foundation
 
 public actor WorkspaceStateRuntime {
+    public struct KnownMutation: Equatable, Sendable {
+        public let kind: WorkspaceChangeKind
+        public let path: String
+        public let previousPath: String?
+
+        public init(kind: WorkspaceChangeKind, path: String, previousPath: String? = nil) {
+            self.kind = kind
+            self.path = path
+            self.previousPath = previousPath
+        }
+    }
+
     private struct RootState {
         let root: URL
         let rootIdentity: String
@@ -13,6 +25,9 @@ public actor WorkspaceStateRuntime {
         var prefetchedPaths: Set<String>
         var prefetchedEntries: [String: WorkspaceEntry]
         var journal: ObservationJournal
+        var knownTransactionIDs: Set<String>
+        var knownChangesBySequence: [UInt64: WorkspaceChange]
+        var knownEchoes: [String: WorkspaceEntry?]
         var checkpointState: String
         var observer: FSEventsObserver?
         var lastAccessedAt: Date
@@ -138,13 +153,27 @@ public actor WorkspaceStateRuntime {
                 guard selected.contains(event.path) else { break }
                 processedSequence = event.sequence
             }
-            let changes = try reconcile(paths: observedPaths, state: &state)
+            var changes: [WorkspaceChange] = []
+            var externalPaths: [String] = []
+            for event in uniqueEvents where selected.contains(event.path) {
+                if let known = state.knownChangesBySequence[event.sequence] {
+                    changes.append(known)
+                } else {
+                    externalPaths.append(event.path)
+                }
+            }
+            changes.append(contentsOf: try reconcile(paths: externalPaths, state: &state))
+            changes.sort {
+                if $0.path != $1.path { return $0.path < $1.path }
+                return Self.changeOrder($0.kind) < Self.changeOrder($1.kind)
+            }
             for path in observedPaths {
                 let relative = Self.relativePath(path, root: state.root.path)
                 state.prefetchedPaths.remove(relative)
                 state.prefetchedEntries.removeValue(forKey: relative)
             }
             state.journal.discardEvents(through: processedSequence)
+            state.knownChangesBySequence = state.knownChangesBySequence.filter { $0.key > processedSequence }
             states[key] = state
             try await persistCheckpoint(state)
             let changedEntries = changes.compactMap(\.entry)
@@ -249,6 +278,69 @@ public actor WorkspaceStateRuntime {
         return result
     }
 
+    /// Filesystem commit時に実測した状態を、再scanせずentry indexとdelta journalへ反映する。
+    /// transactionIDは同一runtime内のrecovery再送を冪等にし、後着FSEvents echoは実測一致時だけ吸収する。
+    @discardableResult
+    public func appendKnownMutation(
+        transactionID: String,
+        rootPath: String? = nil,
+        changes: [KnownMutation]
+    ) async throws -> String {
+        guard !transactionID.isEmpty else {
+            throw AIShellError.invalidArgument("transactionIDは空にできません。")
+        }
+        let resolver = try await activeResolver()
+        let root = try resolver.resolveExisting(rootPath)
+        guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw AIShellError.invalidPath(root.path)
+        }
+        let key = root.path
+        if states[key] == nil { try await initialize(root: root, key: key, requestedCursor: nil) }
+        guard var state = states[key] else { throw AIShellError.invalidPath(root.path) }
+        if state.knownTransactionIDs.contains(transactionID) { return cursor(for: state) }
+
+        for mutation in changes {
+            guard !mutation.path.isEmpty,
+                  !mutation.path.hasPrefix("/"),
+                  !ReservedNamespacePolicy.contains(relativePath: mutation.path),
+                  mutation.previousPath.map({ !ReservedNamespacePolicy.contains(relativePath: $0) }) ?? true
+            else { throw AIShellError.reservedPath(mutation.path) }
+            let absolute = root.appendingPathComponent(mutation.path).standardizedFileURL
+            try ReservedNamespacePolicy.requirePublicPath(absolute, under: resolver.rootURLs)
+            let oldPath = mutation.previousPath
+            let measured = try currentEntry(url: absolute, root: root)
+            let change: WorkspaceChange
+            switch mutation.kind {
+            case .created, .modified:
+                guard let measured else { throw AIShellError.itemNotFound(absolute.path) }
+                state.entries[mutation.path] = measured
+                state.knownEchoes[mutation.path] = .some(measured)
+                change = WorkspaceChange(kind: mutation.kind, path: mutation.path, previousPath: nil, entry: measured)
+            case .deleted:
+                guard measured == nil else { throw AIShellError.contentChanged(absolute.path) }
+                state.entries.removeValue(forKey: mutation.path)
+                state.knownEchoes[mutation.path] = .some(nil)
+                change = WorkspaceChange(kind: .deleted, path: mutation.path, previousPath: nil, entry: nil)
+            case .renamed:
+                guard let oldPath, let measured else {
+                    throw AIShellError.invalidArgument("renameにはpreviousPathと存在するdestinationが必要です。")
+                }
+                state.entries.removeValue(forKey: oldPath)
+                state.entries[mutation.path] = measured
+                state.knownEchoes[oldPath] = .some(nil)
+                state.knownEchoes[mutation.path] = .some(measured)
+                change = WorkspaceChange(kind: .renamed, path: mutation.path, previousPath: oldPath, entry: measured)
+            }
+            let before = state.journal.sequence
+            state.journal.record([ObservedFileEvent(path: absolute.path, eventID: 0, flags: 0)])
+            state.knownChangesBySequence[before + 1] = change
+        }
+        state.knownTransactionIDs.insert(transactionID)
+        states[key] = state
+        try await persistCheckpoint(state)
+        return cursor(for: state)
+    }
+
     func scanInvocationCountForTests() -> Int { scanInvocationCount }
     func contentReadCountForTests() -> Int { contentReadCount }
 
@@ -320,6 +412,9 @@ public actor WorkspaceStateRuntime {
                 events: restored?.journalEvents ?? [],
                 retentionLimit: journalLimit
             ),
+            knownTransactionIDs: [],
+            knownChangesBySequence: [:],
+            knownEchoes: [:],
             checkpointState: checkpointRejectedForRebuild ? "rebuilt" : (restored == nil ? "missing" : "restored"),
             observer: nil,
             lastAccessedAt: Date()
@@ -385,7 +480,11 @@ public actor WorkspaceStateRuntime {
                     flags: $0.flags
                 )
             }
-            state.journal.record(normalizedEvents) { path in
+            let admitted = normalizedEvents.filter { event in
+                let relative = Self.relativePath(event.path, root: rootPath)
+                return !Self.isExcluded(relative) && !consumeKnownEcho(event.path, state: &state)
+            }
+            state.journal.record(admitted) { path in
                 guard Self.contains(path, in: rootPath) else { return false }
                 let relative = Self.relativePath(path, root: rootPath)
                 return !relative.isEmpty && !Self.isExcluded(relative)
@@ -405,7 +504,11 @@ public actor WorkspaceStateRuntime {
                 flags: $0.flags
             )
         }
-        state.journal.record(normalizedEvents) { path in
+        let admitted = normalizedEvents.filter { event in
+            let relative = Self.relativePath(event.path, root: rootPath)
+            return !Self.isExcluded(relative) && !consumeKnownEcho(event.path, state: &state)
+        }
+        state.journal.record(admitted) { path in
             guard Self.contains(path, in: rootPath) else { return false }
             let relative = Self.relativePath(path, root: rootPath)
             return !relative.isEmpty && !Self.isExcluded(relative)
@@ -478,6 +581,22 @@ public actor WorkspaceStateRuntime {
             if $0.path != $1.path { return $0.path < $1.path }
             return Self.changeOrder($0.kind) < Self.changeOrder($1.kind)
         }
+    }
+
+    private func consumeKnownEcho(_ absolutePath: String, state: inout RootState) -> Bool {
+        let relative = Self.relativePath(absolutePath, root: state.root.path)
+        guard let expectedBox = state.knownEchoes[relative] else { return false }
+        let expected = expectedBox
+        guard let actual = try? currentEntry(url: URL(fileURLWithPath: absolutePath), root: state.root),
+              actual == expected else {
+            if expected == nil, !FileManager.default.fileExists(atPath: absolutePath) {
+                state.knownEchoes.removeValue(forKey: relative)
+                return true
+            }
+            return false
+        }
+        state.knownEchoes.removeValue(forKey: relative)
+        return true
     }
 
     private func expandedObservedPaths(_ paths: [String], state: RootState) throws -> [String] {
@@ -781,7 +900,10 @@ public actor WorkspaceStateRuntime {
         let error = try FileHandle(forWritingTo: errorURL)
         let process = Process()
         process.executableURL = git
-        process.arguments = ["--no-optional-locks", "-C", root.path, "status", "--short", "--untracked-files=normal"]
+        process.arguments = [
+            "--no-optional-locks", "-C", root.path, "status", "--short", "--untracked-files=normal",
+            "--", ".", ReservedNamespacePolicy.gitExclusionPathspec
+        ]
         process.environment = ProcessInfo.processInfo.environment.merging(["GIT_OPTIONAL_LOCKS": "0"]) { _, value in value }
         process.standardOutput = output
         process.standardError = error
@@ -800,13 +922,10 @@ public actor WorkspaceStateRuntime {
     }
 
     private static func isExcluded(_ relative: String) -> Bool {
-        let components = relative.split(separator: "/")
-        return components.contains { [".git", ".build", "node_modules"].contains(String($0)) }
+        return ReservedNamespacePolicy.shouldExclude(relativePath: relative)
     }
 
-    private static let exclusionDigest = SHA256.hash(
-        data: Data("workspace-exclusions-v1:.git,.build,node_modules".utf8)
-    ).map { String(format: "%02x", $0) }.joined()
+    private static let exclusionDigest = ReservedNamespacePolicy.exclusionDigest
 
     private static func changeOrder(_ kind: WorkspaceChangeKind) -> Int {
         switch kind {

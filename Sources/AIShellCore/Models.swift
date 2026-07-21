@@ -381,6 +381,7 @@ public enum AIShellError: LocalizedError, Equatable, Sendable {
     case paused
     case outsideAllowedRoot(String)
     case invalidPath(String)
+    case reservedPath(String)
     case itemAlreadyExists(String)
     case itemNotFound(String)
     case notTextFile(String)
@@ -413,6 +414,8 @@ public enum AIShellError: LocalizedError, Equatable, Sendable {
             "許可root外のため操作できません: \(path)。runtime_open_managerで対象rootを追加してください。"
         case let .invalidPath(path):
             "パスが不正です: \(path)"
+        case let .reservedPath(path):
+            "RESERVED_PATH: AIShell内部予約namespaceは公開操作の対象にできません: \(path)"
         case let .itemAlreadyExists(path):
             "既に項目が存在します: \(path)"
         case let .itemNotFound(path):

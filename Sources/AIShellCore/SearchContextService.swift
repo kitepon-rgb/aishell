@@ -403,6 +403,7 @@ public actor SearchContextService {
                 do { matcher = try GlobMatcher(pattern: query.pattern) }
                 catch { throw SearchContextServiceError.invalidGlob(queryID: query.id, message: String(describing: error)) }
                 for indexed in indexedFiles where matcher.matches(indexed.path) {
+                    guard !ReservedNamespacePolicy.contains(relativePath: indexed.path) else { continue }
                     let url = root.appendingPathComponent(indexed.path).standardizedFileURL
                     guard isContained(url, in: scope) else { continue }
                     let inspection = try inspectRegularFile(url)
@@ -628,6 +629,7 @@ public actor SearchContextService {
         case .smart: break
         }
         arguments += ["--glob", "!.git/**", "--glob", "!.build/**", "--glob", "!node_modules/**"]
+        arguments += ReservedNamespacePolicy.rgGlobArguments
         arguments += ["--", query.pattern, scope.path]
         let process = Process()
         process.executableURL = executable
@@ -712,6 +714,7 @@ public actor SearchContextService {
             let url = URL(fileURLWithPath: pathText).standardizedFileURL
             guard isContained(url, in: root) else { throw SearchContextServiceError.workerOutputInvalid(query.id) }
             let relative = String(url.path.dropFirst(root.path.count + (url.path == root.path ? 0 : 1)))
+            guard !ReservedNamespacePolicy.contains(relativePath: relative) else { continue }
             guard (includeMatchers.isEmpty || includeMatchers.contains(where: { $0.matches(relative) })),
                   !excludeMatchers.contains(where: { $0.matches(relative) }) else { continue }
             let file = try inspectRegularFile(url)

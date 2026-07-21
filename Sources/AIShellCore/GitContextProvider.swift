@@ -545,7 +545,9 @@ private extension GitContextProvider {
         case .unstaged: break
         case .untracked: return CommandResult(arguments: arguments, stdout: Data(), stderr: Data())
         }
-        if let scope { arguments += ["--", scope] }
+        arguments += ["--"]
+        arguments.append(scope ?? ".")
+        arguments.append(ReservedNamespacePolicy.gitExclusionPathspec)
         return try run(arguments, cwd: root)
     }
 
@@ -561,7 +563,9 @@ private extension GitContextProvider {
         case .unstaged: break
         case .untracked: return CommandResult(arguments: arguments, stdout: Data(), stderr: Data())
         }
-        if let scope { arguments += ["--", scope] }
+        arguments += ["--"]
+        arguments.append(scope ?? ".")
+        arguments.append(ReservedNamespacePolicy.gitExclusionPathspec)
         return try run(arguments, cwd: root)
     }
 
@@ -731,26 +735,32 @@ private extension GitContextProvider {
 
     func untrackedPaths(root: URL, scope: String?) throws -> [String] {
         let data = try untrackedCommand(root: root, scope: scope).stdout
-        return try data.split(separator: 0).map {
+        return try data.split(separator: 0).compactMap {
             guard let path = String(data: $0, encoding: .utf8) else { throw GitContextError.pathEncodingUnsupported }
-            return path
+            return ReservedNamespacePolicy.contains(relativePath: path) ? nil : path
         }.sorted(by: utf8Order)
     }
 
     func untrackedCommand(root: URL, scope: String?) throws -> CommandResult {
         var args = ["ls-files", "--others", "--exclude-standard", "-z"]
-        if let scope { args += ["--", scope] }
+        args += ["--"]
+        args.append(scope ?? ".")
+        args.append(ReservedNamespacePolicy.gitExclusionPathspec)
         return try run(args, cwd: root)
     }
 
     func unmergedStages(root: URL, scope: String?) throws -> [GitUnmergedStageEntry] {
         var args = ["ls-files", "--unmerged", "-z"]
-        if let scope { args += ["--", scope] }
-        return try run(args, cwd: root).stdout.split(separator: 0).map { field in
+        args += ["--"]
+        args.append(scope ?? ".")
+        args.append(ReservedNamespacePolicy.gitExclusionPathspec)
+        return try run(args, cwd: root).stdout.split(separator: 0).compactMap { field in
             guard let value = String(data: field, encoding: .utf8), let tab = value.firstIndex(of: "\t") else { throw GitContextError.pathEncodingUnsupported }
             let metadata = value[..<tab].split(separator: " ")
             guard metadata.count == 3, let stage = Int(metadata[2]) else { throw GitContextError.gitFailed(exitCode: -1, arguments: args, stderr: "invalid unmerged record") }
-            return GitUnmergedStageEntry(mode: String(metadata[0]), objectID: String(metadata[1]), path: String(value[value.index(after: tab)...]), stage: stage)
+            let path = String(value[value.index(after: tab)...])
+            guard !ReservedNamespacePolicy.contains(relativePath: path) else { return nil }
+            return GitUnmergedStageEntry(mode: String(metadata[0]), objectID: String(metadata[1]), path: path, stage: stage)
         }.sorted { $0.path == $1.path ? $0.stage < $1.stage : utf8Order($0.path, $1.path) }
     }
 
@@ -763,6 +773,9 @@ private extension GitContextProvider {
         let components = relativePath.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         guard !components.isEmpty, components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
             throw AIShellError.invalidPath(relativePath)
+        }
+        guard !ReservedNamespacePolicy.contains(relativePath: relativePath) else {
+            throw AIShellError.reservedPath(relativePath)
         }
         var descriptors: [Int32] = []
         defer { for descriptor in descriptors.reversed() { close(descriptor) } }

@@ -249,6 +249,7 @@ public actor ContextCompilerService {
         process.arguments = [
             "--json", "--line-number", "--color", "never", "--fixed-strings",
             "--glob", "!.git/**", "--glob", "!.build/**", "--glob", "!node_modules/**",
+            "--glob", "!.aishell-transactions/**",
             query, root.path
         ]
         process.currentDirectoryURL = root

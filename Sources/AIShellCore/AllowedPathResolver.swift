@@ -19,10 +19,17 @@ public struct AllowedPathResolver: Sendable {
         }
 
         var roots: [URL] = []
+        var requestedRoots: [URL] = []
         for rootPath in rootPaths {
-            let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
+            let requestedRoot = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+            let rootURL = requestedRoot.resolvingSymlinksInPath()
+            requestedRoots.append(requestedRoot)
+
+            if roots.contains(where: {
+                ReservedNamespacePolicy.contains(url: rootURL, under: [$0])
+            }) {
+                throw AIShellError.reservedPath(rootURL.path)
+            }
 
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: rootURL.path, isDirectory: &isDirectory),
@@ -38,16 +45,29 @@ public struct AllowedPathResolver: Sendable {
         configuredRootURLs = roots
         gitWorktreeRootURLs = Self.discoverGitWorktreeRoots(for: roots)
         rootURLs = roots + gitWorktreeRootURLs.filter { !roots.contains($0) }
+        for root in rootURLs {
+            let otherRoots = rootURLs.filter { $0 != root }
+            if ReservedNamespacePolicy.contains(url: root, under: otherRoots) {
+                throw AIShellError.reservedPath(root.path)
+            }
+        }
+        for requestedRoot in requestedRoots {
+            if ReservedNamespacePolicy.contains(url: requestedRoot, under: rootURLs) {
+                throw AIShellError.reservedPath(requestedRoot.path)
+            }
+        }
     }
 
     public func resolveExisting(_ path: String?) throws -> URL {
         let candidate = rawURL(for: path)
+        try ReservedNamespacePolicy.requirePublicPath(candidate, under: rootURLs)
         guard FileManager.default.fileExists(atPath: candidate.path) else {
             throw AIShellError.itemNotFound(candidate.path)
         }
 
         let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
         try ensureContained(resolved)
+        try ReservedNamespacePolicy.requirePublicPath(resolved, under: rootURLs)
         return resolved
     }
 
@@ -57,6 +77,7 @@ public struct AllowedPathResolver: Sendable {
         }
 
         let candidate = rawURL(for: path)
+        try ReservedNamespacePolicy.requirePublicPath(candidate, under: rootURLs)
         var ancestor = candidate
         var missingComponents: [String] = []
 
@@ -70,12 +91,14 @@ public struct AllowedPathResolver: Sendable {
         }
 
         var resolved = ancestor.resolvingSymlinksInPath().standardizedFileURL
+        try ReservedNamespacePolicy.requirePublicPath(resolved, under: rootURLs)
         for component in missingComponents {
             resolved.appendPathComponent(component)
         }
         resolved = resolved.standardizedFileURL
 
         try ensureContained(resolved)
+        try ReservedNamespacePolicy.requirePublicPath(resolved, under: rootURLs)
         return resolved
     }
 

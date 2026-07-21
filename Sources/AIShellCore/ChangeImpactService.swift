@@ -480,8 +480,7 @@ public struct FileSystemChangeImpactProvider: ChangeImpactProvider {
         var result: [URL] = []
         while let url = enumerator.nextObject() as? URL {
             let relative = relativePath(url, root: root)
-            let components = relative.split(separator: "/")
-            if components.contains(where: { [".git", ".build", "node_modules"].contains(String($0)) }) {
+            if ReservedNamespacePolicy.shouldExclude(relativePath: relative) {
                 if (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
                     enumerator.skipDescendants()
                 }
