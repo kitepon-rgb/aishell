@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "a8484b81281fa3a411b89d257e4b3b2a304199863c81a290a0c88e714bef60a6",
+  "evidence_id": "ace-043-workspace-wait-contract-20260721",
+  "git_blob_oid": "1b09161217863a92ba00b7d9e45ed2074a98e77d",
+  "media_type": "text/markdown",
+  "path": "docs/adr/0016-workspace-wait-contract.md",
+  "repo_id": "self"
+}

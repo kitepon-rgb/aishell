@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "864bcde52abb2724a6546cb5f22ed9ffde4ea41db3b4a320470c3f3ff6726e17",
+  "evidence_id": "ace-021-project-profile-contract-20260721",
+  "git_blob_oid": "b94e12124a9b7a6890255be5fe2cb98966a0ac22",
+  "media_type": "text/markdown",
+  "path": "docs/adr/0009-project-profile-contract.md",
+  "repo_id": "self"
+}
