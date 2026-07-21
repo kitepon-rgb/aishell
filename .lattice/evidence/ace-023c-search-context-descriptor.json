@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "6a2f01c0a90f6deeefda5de9bce84f968bc43560253cdd7c16c9d4b445ad0e1e",
+  "evidence_id": "ace-023c-search-context-20260721",
+  "git_blob_oid": "9ff587cfa9e7eb1310ce04755291cc350f82a9b4",
+  "media_type": "text/x-swift",
+  "path": "Sources/AIShellCore/SearchContextService.swift",
+  "repo_id": "self"
+}

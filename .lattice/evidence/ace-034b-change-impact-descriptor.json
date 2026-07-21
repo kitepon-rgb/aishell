@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "6a65dde1de68762b7714e8ce2983ac00e1d2906132f96090d1f14b29bcde2f8c",
+  "evidence_id": "ace-034b-change-impact-20260721",
+  "git_blob_oid": "d63a606454d4e31a3bebcce32719272aa8a2a061",
+  "media_type": "text/x-swift",
+  "path": "Sources/AIShellCore/ChangeImpactService.swift",
+  "repo_id": "self"
+}

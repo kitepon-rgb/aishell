@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "5bf9ad46ca32529b520b27446e7d7d995ff99a801f74e710b82ccba70106cfff",
+  "evidence_id": "ace-044a-managed-process-20260721",
+  "git_blob_oid": "6aabf0ba244e502af7d91ac283b9f8cc4c20d59b",
+  "media_type": "text/x-swift",
+  "path": "Sources/AIShellCore/ManagedProcessRegistry.swift",
+  "repo_id": "self"
+}
