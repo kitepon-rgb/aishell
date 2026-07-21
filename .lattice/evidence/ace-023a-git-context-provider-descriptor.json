@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "56714402eb01f014cef912fca6747582b3e3600b0d5940391780f688541fdc37",
+  "evidence_id": "ace-023a-git-context-provider-20260721",
+  "git_blob_oid": "a2047e059ca44809ffcd248c74ce7586c5309dbd",
+  "media_type": "text/x-swift",
+  "path": "Tests/AIShellCoreTests/GitContextProviderTests.swift",
+  "repo_id": "self"
+}
