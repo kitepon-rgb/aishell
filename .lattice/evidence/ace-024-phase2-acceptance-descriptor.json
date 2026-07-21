@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "f5bd2d5e21c6c3c9fa89d2b3f8525203cb13bd9dde902a9df5a51cc6905d6dbf",
+  "evidence_id": "ace-024-phase2-acceptance-20260721",
+  "git_blob_oid": "5850810283eced5751b11866d68e20bd6c6351b9",
+  "media_type": "text/markdown",
+  "path": "docs/evidence/aishell-phase2-acceptance.md",
+  "repo_id": "self"
+}
