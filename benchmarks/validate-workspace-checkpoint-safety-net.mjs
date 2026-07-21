@@ -23,6 +23,7 @@ const requiredCases = new Set([
   "offline-same-size-mtime-modify",
   "offline-create-delete-rename",
   "event-gap",
+  "event-store-uuid-changed",
   "root-replaced",
   "corrupt-payload",
   "unsupported-schema",

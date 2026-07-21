@@ -19,6 +19,7 @@ final class WorkspaceCheckpointStoreTests: XCTestCase {
         XCTAssertEqual(restored.entries.map(\.path), ["A.swift", "Z.swift"])
         XCTAssertEqual(restored.generation, checkpoint.generation)
         XCTAssertEqual(restored.lastEventID, 42)
+        XCTAssertEqual(restored.eventStoreUUID, "11111111-1111-1111-1111-111111111111")
         XCTAssertEqual(restored.payloadSHA256?.count, 64)
         XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
     }
@@ -177,6 +178,45 @@ final class WorkspaceCheckpointStoreTests: XCTestCase {
         XCTAssertNil(absent)
     }
 
+    func testCommitFailureRollsBackStagedQuotaEviction() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let runtime = fixture.base.appendingPathComponent("runtime")
+        let quota = WorkspaceCheckpointQuota(
+            maximumRoots: 1,
+            maximumEntriesPerRoot: 500_000,
+            maximumBytesPerRoot: 128 * 1_024 * 1_024,
+            maximumTotalBytes: 512 * 1_024 * 1_024
+        )
+        let first = makeCheckpoint(rootDigest: String(repeating: "a", count: 64))
+        let second = makeCheckpoint(rootDigest: String(repeating: "b", count: 64))
+        let normalStore = WorkspaceCheckpointStore(baseDirectory: runtime, quota: quota)
+        _ = try await normalStore.save(first)
+        let failingStore = WorkspaceCheckpointStore(baseDirectory: runtime, quota: quota) {
+            throw AIShellError.checkpointWriteFailed("injected after eviction staging")
+        }
+
+        do {
+            _ = try await failingStore.save(second)
+            XCTFail("commit失敗後にevictionだけを残しました。")
+        } catch {
+            guard case AIShellError.checkpointWriteFailed = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        let restored = try await normalStore.load(rootDigest: first.rootDigest)
+        let absent = try await normalStore.load(rootDigest: second.rootDigest)
+        XCTAssertNotNil(restored)
+        XCTAssertNil(absent)
+        let workspaceDirectory = runtime.appendingPathComponent("workspaces", isDirectory: true)
+        let retainedDirectories = try FileManager.default.contentsOfDirectory(
+            at: workspaceDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ).map(\.lastPathComponent)
+        XCTAssertEqual(retainedDirectories, [first.rootDigest])
+    }
+
     func testSafetyNetFixtureKeepsAllRequiredFailClosedCases() throws {
         let fixtureURL = try XCTUnwrap(
             Bundle.module.url(
@@ -189,11 +229,11 @@ final class WorkspaceCheckpointStoreTests: XCTestCase {
             JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any]
         )
         let cases = try XCTUnwrap(object["cases"] as? [[String: Any]])
-        XCTAssertEqual(cases.count, 12)
+        XCTAssertEqual(cases.count, 13)
         let stopped = cases.filter {
             ($0["expected"] as? [String: Any])?["decision"] as? String == "stop"
         }
-        XCTAssertEqual(stopped.count, 7)
+        XCTAssertEqual(stopped.count, 8)
         XCTAssertTrue(stopped.allSatisfy {
             let expected = $0["expected"] as? [String: Any]
             return expected?["typed_error"] as? String != nil
@@ -211,6 +251,7 @@ final class WorkspaceCheckpointStoreTests: XCTestCase {
             rootIdentity: "1:2",
             rootDigest: rootDigest,
             exclusionDigest: String(repeating: "b", count: 64),
+            eventStoreUUID: "11111111-1111-1111-1111-111111111111",
             generation: generation,
             lastEventID: 42,
             entries: entries,

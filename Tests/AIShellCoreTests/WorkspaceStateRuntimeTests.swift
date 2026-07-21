@@ -12,12 +12,12 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         try "let value = 1\n".write(to: file, atomically: false, encoding: .utf8)
         let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
         try await store.setAllowedRoot(root)
-        let firstRuntime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let firstRuntime = WorkspaceStateRuntime(runtimeStore: store)
         let first = try await firstRuntime.snapshot()
         let firstReadCount = await firstRuntime.contentReadCountForTests()
         XCTAssertEqual(firstReadCount, 1)
 
-        let secondRuntime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let secondRuntime = WorkspaceStateRuntime(runtimeStore: store)
         let restored = try await secondRuntime.snapshot()
 
         let secondReadCount = await secondRuntime.contentReadCountForTests()
@@ -36,18 +36,51 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         try "let value = 1\n".write(to: file, atomically: false, encoding: .utf8)
         let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
         try await store.setAllowedRoot(root)
-        let initial = try await WorkspaceStateRuntime(
-            runtimeStore: store, startsFSEvents: false
-        ).snapshot()
+        let initial = try await WorkspaceStateRuntime(runtimeStore: store).snapshot()
         try "let value = 200\n".write(to: file, atomically: false, encoding: .utf8)
 
-        let restoredRuntime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let restoredRuntime = WorkspaceStateRuntime(runtimeStore: store)
         let restored = try await restoredRuntime.snapshot(sinceCursor: initial.cursor)
 
         let restoredReadCount = await restoredRuntime.contentReadCountForTests()
         XCTAssertEqual(restoredReadCount, 1)
         XCTAssertTrue(restored.changes.contains { $0.path == "State.swift" && $0.kind == .modified })
         XCTAssertTrue(restored.context.contains { $0.path == "State.swift" && $0.text.contains("value = 200") })
+    }
+
+    func testWarmRestartReplaysSameSizeAndRestoredMTimeChange() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("State.txt")
+        try "before\n".write(to: file, atomically: false, encoding: .utf8)
+        let originalDate = try XCTUnwrap(
+            file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let initial = try await WorkspaceStateRuntime(runtimeStore: store).snapshot()
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seek(toOffset: 0)
+        try handle.write(contentsOf: Data("after!\n".utf8))
+        try handle.truncate(atOffset: 7)
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: file.path)
+        let restoredDate = try XCTUnwrap(
+            file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        )
+        XCTAssertEqual(restoredDate, originalDate)
+
+        let restoredRuntime = WorkspaceStateRuntime(runtimeStore: store)
+        let delta = try await restoredRuntime.snapshot(sinceCursor: initial.cursor)
+
+        XCTAssertTrue(delta.changes.contains { $0.path == "State.txt" && $0.kind == .modified })
+        XCTAssertTrue(delta.context.contains { $0.path == "State.txt" && $0.text == "after!\n" })
+        let readCount = await restoredRuntime.contentReadCountForTests()
+        XCTAssertGreaterThanOrEqual(readCount, 1)
+        XCTAssertLessThanOrEqual(readCount, 2)
     }
 
     func testWarmRestartContinuesCheckpointCursorAndExpiresOlderSequence() async throws {
@@ -59,13 +92,12 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         try "let value = 1\n".write(to: file, atomically: false, encoding: .utf8)
         let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
         try await store.setAllowedRoot(root)
-        let firstRuntime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let firstRuntime = WorkspaceStateRuntime(runtimeStore: store)
         let initial = try await firstRuntime.snapshot()
         try "let value = 2\n".write(to: file, atomically: false, encoding: .utf8)
-        await firstRuntime.ingestObservedPaths([file.path])
         let checkpointCursor = try await firstRuntime.snapshot(sinceCursor: initial.cursor).cursor
 
-        let restoredRuntime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let restoredRuntime = WorkspaceStateRuntime(runtimeStore: store)
         let continued = try await restoredRuntime.snapshot(sinceCursor: checkpointCursor)
         XCTAssertEqual(continued.cursor, checkpointCursor)
         XCTAssertTrue(continued.changes.isEmpty)
@@ -105,6 +137,71 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
             }
         }
         XCTAssertEqual(try Data(contentsOf: checkpoint), Data("{broken".utf8))
+    }
+
+    func testCheckpointWithoutEventWatermarkCannotWarmRestore() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "value\n".write(
+            to: root.appendingPathComponent("State.txt"), atomically: false, encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let unobserved = try await WorkspaceStateRuntime(
+            runtimeStore: store, startsFSEvents: false
+        ).snapshot()
+
+        do {
+            _ = try await WorkspaceStateRuntime(runtimeStore: store).snapshot(sinceCursor: unobserved.cursor)
+            XCTFail("null watermark checkpointをwarm restoreしました。")
+        } catch {
+            guard case AIShellError.rescanRequired = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testChangedFSEventsVolumeUUIDRejectsDeltaAndRebuildsExplicitFull() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "value\n".write(
+            to: root.appendingPathComponent("State.txt"), atomically: false, encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let firstRuntime = WorkspaceStateRuntime(
+            runtimeStore: store,
+            initializationEventsForTests: [],
+            eventStoreUUIDProviderForTests: { _ in "11111111-1111-1111-1111-111111111111" }
+        )
+        let first = try await firstRuntime.snapshot()
+        let changedVolumeRuntime = WorkspaceStateRuntime(
+            runtimeStore: store,
+            initializationEventsForTests: [],
+            eventStoreUUIDProviderForTests: { _ in "22222222-2222-2222-2222-222222222222" }
+        )
+
+        do {
+            _ = try await changedVolumeRuntime.snapshot(sinceCursor: first.cursor)
+            XCTFail("異なるFSEvents volume UUIDでdeltaを継続しました。")
+        } catch {
+            guard case AIShellError.rescanRequired = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        let rebuilt = try await changedVolumeRuntime.snapshot()
+        XCTAssertEqual(rebuilt.checkpointState, "rebuilt")
+
+        let continued = try await WorkspaceStateRuntime(
+            runtimeStore: store,
+            initializationEventsForTests: [],
+            eventStoreUUIDProviderForTests: { _ in "22222222-2222-2222-2222-222222222222" }
+        ).snapshot(sinceCursor: rebuilt.cursor)
+        XCTAssertFalse(continued.isFull)
     }
 
     func testCursorBindsRootIdentityAndExclusionContract() async throws {
@@ -309,6 +406,115 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         }
     }
 
+    func testFullRebuildAfterGapPersistsRestartableWatermark() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "value\n".write(
+            to: root.appendingPathComponent("State.txt"), atomically: false, encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store)
+        let initial = try await runtime.snapshot()
+        await runtime.markRescanRequired(reason: "injected gap")
+        do {
+            _ = try await runtime.snapshot(sinceCursor: initial.cursor)
+            XCTFail("gap cursorを継続しました。")
+        } catch {
+            guard case AIShellError.rescanRequired = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+
+        let rebuilt = try await runtime.snapshot()
+        let restarted = WorkspaceStateRuntime(runtimeStore: store)
+        let continued = try await restarted.snapshot(sinceCursor: rebuilt.cursor)
+
+        XCTAssertFalse(continued.isFull)
+        XCTAssertTrue(continued.changes.isEmpty)
+    }
+
+    func testHistoricalDropDuringRestartForcesExplicitFullRebuild() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("State.txt")
+        try "before\n".write(to: file, atomically: false, encoding: .utf8)
+        let originalDate = try XCTUnwrap(
+            file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        _ = try await WorkspaceStateRuntime(runtimeStore: store).snapshot()
+
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seek(toOffset: 0)
+        try handle.write(contentsOf: Data("after!\n".utf8))
+        try handle.truncate(atOffset: 7)
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: file.path)
+
+        let restarted = WorkspaceStateRuntime(
+            runtimeStore: store,
+            initializationEventsForTests: [
+                ObservedFileEvent(
+                    path: "/",
+                    eventID: 44,
+                    flags: FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped)
+                ),
+            ]
+        )
+        let rebuilt = try await restarted.snapshot(contextBudget: 1_024)
+        let contentReads = await restarted.contentReadCountForTests()
+
+        XCTAssertEqual(rebuilt.checkpointState, "rebuilt")
+        XCTAssertTrue(rebuilt.context.contains { $0.path == "State.txt" && $0.text == "after!\n" })
+        XCTAssertEqual(contentReads, 1)
+    }
+
+    func testFullRebuildDoesNotReusePrefetchAcrossFinalDrain() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("State.txt")
+        try "before\n".write(to: file, atomically: false, encoding: .utf8)
+        let originalDate = try XCTUnwrap(
+            file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        _ = try await WorkspaceStateRuntime(runtimeStore: store).snapshot()
+
+        try "middle\n".write(to: file, atomically: false, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: originalDate], ofItemAtPath: file.path)
+        let restarted = WorkspaceStateRuntime(
+            runtimeStore: store,
+            initializationEventsForTests: [
+                ObservedFileEvent(path: file.path, eventID: 45, flags: 0),
+                ObservedFileEvent(
+                    path: "/",
+                    eventID: 46,
+                    flags: FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped)
+                ),
+            ],
+            rebuildHookForTests: {
+                try "after!\n".write(to: file, atomically: false, encoding: .utf8)
+                try FileManager.default.setAttributes(
+                    [.modificationDate: originalDate], ofItemAtPath: file.path
+                )
+                return [ObservedFileEvent(path: file.path, eventID: 47, flags: 0)]
+            }
+        )
+        let rebuilt = try await restarted.snapshot(contextBudget: 1_024)
+
+        XCTAssertEqual(rebuilt.checkpointState, "rebuilt")
+        XCTAssertTrue(rebuilt.context.contains { $0.path == "State.txt" && $0.text == "after!\n" })
+    }
+
     func testUnsafeRootEventIsNotHiddenByPathExclusion() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
@@ -329,6 +535,33 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         do {
             _ = try await runtime.snapshot(sinceCursor: initial.cursor)
             XCTFail("root path eventのunsafe flagを除外しました。")
+        } catch {
+            guard case AIShellError.rescanRequired = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testDroppedEventWithSlashPathIsNotFilteredBeforeSafetyCheck() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let initial = try await runtime.snapshot()
+
+        await runtime.ingestObservedEventsForTests([
+            ObservedFileEvent(
+                path: "/",
+                eventID: 43,
+                flags: FSEventStreamEventFlags(kFSEventStreamEventFlagUserDropped)
+            ),
+        ])
+        do {
+            _ = try await runtime.snapshot(sinceCursor: initial.cursor)
+            XCTFail("root外pathで通知されたdrop flagを捨てました。")
         } catch {
             guard case AIShellError.rescanRequired = error else {
                 return XCTFail("想定外のエラー: \(error)")

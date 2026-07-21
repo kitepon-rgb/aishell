@@ -1,4 +1,5 @@
 import CoreServices
+import Darwin
 import Foundation
 
 struct ObservedFileEvent: Sendable {
@@ -19,27 +20,86 @@ struct ObservedFileEvent: Sendable {
 }
 
 final class FSEventsObserver: @unchecked Sendable {
-    static func currentEventID() -> UInt64 {
-        FSEventsGetCurrentEventId()
-    }
     private final class CallbackBox: @unchecked Sendable {
-        let callback: @Sendable ([ObservedFileEvent]) -> Void
-        init(callback: @escaping @Sendable ([ObservedFileEvent]) -> Void) {
-            self.callback = callback
+        private let lock = NSLock()
+        private let volumeRootPath: String
+        private var events: [ObservedFileEvent] = []
+
+        init(volumeRootPath: String) {
+            self.volumeRootPath = volumeRootPath
+        }
+
+        func absolutePath(_ deviceRelativePath: String) -> String {
+            let relative = deviceRelativePath.drop(while: { $0 == "/" })
+            guard !relative.isEmpty else { return volumeRootPath }
+            return volumeRootPath == "/" ? "/\(relative)" : "\(volumeRootPath)/\(relative)"
+        }
+
+        func append(_ incoming: [ObservedFileEvent]) {
+            lock.lock()
+            events.append(contentsOf: incoming)
+            lock.unlock()
+        }
+
+        func drain() -> [ObservedFileEvent] {
+            lock.lock()
+            defer { lock.unlock() }
+            let drained = events
+            events.removeAll(keepingCapacity: true)
+            return drained
         }
     }
 
     private let box: CallbackBox
     private let queue: DispatchQueue
+    private let device: dev_t
     private var stream: FSEventStreamRef?
+    private var safeWatermark: UInt64?
+    private let initialWatermark: UInt64?
 
     init(
         path: String,
-        sinceEventID: UInt64? = nil,
-        callback: @escaping @Sendable ([ObservedFileEvent]) -> Void
+        sinceEventID: UInt64? = nil
     ) throws {
-        box = CallbackBox(callback: callback)
+        let root = URL(fileURLWithPath: path).standardizedFileURL
+        var info = stat()
+        guard lstat(root.path, &info) == 0 else { throw AIShellError.invalidPath(path) }
+        let device = info.st_dev
+        self.device = device
+        var filesystem = statfs()
+        guard statfs(root.path, &filesystem) == 0 else { throw AIShellError.invalidPath(path) }
+        let volumeRootPath = withUnsafePointer(to: &filesystem.f_mntonname) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: Int(MNAMELEN)) {
+                String(cString: $0)
+            }
+        }
+        guard let resolved = realpath(root.path, nil) else { throw AIShellError.invalidPath(path) }
+        let physicalRootPath = String(cString: resolved)
+        free(resolved)
+        let deviceRelativePath: String
+        if physicalRootPath == volumeRootPath {
+            deviceRelativePath = ""
+        } else if physicalRootPath.hasPrefix(volumeRootPath + "/") {
+            deviceRelativePath = String(physicalRootPath.dropFirst(volumeRootPath.count + 1))
+        } else {
+            // macOS firmlink（例: /var -> Data volumeの/private/var）はvisible mount point配下に展開されない。
+            deviceRelativePath = String(physicalRootPath.drop(while: { $0 == "/" }))
+        }
+        box = CallbackBox(volumeRootPath: volumeRootPath)
         queue = DispatchQueue(label: "jp.quolu.aishell.fsevents.\(UUID().uuidString)")
+        let systemCurrentEventID = FSEventsGetCurrentEventId()
+        let deviceBoundary = FSEventsGetLastEventIdForDeviceBeforeTime(
+            device,
+            Date().timeIntervalSince1970
+        )
+        if let sinceEventID, sinceEventID > systemCurrentEventID {
+            throw AIShellError.rescanRequired(
+                "checkpoint FSEvents watermark is newer than the system event database "
+                    + "(checkpoint=\(sinceEventID), system=\(systemCurrentEventID))"
+            )
+        }
+        initialWatermark = sinceEventID ?? (deviceBoundary == 0 ? nil : deviceBoundary)
+        safeWatermark = initialWatermark
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(box).toOpaque(),
@@ -55,24 +115,31 @@ final class FSEventsObserver: @unchecked Sendable {
             events.reserveCapacity(count)
             for index in 0..<count {
                 guard let rawPath = paths[index] else { continue }
+                if flags[index] & FSEventStreamEventFlags(kFSEventStreamEventFlagHistoryDone) != 0 {
+                    continue
+                }
                 events.append(ObservedFileEvent(
-                    path: String(cString: rawPath),
+                    path: box.absolutePath(String(cString: rawPath)),
                     eventID: eventIDs[index],
                     flags: flags[index]
                 ))
             }
-            if !events.isEmpty { box.callback(events) }
+            if !events.isEmpty { box.append(events) }
         }
         let createFlags = FSEventStreamCreateFlags(
             kFSEventStreamCreateFlagFileEvents
                 | kFSEventStreamCreateFlagWatchRoot
+                | kFSEventStreamCreateFlagNoDefer
         )
-        guard let created = FSEventStreamCreate(
+        guard let created = FSEventStreamCreateRelativeToDevice(
             kCFAllocatorDefault,
             callback,
             &context,
-            [path] as CFArray,
-            sinceEventID ?? FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            device,
+            [deviceRelativePath] as CFArray,
+            initialWatermark ?? (deviceBoundary == 0
+                ? FSEventStreamEventId(kFSEventStreamEventIdSinceNow)
+                : deviceBoundary),
             0.1,
             createFlags
         ) else {
@@ -88,10 +155,22 @@ final class FSEventsObserver: @unchecked Sendable {
         }
     }
 
-    func flush() {
-        guard let stream else { return }
+    func drainThroughCurrent() -> (events: [ObservedFileEvent], watermark: UInt64?) {
+        guard let stream else { return ([], safeWatermark) }
         FSEventStreamFlushSync(stream)
+        let events = box.drain()
+        if let processed = events.map(\.eventID).max() {
+            safeWatermark = max(safeWatermark ?? 0, processed)
+        }
+        return (events, safeWatermark)
     }
+
+    func watchedDeviceForTests() -> dev_t? {
+        guard let stream else { return nil }
+        return FSEventStreamGetDeviceBeingWatched(stream)
+    }
+
+    func initialWatermarkForTests() -> UInt64? { initialWatermark }
 
     deinit {
         guard let stream else { return }

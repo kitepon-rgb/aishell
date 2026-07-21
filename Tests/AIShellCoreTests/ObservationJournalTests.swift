@@ -3,6 +3,51 @@ import XCTest
 @testable import AIShellCore
 
 final class ObservationJournalTests: XCTestCase {
+    func testObserverRejectsCheckpointWatermarkNewerThanCurrentEventDatabase() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+
+        XCTAssertThrowsError(
+            try FSEventsObserver(path: fixture.base.path, sinceEventID: UInt64.max)
+        ) { error in
+            guard case AIShellError.rescanRequired = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testObserverUsesPerDeviceStreamForPersistentEventIDs() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        var info = stat()
+        XCTAssertEqual(lstat(fixture.base.path, &info), 0)
+
+        let observer = try FSEventsObserver(path: fixture.base.path)
+
+        XCTAssertEqual(observer.watchedDeviceForTests(), info.st_dev)
+    }
+
+    func testObserverInitialWatermarkUsesDeviceHistoryBoundary() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        var info = stat()
+        XCTAssertEqual(lstat(fixture.base.path, &info), 0)
+        let before = FSEventsGetLastEventIdForDeviceBeforeTime(
+            info.st_dev,
+            Date().timeIntervalSince1970
+        )
+
+        let observer = try FSEventsObserver(path: fixture.base.path)
+        let after = FSEventsGetLastEventIdForDeviceBeforeTime(
+            info.st_dev,
+            Date().timeIntervalSince1970
+        )
+        let watermark = try XCTUnwrap(observer.initialWatermarkForTests())
+
+        XCTAssertGreaterThanOrEqual(watermark, before)
+        XCTAssertLessThanOrEqual(watermark, after)
+    }
+
     func testRecordsEventIDAndRestoresCheckpointWithoutChangingGeneration() throws {
         var journal = ObservationJournal(generation: "generation-a", retentionLimit: 10)
         journal.record([
@@ -52,16 +97,12 @@ final class ObservationJournalTests: XCTestCase {
         }
     }
 
-    func testRegressedEventIDRequiresRescan() {
+    func testEventIDWatermarkDoesNotRegressOnLowerDeliveredID() throws {
         var journal = ObservationJournal(generation: "generation-a")
         journal.record([event("A", id: 50), event("B", id: 49)])
 
         XCTAssertEqual(journal.lastEventID, 50)
-        XCTAssertThrowsError(try journal.changes(after: 0)) { error in
-            guard case AIShellError.rescanRequired = error else {
-                return XCTFail("想定外のエラー: \(error)")
-            }
-        }
+        XCTAssertEqual(try journal.changes(after: 0).count, 2)
     }
 
     func testExcludedNormalEventDoesNotAdvanceSequenceButKeepsEventWatermark() throws {

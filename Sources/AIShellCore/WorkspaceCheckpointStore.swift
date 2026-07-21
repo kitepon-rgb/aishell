@@ -37,6 +37,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
     let rootIdentity: String
     let rootDigest: String
     let exclusionDigest: String
+    let eventStoreUUID: String?
     let generation: String
     let lastEventID: UInt64?
     let journalSequence: UInt64
@@ -52,6 +53,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         rootIdentity: String,
         rootDigest: String,
         exclusionDigest: String,
+        eventStoreUUID: String? = nil,
         generation: String,
         lastEventID: UInt64?,
         journalSequence: UInt64 = 0,
@@ -66,6 +68,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         self.rootIdentity = rootIdentity
         self.rootDigest = rootDigest
         self.exclusionDigest = exclusionDigest
+        self.eventStoreUUID = eventStoreUUID
         self.generation = generation
         self.lastEventID = lastEventID
         self.journalSequence = journalSequence
@@ -82,6 +85,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         case rootIdentity = "root_identity"
         case rootDigest = "root_digest"
         case exclusionDigest = "exclusion_digest"
+        case eventStoreUUID = "event_store_uuid"
         case lastEventID = "last_event_id"
         case journalSequence = "journal_sequence"
         case journalEvents = "journal_events"
@@ -97,6 +101,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
             rootIdentity: rootIdentity,
             rootDigest: rootDigest,
             exclusionDigest: exclusionDigest,
+            eventStoreUUID: eventStoreUUID,
             generation: generation,
             lastEventID: lastEventID,
             journalSequence: journalSequence,
@@ -121,6 +126,7 @@ actor WorkspaceCheckpointStore {
     private let quota: WorkspaceCheckpointQuota
     private let beforeCommit: (@Sendable () throws -> Void)?
     private let fileManager = FileManager.default
+    private var recentEvictedRootDigests: [String] = []
 
     init(
         baseDirectory: URL,
@@ -165,6 +171,9 @@ actor WorkspaceCheckpointStore {
         guard checkpoint.rootDigest == rootDigest else {
             throw AIShellError.checkpointCorrupt("directoryとroot_digestが一致しません: \(url.path)")
         }
+        if let eventStoreUUID = checkpoint.eventStoreUUID, UUID(uuidString: eventStoreUUID) == nil {
+            throw AIShellError.checkpointCorrupt("event_store_uuidが不正です: \(url.path)")
+        }
         guard let storedDigest = checkpoint.payloadSHA256 else {
             throw AIShellError.checkpointCorrupt("payload_sha256がありません: \(url.path)")
         }
@@ -190,50 +199,92 @@ actor WorkspaceCheckpointStore {
         try Self.validateEntries(checkpoint.entries, path: checkpoint.rootPath)
         try Self.validateJournal(checkpoint, path: checkpoint.rootPath)
         guard checkpoint.entries.count <= quota.maximumEntriesPerRoot else {
-            throw AIShellError.checkpointQuotaExceeded(quota.maximumBytesPerRoot)
+            throw AIShellError.checkpointQuotaExceeded(
+                "entry上限（\(quota.maximumEntriesPerRoot) entries）を超えます。"
+            )
         }
         let withoutDigest = checkpoint.normalized()
         let digest = Self.digest(try Self.encoder.encode(withoutDigest))
         let encoded = try Self.encoder.encode(withoutDigest.normalized(payloadSHA256: digest))
         guard encoded.count <= quota.maximumBytesPerRoot else {
-            throw AIShellError.checkpointQuotaExceeded(quota.maximumBytesPerRoot)
+            throw AIShellError.checkpointQuotaExceeded(
+                "1 root容量上限（\(quota.maximumBytesPerRoot) bytes）を超えます。"
+            )
         }
 
         try fileManager.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
-        try evictIfNeeded(
+        let evictionPlan = try planEvictions(
             incomingRootDigest: checkpoint.rootDigest,
             incomingBytes: encoded.count,
             activeRootDigests: activeRootDigests.union([checkpoint.rootDigest])
         )
         let directory = baseDirectory.appendingPathComponent(checkpoint.rootDigest, isDirectory: true)
+        let directoryExisted = fileManager.fileExists(atPath: directory.path)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent("checkpoint.json")
         let temporary = directory.appendingPathComponent("checkpoint.\(UUID().uuidString).tmp")
+        let evictionStaging = baseDirectory.appendingPathComponent(".eviction-\(UUID().uuidString)")
+        var stagedEvictions: [(original: URL, staged: URL)] = []
         do {
             fileManager.createFile(atPath: temporary.path, contents: nil)
             let handle = try FileHandle(forWritingTo: temporary)
             try handle.write(contentsOf: encoded)
             try handle.synchronize()
             try handle.close()
+            if !evictionPlan.isEmpty {
+                try fileManager.createDirectory(at: evictionStaging, withIntermediateDirectories: true)
+                for original in evictionPlan {
+                    let staged = evictionStaging.appendingPathComponent(original.lastPathComponent)
+                    try fileManager.moveItem(at: original, to: staged)
+                    stagedEvictions.append((original, staged))
+                }
+            }
             try beforeCommit?()
             if fileManager.fileExists(atPath: destination.path) {
                 _ = try fileManager.replaceItemAt(destination, withItemAt: temporary)
             } else {
                 try fileManager.moveItem(at: temporary, to: destination)
             }
+            recentEvictedRootDigests.append(contentsOf: stagedEvictions.map { $0.original.lastPathComponent })
+            try? fileManager.removeItem(at: evictionStaging)
             return destination
         } catch {
             try? fileManager.removeItem(at: temporary)
+            var rollbackFailures: [String] = []
+            for item in stagedEvictions.reversed() where fileManager.fileExists(atPath: item.staged.path) {
+                do {
+                    try fileManager.moveItem(at: item.staged, to: item.original)
+                } catch {
+                    rollbackFailures.append("\(item.original.lastPathComponent): \(error.localizedDescription)")
+                }
+            }
+            if rollbackFailures.isEmpty {
+                try? fileManager.removeItem(at: evictionStaging)
+                if !directoryExisted {
+                    try? fileManager.removeItem(at: directory)
+                }
+            } else {
+                throw AIShellError.checkpointWriteFailed(
+                    "checkpoint commit failed (\(error.localizedDescription)); eviction rollback failed: "
+                        + rollbackFailures.joined(separator: "; ")
+                        + "; staging preserved at \(evictionStaging.path)"
+                )
+            }
             if let aishellError = error as? AIShellError { throw aishellError }
             throw AIShellError.checkpointWriteFailed(error.localizedDescription)
         }
     }
 
-    private func evictIfNeeded(
+    func takeRecentEvictions() -> [String] {
+        defer { recentEvictedRootDigests.removeAll(keepingCapacity: true) }
+        return recentEvictedRootDigests
+    }
+
+    private func planEvictions(
         incomingRootDigest: String,
         incomingBytes: Int,
         activeRootDigests: Set<String>
-    ) throws {
+    ) throws -> [URL] {
         let directories = try checkpointDirectories()
         let existingIncomingBytes = try fileSize(
             baseDirectory.appendingPathComponent(incomingRootDigest).appendingPathComponent("checkpoint.json")
@@ -245,7 +296,7 @@ actor WorkspaceCheckpointStore {
         var total = currentTotal - existingIncomingBytes + incomingBytes
         var rootCount = directories.contains { $0.lastPathComponent == incomingRootDigest }
             ? directories.count : directories.count + 1
-        guard total > quota.maximumTotalBytes || rootCount > quota.maximumRoots else { return }
+        guard total > quota.maximumTotalBytes || rootCount > quota.maximumRoots else { return [] }
 
         var candidates: [(URL, Date)] = []
         for directory in directories where !activeRootDigests.contains(directory.lastPathComponent) {
@@ -256,16 +307,20 @@ actor WorkspaceCheckpointStore {
             if $0.1 != $1.1 { return $0.1 < $1.1 }
             return $0.0.lastPathComponent < $1.0.lastPathComponent
         }
+        var planned: [URL] = []
         for (directory, _) in candidates
             where total > quota.maximumTotalBytes || rootCount > quota.maximumRoots {
             let bytes = try fileSize(directory.appendingPathComponent("checkpoint.json"))
-            try fileManager.removeItem(at: directory)
+            planned.append(directory)
             total -= bytes
             rootCount -= 1
         }
         guard total <= quota.maximumTotalBytes, rootCount <= quota.maximumRoots else {
-            throw AIShellError.checkpointQuotaExceeded(quota.maximumTotalBytes)
+            throw AIShellError.checkpointQuotaExceeded(
+                "全体容量上限（\(quota.maximumTotalBytes) bytes）又はroot数上限を満たせません。"
+            )
         }
+        return planned
     }
 
     private func checkpointDirectories() throws -> [URL] {
@@ -274,7 +329,10 @@ actor WorkspaceCheckpointStore {
             at: baseDirectory,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
-        ).filter { try $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true }
+        ).filter {
+            try $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+                && fileManager.fileExists(atPath: $0.appendingPathComponent("checkpoint.json").path)
+        }
     }
 
     private func checkpointURL(rootDigest: String) throws -> URL {

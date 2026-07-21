@@ -97,9 +97,6 @@ struct ObservationJournal: Sendable {
                 rescanReason = "FSEvents gap/root change (flags=\(event.flags), id=\(event.eventID))"
             }
             if event.eventID > 0 {
-                if let lastEventID, event.eventID < lastEventID {
-                    rescanReason = "FSEvents event ID regressed (last=\(lastEventID), current=\(event.eventID))"
-                }
                 lastEventID = max(lastEventID ?? 0, event.eventID)
             }
             guard includePath(event.path) else { continue }

@@ -297,6 +297,7 @@ public struct WorkspaceSnapshot: Codable, Equatable, Sendable {
     public let cursor: String
     public let isFull: Bool
     public let freshness: String
+    public let checkpointState: String?
     public let entries: [WorkspaceEntry]
     public let changes: [WorkspaceChange]
     public let omittedEntries: Int
@@ -395,7 +396,7 @@ public enum AIShellError: LocalizedError, Equatable, Sendable {
     case checkpointCorrupt(String)
     case checkpointUnsupported(String)
     case checkpointMigrationFailed(String)
-    case checkpointQuotaExceeded(Int)
+    case checkpointQuotaExceeded(String)
     case checkpointWriteFailed(String)
     case cursorExpired(String)
     case rescanRequired(String)
@@ -442,8 +443,8 @@ public enum AIShellError: LocalizedError, Equatable, Sendable {
             "CHECKPOINT_UNSUPPORTED: schemaを読み取れません: \(schema)"
         case let .checkpointMigrationFailed(reason):
             "CHECKPOINT_MIGRATION_FAILED: \(reason)"
-        case let .checkpointQuotaExceeded(limit):
-            "CHECKPOINT_QUOTA_EXCEEDED: checkpoint上限（\(limit) bytes）を超えます。"
+        case let .checkpointQuotaExceeded(detail):
+            "CHECKPOINT_QUOTA_EXCEEDED: \(detail)"
         case let .checkpointWriteFailed(reason):
             "CHECKPOINT_WRITE_FAILED: \(reason)"
         case let .cursorExpired(cursor):

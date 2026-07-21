@@ -33,6 +33,11 @@
       "expected": { "decision": "stop", "typed_error": "RESCAN_REQUIRED", "reuse_entries": false }
     },
     {
+      "id": "event-store-uuid-changed",
+      "condition": "fsevents_volume_uuid_is_missing_or_changed",
+      "expected": { "decision": "stop", "typed_error": "RESCAN_REQUIRED", "reuse_entries": false }
+    },
+    {
       "id": "root-replaced",
       "condition": "root_device_or_inode_changed",
       "expected": { "decision": "stop", "typed_error": "RESCAN_REQUIRED", "reuse_entries": false }

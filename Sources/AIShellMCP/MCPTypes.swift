@@ -154,7 +154,7 @@ enum ToolCatalog {
                 properties: [
                     "root": type("string"), "cursor": type("string"), "isFull": type("boolean"),
                     "freshness": enumType(["fresh"]), "entries": type("array"), "changes": type("array"),
-                    "omittedEntries": type("integer"), "guidanceFiles": type("array"),
+                    "omittedEntries": type("integer"), "checkpointState": type("string"), "guidanceFiles": type("array"),
                     "gitStatusState": enumType(["clean", "dirty", "not_repository"]),
                     "gitStatus": type("array"), "context": type("array")
                 ]
