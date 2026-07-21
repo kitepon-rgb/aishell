@@ -1,8 +1,8 @@
 {
   "schema": "lattice.run_request.v1",
-  "request_id": "aishell-changeset-conflict-dogfood-20260722",
+  "request_id": "aishell-changeset-conflict-dogfood-20260722-v2",
   "repo": {
-    "base_sha": "4f26475a46be5171a883181a00683f6e20258d43",
+    "base_sha": "fb096826739ce36ed693e69d11e5635839485e88",
     "root_kind": "git-worktree"
   },
   "capacity": {
@@ -25,9 +25,44 @@
       "resources": [],
       "state_effects": [],
       "sensor_provenance": { "queries": [
-        { "query_id": "q-service", "expect": { "kind": "path", "path": "Sources/AIShellCore/ChangeSetService.swift" } }
+        { "query_id": "q-service", "expect": { "kind": "affected", "path": "Sources/AIShellCore/ChangeSetService.swift" } }
       ] },
-      "affected_tests": ["Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift"],
+      "affected_tests": [
+        "Tests/AIShellCoreTests/AllowedPathResolverTests.swift",
+        "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetClientRegistryTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetCutoverCoordinatorTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetDiffArtifactBuilderTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetQuotaCapacityPlannerTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetQuotaLedgerTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetServiceTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetTransactionStoreTests.swift",
+        "Tests/AIShellCoreTests/ContextCompilerServiceTests.swift",
+        "Tests/AIShellCoreTests/DevelopmentRuntimeServiceTests.swift",
+        "Tests/AIShellCoreTests/EvidenceStoreTests.swift",
+        "Tests/AIShellCoreTests/GitContextProviderTests.swift",
+        "Tests/AIShellCoreTests/LegacyControlCompatStoreTests.swift",
+        "Tests/AIShellCoreTests/ManagedProcessRegistryTests.swift",
+        "Tests/AIShellCoreTests/ManagedProcessSafetyNetTests.swift",
+        "Tests/AIShellCoreTests/NativeApplicationServiceTests.swift",
+        "Tests/AIShellCoreTests/NativeFileServiceTests.swift",
+        "Tests/AIShellCoreTests/NativeProcessServiceTests.swift",
+        "Tests/AIShellCoreTests/ObservationJournalTests.swift",
+        "Tests/AIShellCoreTests/Phase2AcceptanceTests.swift",
+        "Tests/AIShellCoreTests/ProjectProfileServiceTests.swift",
+        "Tests/AIShellCoreTests/ReservedNamespacePolicyTests.swift",
+        "Tests/AIShellCoreTests/RuntimeStoreTests.swift",
+        "Tests/AIShellCoreTests/SearchContextServiceTests.swift",
+        "Tests/AIShellCoreTests/TemporaryFixture.swift",
+        "Tests/AIShellCoreTests/WorkspaceCheckpointStoreTests.swift",
+        "Tests/AIShellCoreTests/WorkspaceStateRuntimeTests.swift",
+        "Tests/AIShellCoreTests/WorkspaceWarmRestartBenchmarkTests.swift",
+        "Tests/AIShellMCPTests/MCPApplyChangeSetWireTests.swift",
+        "Tests/AIShellMCPTests/MCPContextV2WireTests.swift",
+        "Tests/AIShellMCPTests/MCPReservedPathWireTests.swift",
+        "Tests/AIShellMCPTests/MCPTypesTests.swift"
+      ],
       "unknowns": []
     },
     "cutover-store": {
@@ -44,17 +79,52 @@
       "resources": [],
       "state_effects": [],
       "sensor_provenance": { "queries": [
-        { "query_id": "q-service", "expect": { "kind": "path", "path": "Sources/AIShellCore/ChangeSetService.swift" } },
+        { "query_id": "q-service", "expect": { "kind": "affected", "path": "Sources/AIShellCore/ChangeSetService.swift" } },
         { "query_id": "q-coordinator", "expect": { "kind": "path", "path": "Sources/AIShellCore/ChangeSetCutoverCoordinator.swift" } }
       ] },
-      "affected_tests": ["Tests/AIShellCoreTests/ChangeSetCutoverCoordinatorTests.swift"],
+      "affected_tests": [
+        "Tests/AIShellCoreTests/AllowedPathResolverTests.swift",
+        "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetClientRegistryTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetCutoverCoordinatorTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetDiffArtifactBuilderTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetQuotaCapacityPlannerTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetQuotaLedgerTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetServiceTests.swift",
+        "Tests/AIShellCoreTests/ChangeSetTransactionStoreTests.swift",
+        "Tests/AIShellCoreTests/ContextCompilerServiceTests.swift",
+        "Tests/AIShellCoreTests/DevelopmentRuntimeServiceTests.swift",
+        "Tests/AIShellCoreTests/EvidenceStoreTests.swift",
+        "Tests/AIShellCoreTests/GitContextProviderTests.swift",
+        "Tests/AIShellCoreTests/LegacyControlCompatStoreTests.swift",
+        "Tests/AIShellCoreTests/ManagedProcessRegistryTests.swift",
+        "Tests/AIShellCoreTests/ManagedProcessSafetyNetTests.swift",
+        "Tests/AIShellCoreTests/NativeApplicationServiceTests.swift",
+        "Tests/AIShellCoreTests/NativeFileServiceTests.swift",
+        "Tests/AIShellCoreTests/NativeProcessServiceTests.swift",
+        "Tests/AIShellCoreTests/ObservationJournalTests.swift",
+        "Tests/AIShellCoreTests/Phase2AcceptanceTests.swift",
+        "Tests/AIShellCoreTests/ProjectProfileServiceTests.swift",
+        "Tests/AIShellCoreTests/ReservedNamespacePolicyTests.swift",
+        "Tests/AIShellCoreTests/RuntimeStoreTests.swift",
+        "Tests/AIShellCoreTests/SearchContextServiceTests.swift",
+        "Tests/AIShellCoreTests/TemporaryFixture.swift",
+        "Tests/AIShellCoreTests/WorkspaceCheckpointStoreTests.swift",
+        "Tests/AIShellCoreTests/WorkspaceStateRuntimeTests.swift",
+        "Tests/AIShellCoreTests/WorkspaceWarmRestartBenchmarkTests.swift",
+        "Tests/AIShellMCPTests/MCPApplyChangeSetWireTests.swift",
+        "Tests/AIShellMCPTests/MCPContextV2WireTests.swift",
+        "Tests/AIShellMCPTests/MCPReservedPathWireTests.swift",
+        "Tests/AIShellMCPTests/MCPTypesTests.swift"
+      ],
       "unknowns": []
     }
   },
   "sensor_query_set": {
     "queries": [
       { "id": "q-status", "operation": "status" },
-      { "id": "q-service", "operation": "query", "target": "Sources/AIShellCore/ChangeSetService.swift" },
+      { "id": "q-service", "operation": "affected", "target": "Sources/AIShellCore/ChangeSetService.swift" },
       { "id": "q-coordinator", "operation": "query", "target": "Sources/AIShellCore/ChangeSetCutoverCoordinator.swift" }
     ]
   },
@@ -62,5 +132,5 @@
     "adapters": ["scripted"]
   },
   "claim_mode": "exact_minimum",
-  "request_digest": "a9e4c47bf597f90919b1bea208ed5e91e0f0353d3d7a91f28e9a7e6875e27062"
+  "request_digest": "3e028a2275b8f0b74106d017ec5afbbc003e433fad26e3b14eca66f17b9c0bb0"
 }
