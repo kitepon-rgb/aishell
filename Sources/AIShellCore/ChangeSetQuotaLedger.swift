@@ -117,6 +117,20 @@ public actor ChangeSetQuotaLedger {
         public let replacementOldMaterialID: String?
     }
 
+    public struct PhysicalReservationDiagnostic: Equatable, Sendable {
+        public enum FailureStage: String, Equatable, Sendable { case open, fstat, deviceMismatch, truncate, fsync }
+        public let materialID: String
+        public let state: MaterialState
+        public let extentExists: Bool
+        public let finalExists: Bool
+        public let physicalSizeBytes: Int?
+        public let expectedSizeBytes: Int
+        public let actualBytes: Int?
+        public let expectedDevice: UInt64
+        public let physicalDevice: UInt64?
+        public let failureStage: FailureStage
+    }
+
     public enum LedgerError: Error, Equatable, Sendable {
         case invalidIdentifier(String)
         case duplicateMaterial(String)
@@ -136,7 +150,7 @@ public actor ChangeSetQuotaLedger {
         case preallocationFailed(volume: UInt64, errno: Int32)
         case durableWriteFailed(String)
         case corruptLedger(String)
-        case physicalReservationNotConverged(volume: UInt64)
+        case physicalReservationNotConverged(PhysicalReservationDiagnostic)
         case finalPathMismatch(String)
         case materializationIncomplete(String)
     }
@@ -183,6 +197,12 @@ public actor ChangeSetQuotaLedger {
         let inode: UInt64
         let bytes: Int
         let sha256: String
+    }
+
+    private struct ExtentFailure: Error {
+        let stage: PhysicalReservationDiagnostic.FailureStage
+        let physicalSize: Int?
+        let physicalDevice: UInt64?
     }
 
     private static let schema = "aishell.change-set-quota-ledger.v1"
@@ -355,7 +375,10 @@ public actor ChangeSetQuotaLedger {
         guard material.status == 0 else { throw LedgerError.materializationIncomplete(materialID) }
         let extent = URL(fileURLWithPath: material.extentFilePath)
         let capacity = try Self.parse(material.bytes)
-        try Self.requireExtent(extent, device: device, size: capacity)
+        do { try Self.requireExtent(extent, device: device, size: capacity) }
+        catch let failure as ExtentFailure {
+            throw LedgerError.physicalReservationNotConverged(Self.physicalDiagnostic(material, expectedSize: capacity, failure: failure))
+        }
         snapshot = Self.adopting(snapshot, materialIndex: index, pathHex: planned.hex, pathBytes: planned.bytes)
         let encoded = try Self.encode(snapshot)
         let expectedLedgerBytes = try Self.parse(snapshot.ledgerBytes)
@@ -394,11 +417,7 @@ public actor ChangeSetQuotaLedger {
         let expectedLedgerBytes = try Self.parse(snapshot.ledgerBytes)
         guard encoded.count == expectedLedgerBytes else { throw LedgerError.corruptLedger("ledger encoded size is not invariant") }
         try Self.atomicDurableWrite(encoded, to: ledgerURL)
-        do {
-            try reconcile(snapshot: snapshot)
-        } catch {
-            throw LedgerError.physicalReservationNotConverged(volume: device)
-        }
+        try reconcile(snapshot: snapshot)
         return Self.receipt(snapshot.materials[index], snapshot: snapshot)
     }
 
@@ -568,7 +587,9 @@ public actor ChangeSetQuotaLedger {
             }
             let expectedSize = material.status == 2 ? try Self.parse(material.actualBytes) : try Self.parse(material.bytes)
             do { try Self.resizeAndSync(extent, bytes: expectedSize, expectedDevice: device) }
-            catch { throw LedgerError.physicalReservationNotConverged(volume: device) }
+            catch let failure as ExtentFailure {
+                throw LedgerError.physicalReservationNotConverged(Self.physicalDiagnostic(material, expectedSize: expectedSize, failure: failure))
+            }
         }
     }
 
@@ -783,23 +804,47 @@ public actor ChangeSetQuotaLedger {
 
     private static func requireExtent(_ url: URL, device: UInt64, size: Int) throws {
         let descriptor = open(url.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-        guard descriptor >= 0 else { throw LedgerError.physicalReservationNotConverged(volume: device) }
+        guard descriptor >= 0 else { throw ExtentFailure(stage: .open, physicalSize: nil, physicalDevice: nil) }
         defer { close(descriptor) }
         var info = stat()
-        guard fstat(descriptor, &info) == 0, UInt64(info.st_dev) == device, Int(info.st_size) == size else {
-            throw LedgerError.physicalReservationNotConverged(volume: device)
+        guard fstat(descriptor, &info) == 0 else { throw ExtentFailure(stage: .fstat, physicalSize: nil, physicalDevice: nil) }
+        guard UInt64(info.st_dev) == device else {
+            throw ExtentFailure(stage: .deviceMismatch, physicalSize: Int(info.st_size), physicalDevice: UInt64(info.st_dev))
         }
+        guard Int(info.st_size) == size else {
+            throw ExtentFailure(stage: .truncate, physicalSize: Int(info.st_size), physicalDevice: UInt64(info.st_dev))
+        }
+    }
+
+    private static func physicalDiagnostic(_ material: MaterialRecord, expectedSize: Int, failure: ExtentFailure) -> PhysicalReservationDiagnostic {
+        let finalExists: Bool
+        if let final = try? plannedFinalURL(material) { finalExists = FileManager.default.fileExists(atPath: final.path) }
+        else { finalExists = false }
+        return .init(
+            materialID: material.id, state: materialState(material.status),
+            extentExists: FileManager.default.fileExists(atPath: material.extentFilePath), finalExists: finalExists,
+            physicalSizeBytes: failure.physicalSize, expectedSizeBytes: expectedSize,
+            actualBytes: material.status >= 2 ? try? parse(material.actualBytes) : nil,
+            expectedDevice: (try? parseUInt(material.volume)) ?? 0,
+            physicalDevice: failure.physicalDevice, failureStage: failure.stage
+        )
     }
 
     private static func resizeAndSync(_ url: URL, bytes: Int, expectedDevice: UInt64? = nil) throws {
         let descriptor = open(url.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-        guard descriptor >= 0 else { throw LedgerError.durableWriteFailed("extent open: \(errno)") }
+        guard descriptor >= 0 else { throw ExtentFailure(stage: .open, physicalSize: nil, physicalDevice: nil) }
         defer { close(descriptor) }
         var info = stat()
-        guard fstat(descriptor, &info) == 0,
-              expectedDevice == nil || UInt64(info.st_dev) == expectedDevice,
-              ftruncate(descriptor, off_t(bytes)) == 0, fsync(descriptor) == 0 else {
-            throw LedgerError.durableWriteFailed("extent resize: \(errno)")
+        guard fstat(descriptor, &info) == 0 else { throw ExtentFailure(stage: .fstat, physicalSize: nil, physicalDevice: nil) }
+        let physicalSize = Int(info.st_size), physicalDevice = UInt64(info.st_dev)
+        guard expectedDevice == nil || physicalDevice == expectedDevice else {
+            throw ExtentFailure(stage: .deviceMismatch, physicalSize: physicalSize, physicalDevice: physicalDevice)
+        }
+        guard ftruncate(descriptor, off_t(bytes)) == 0 else {
+            throw ExtentFailure(stage: .truncate, physicalSize: physicalSize, physicalDevice: physicalDevice)
+        }
+        guard fsync(descriptor) == 0 else {
+            throw ExtentFailure(stage: .fsync, physicalSize: bytes, physicalDevice: physicalDevice)
         }
     }
 

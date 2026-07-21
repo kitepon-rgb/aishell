@@ -140,6 +140,36 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
         XCTAssertEqual(try adopted.extentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, 3)
     }
 
+    func testPhysicalReservationFailureReportsTypedMaterialDiagnostic() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "diagnostic")
+        _ = try await ledger.prepareCapacity([
+            .init(id: "terminal-slot", idempotencyKey: "terminal-diagnostic", kind: .terminalReplay,
+                  maximumEncodedBytes: 32, allocationDirectory: fixture.directory)
+        ])
+        let extent = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: fixture.directory, includingPropertiesForKeys: nil)
+            .first { $0.pathExtension == "extent" && $0.lastPathComponent.contains("terminal-slot") })
+        try FileManager.default.removeItem(at: extent)
+
+        await XCTAssertThrowsErrorAsync(
+            try await ledger.adoptReserve(materialID: "terminal-slot", idempotencyKey: "terminal-diagnostic",
+                                          finalURL: fixture.directory.appendingPathComponent("terminal.json"))
+        ) { error in
+            guard case let ChangeSetQuotaLedger.LedgerError.physicalReservationNotConverged(diagnostic) = error else {
+                return XCTFail("typed physical diagnosticではありません: \(error)")
+            }
+            XCTAssertEqual(diagnostic.materialID, "terminal-slot")
+            XCTAssertEqual(diagnostic.state, .reserved)
+            XCTAssertEqual(diagnostic.failureStage, .open)
+            XCTAssertFalse(diagnostic.extentExists)
+            XCTAssertFalse(diagnostic.finalExists)
+            XCTAssertEqual(diagnostic.expectedSizeBytes, 32)
+            XCTAssertNil(diagnostic.physicalSizeBytes)
+            XCTAssertGreaterThan(diagnostic.expectedDevice, 0)
+        }
+    }
+
     func testRenameCrashRecoversOnlyAtPlannedFinalAndReleaseEndsVerification() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
