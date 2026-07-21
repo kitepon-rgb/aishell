@@ -97,6 +97,48 @@ final class ChangeSetQuotaLedgerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("quota-invalid.json").path))
     }
 
+    func testCapacityAdoptionAuthorizesActualBytesAfterRestart() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let initial = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "two-stage")
+        _ = try await initial.prepareCapacity([
+            .init(id: "terminal", idempotencyKey: "terminal-key", kind: .terminalReplay,
+                  maximumEncodedBytes: 128, allocationDirectory: fixture.directory)
+        ])
+        let adopted = try await initial.adoptReserve(materialID: "terminal", idempotencyKey: "terminal-key")
+        XCTAssertEqual(try adopted.extentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, 128)
+
+        let restarted = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "two-stage")
+        let actual = Data("terminal-after-stage-identity".utf8)
+        let receipt = try await restarted.authorizeActual(materialID: "terminal", idempotencyKey: "terminal-key", data: actual)
+        let replay = try await restarted.authorizeActual(materialID: "terminal", idempotencyKey: "terminal-key", data: actual)
+        XCTAssertEqual(receipt, replay)
+        XCTAssertEqual(receipt.bytes, actual.count)
+        let attributes = try FileManager.default.attributesOfItem(atPath: adopted.extentURL.path)
+        XCTAssertEqual(attributes[.size] as? Int, actual.count)
+    }
+
+    func testActualBytesOverCapacityFailClosedWithoutConsumingReserve() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let ledger = try ChangeSetQuotaLedger(ledgerDirectory: fixture.directory, reservationID: "over-capacity")
+        _ = try await ledger.prepareCapacity([
+            .init(id: "journal", idempotencyKey: "journal-key", kind: .transactionJournal,
+                  maximumEncodedBytes: 3, allocationDirectory: fixture.directory)
+        ])
+        let adopted = try await ledger.adoptReserve(materialID: "journal", idempotencyKey: "journal-key")
+        await XCTAssertThrowsErrorAsync(
+            try await ledger.authorizeActual(materialID: "journal", idempotencyKey: "journal-key", data: Data("four".utf8))
+        ) {
+            XCTAssertEqual($0 as? ChangeSetQuotaLedger.LedgerError,
+                           .capacityExceeded(materialID: "journal", capacity: 3, actual: 4))
+        }
+        let view = try await ledger.currentView()
+        XCTAssertEqual(view.remainingMaterialBytes, 3)
+        XCTAssertEqual(view.consumedMaterialIDs, [])
+        XCTAssertEqual(try adopted.extentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, 3)
+    }
+
 }
 
 private struct Fixture {

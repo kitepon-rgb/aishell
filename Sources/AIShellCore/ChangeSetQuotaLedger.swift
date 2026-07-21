@@ -39,6 +39,31 @@ public actor ChangeSetQuotaLedger {
         }
     }
 
+    /// admission前に決定できる契約上限。実materialの生成やstage inodeは要求しない。
+    public struct Capacity: Sendable {
+        public let id: String
+        public let idempotencyKey: String
+        public let kind: MaterialKind
+        public let maximumEncodedBytes: Int
+        public let allocationDirectory: URL
+
+        public init(id: String, idempotencyKey: String, kind: MaterialKind, maximumEncodedBytes: Int, allocationDirectory: URL) {
+            self.id = id
+            self.idempotencyKey = idempotencyKey
+            self.kind = kind
+            self.maximumEncodedBytes = maximumEncodedBytes
+            self.allocationDirectory = allocationDirectory
+        }
+    }
+
+    /// callerが後続materialのinodeとして直接利用できる、物理予約済みextent。
+    public struct AdoptedReserve: Equatable, Sendable {
+        public let materialID: String
+        public let idempotencyKey: String
+        public let extentURL: URL
+        public let capacityBytes: Int
+    }
+
     public struct Receipt: Codable, Equatable, Sendable {
         public let materialID: String
         public let idempotencyKey: String
@@ -69,6 +94,8 @@ public actor ChangeSetQuotaLedger {
         case unknownMaterial(String)
         case idempotencyMismatch(String)
         case contentMismatch(String)
+        case capacityExceeded(materialID: String, capacity: Int, actual: Int)
+        case reserveNotAdopted(String)
         case quotaExhausted(volume: UInt64, required: Int, remaining: Int)
         case preallocationFailed(volume: UInt64, errno: Int32)
         case durableWriteFailed(String)
@@ -81,8 +108,11 @@ public actor ChangeSetQuotaLedger {
         let idempotencyKey: String
         let kind: MaterialKind
         let bytes: String
+        let actualBytes: String
+        let expectedSHA256: String
         let sha256: String
         let volume: String
+        let extentFilePath: String
         let status: Int
     }
 
@@ -120,20 +150,35 @@ public actor ChangeSetQuotaLedger {
     /// 全 material と ledger 自身の encoded size を確定し、各所有 volume に物理領域を予約する。
     @discardableResult
     public func prepare(_ materials: [Material]) throws -> View {
+        try prepareRecords(materials.map {
+            ($0.id, $0.idempotencyKey, $0.kind, $0.encodedData.count, $0.allocationDirectory, Self.sha256($0.encodedData))
+        })
+    }
+
+    /// admission前に、request上限と決定的なworst-case encodingだけから物理capacityを確保する。
+    /// 実manifest、journal、artifact、terminal bytesはここでは要求しない。
+    @discardableResult
+    public func prepareCapacity(_ capacities: [Capacity]) throws -> View {
+        try prepareRecords(capacities.map {
+            ($0.id, $0.idempotencyKey, $0.kind, $0.maximumEncodedBytes, $0.allocationDirectory, nil)
+        })
+    }
+
+    private func prepareRecords(_ inputs: [(id: String, key: String, kind: MaterialKind, capacity: Int, directory: URL, expectedSHA: String?)]) throws -> View {
         let ledgerDevice = try Self.device(ofExistingDirectory: ledgerDirectory)
         var ids = Set<String>(), keys = Set<String>()
         var materialRecords: [MaterialRecord] = []
         var directories: [UInt64: URL] = [:]
         var materialBytesByVolume: [UInt64: Int] = [:]
 
-        for material in materials {
-            guard Self.validIdentifier(material.id) else { throw LedgerError.invalidIdentifier(material.id) }
-            guard !material.idempotencyKey.isEmpty, material.idempotencyKey.utf8.count <= 512 else {
-                throw LedgerError.invalidIdentifier(material.idempotencyKey)
+        for input in inputs {
+            guard Self.validIdentifier(input.id) else { throw LedgerError.invalidIdentifier(input.id) }
+            guard !input.key.isEmpty, input.key.utf8.count <= 512, input.capacity >= 0 else {
+                throw LedgerError.invalidIdentifier(input.key)
             }
-            guard ids.insert(material.id).inserted else { throw LedgerError.duplicateMaterial(material.id) }
-            guard keys.insert(material.idempotencyKey).inserted else { throw LedgerError.duplicateIdempotencyKey(material.idempotencyKey) }
-            let directory = material.allocationDirectory.standardizedFileURL.resolvingSymlinksInPath()
+            guard ids.insert(input.id).inserted else { throw LedgerError.duplicateMaterial(input.id) }
+            guard keys.insert(input.key).inserted else { throw LedgerError.duplicateIdempotencyKey(input.key) }
+            let directory = input.directory.standardizedFileURL.resolvingSymlinksInPath()
             let device = try Self.device(ofExistingDirectory: directory)
             // stage、Trash、Evidence が同じ volume の別directoryでも、一 volume 一予約へ集約する。
             // request順に依存しないよう reservation の設置先は辞書順で決める。
@@ -142,14 +187,17 @@ public actor ChangeSetQuotaLedger {
             } else {
                 directories[device] = directory
             }
-            materialBytesByVolume[device, default: 0] = try Self.checkedAdd(materialBytesByVolume[device, default: 0], material.encodedData.count)
+            materialBytesByVolume[device, default: 0] = try Self.checkedAdd(materialBytesByVolume[device, default: 0], input.capacity)
             materialRecords.append(.init(
-                id: material.id,
-                idempotencyKey: material.idempotencyKey,
-                kind: material.kind,
-                bytes: Self.fixed(material.encodedData.count),
-                sha256: Self.sha256(material.encodedData),
+                id: input.id,
+                idempotencyKey: input.key,
+                kind: input.kind,
+                bytes: Self.fixed(input.capacity),
+                actualBytes: Self.fixed(0),
+                expectedSHA256: input.expectedSHA ?? Self.zeroDigest,
+                sha256: Self.zeroDigest,
                 volume: Self.fixed(device),
+                extentFilePath: directory.appendingPathComponent(".aishell-quota-\(reservationID)-material-\(input.id).extent").path,
                 status: 0
             ))
         }
@@ -168,7 +216,9 @@ public actor ChangeSetQuotaLedger {
                 return .init(
                     device: Self.fixed(device),
                     directoryPath: directory.path,
-                    reserveFilePath: directory.appendingPathComponent(".aishell-quota-\(reservationID)-\(device).reserve").path,
+                    reserveFilePath: device == ledgerDevice
+                        ? ledgerDirectory.appendingPathComponent(".aishell-quota-\(reservationID)-ledger.reserve").path
+                        : "",
                     totalBytes: Self.fixed(total),
                     remainingBytes: Self.fixed(materialBytes)
                 )
@@ -194,14 +244,17 @@ public actor ChangeSetQuotaLedger {
 
         var created: [URL] = []
         do {
-            for volume in candidate.volumes {
-                let total = try Self.parse(volume.totalBytes)
-                let reserveURL = URL(fileURLWithPath: volume.reserveFilePath)
-                try Self.preallocate(reserveURL, bytes: total)
+            for material in candidate.materials {
+                let reserveURL = URL(fileURLWithPath: material.extentFilePath)
+                try Self.preallocate(reserveURL, bytes: try Self.parse(material.bytes))
                 created.append(reserveURL)
             }
+            let ledgerReserve = ledgerDirectory.appendingPathComponent(".aishell-quota-\(reservationID)-ledger.reserve")
+            try Self.preallocate(ledgerReserve, bytes: ledgerBytes)
+            created.append(ledgerReserve)
             try Self.atomicDurableWrite(encoded, to: ledgerURL)
-            // ledger bytes are now materialized; only future material bytes remain in the companion file.
+            try Self.resizeAndSync(ledgerReserve, bytes: 0)
+            // ledger bytes are now materialized; material extents remain preallocated at contract capacity.
             try reconcile(snapshot: candidate)
             return Self.view(candidate)
         } catch {
@@ -214,14 +267,44 @@ public actor ChangeSetQuotaLedger {
 
     /// material 書込み直前の durable admission。成功後にだけ呼び出し側が `data` を書ける。
     public func authorizeWrite(materialID: String, idempotencyKey: String, data: Data) throws -> Receipt {
+        _ = try adoptReserve(materialID: materialID, idempotencyKey: idempotencyKey)
+        return try authorizeActual(materialID: materialID, idempotencyKey: idempotencyKey, data: data)
+    }
+
+    /// `prepareCapacity` が確保したextentを後続materialの所有物としてdurableに採用する。
+    /// extentは同一volume上でcallerが直接writeし、最終pathへatomic renameできる。
+    public func adoptReserve(materialID: String, idempotencyKey: String) throws -> AdoptedReserve {
         var snapshot = try load()
         guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
         let material = snapshot.materials[index]
         guard material.idempotencyKey == idempotencyKey else { throw LedgerError.idempotencyMismatch(materialID) }
-        guard material.sha256 == Self.sha256(data), try Self.parse(material.bytes) == data.count else { throw LedgerError.contentMismatch(materialID) }
+        if material.status >= 1 { return Self.adoptedReserve(material) }
+        let extent = URL(fileURLWithPath: material.extentFilePath)
+        let capacity = try Self.parse(material.bytes)
+        try Self.requireExtent(extent, device: try Self.parseUInt(material.volume), size: capacity)
+        snapshot = Self.settingStatus(snapshot, materialIndex: index, status: 1)
+        let encoded = try Self.encode(snapshot)
+        let expectedLedgerBytes = try Self.parse(snapshot.ledgerBytes)
+        guard encoded.count == expectedLedgerBytes else { throw LedgerError.corruptLedger("ledger encoded size is not invariant") }
+        try Self.atomicDurableWrite(encoded, to: ledgerURL)
+        return Self.adoptedReserve(snapshot.materials[index])
+    }
+
+    /// admission後に初めて得られる実encoded bytesをcapacity内でreceipt化し、extentを実sizeへ移譲する。
+    public func authorizeActual(materialID: String, idempotencyKey: String, data: Data) throws -> Receipt {
+        var snapshot = try load()
+        guard let index = snapshot.materials.firstIndex(where: { $0.id == materialID }) else { throw LedgerError.unknownMaterial(materialID) }
+        let material = snapshot.materials[index]
+        guard material.idempotencyKey == idempotencyKey else { throw LedgerError.idempotencyMismatch(materialID) }
+        guard material.status >= 1 else { throw LedgerError.reserveNotAdopted(materialID) }
+        let capacity = try Self.parse(material.bytes)
+        guard data.count <= capacity else { throw LedgerError.capacityExceeded(materialID: materialID, capacity: capacity, actual: data.count) }
+        let digest = Self.sha256(data)
+        if material.expectedSHA256 != Self.zeroDigest, material.expectedSHA256 != digest { throw LedgerError.contentMismatch(materialID) }
         let device = try Self.parseUInt(material.volume)
 
-        if material.status == 1 {
+        if material.status == 2 {
+            guard try Self.parse(material.actualBytes) == data.count, material.sha256 == digest else { throw LedgerError.contentMismatch(materialID) }
             try reconcile(snapshot: snapshot)
             return Self.receipt(material, snapshot: snapshot)
         }
@@ -229,10 +312,9 @@ public actor ChangeSetQuotaLedger {
             throw LedgerError.corruptLedger("material volume is absent")
         }
         let remaining = try Self.parse(snapshot.volumes[volumeIndex].remainingBytes)
-        let bytes = data.count
-        guard remaining >= bytes else { throw LedgerError.quotaExhausted(volume: device, required: bytes, remaining: remaining) }
+        guard remaining >= capacity else { throw LedgerError.quotaExhausted(volume: device, required: capacity, remaining: remaining) }
 
-        snapshot = Self.consuming(snapshot, materialIndex: index, volumeIndex: volumeIndex, bytes: bytes)
+        snapshot = Self.authorizing(snapshot, materialIndex: index, volumeIndex: volumeIndex, actualBytes: data.count, digest: digest)
         let encoded = try Self.encode(snapshot)
         let expectedLedgerBytes = try Self.parse(snapshot.ledgerBytes)
         guard encoded.count == expectedLedgerBytes else { throw LedgerError.corruptLedger("ledger encoded size is not invariant") }
@@ -276,18 +358,16 @@ public actor ChangeSetQuotaLedger {
             let device = try Self.parseUInt(volume.device)
             let directory = URL(fileURLWithPath: volume.directoryPath)
             guard try Self.device(ofExistingDirectory: directory) == device else { throw LedgerError.differentLedgerVolume }
-            let remaining = try Self.parse(volume.remainingBytes)
-            let reserve = URL(fileURLWithPath: volume.reserveFilePath)
-            let descriptor = open(reserve.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
-            guard descriptor >= 0 else { throw LedgerError.physicalReservationNotConverged(volume: device) }
-            defer { close(descriptor) }
-            var info = stat()
-            guard fstat(descriptor, &info) == 0, UInt64(info.st_dev) == device else { throw LedgerError.differentLedgerVolume }
-            if Int(info.st_size) != remaining {
-                guard ftruncate(descriptor, off_t(remaining)) == 0, fsync(descriptor) == 0 else {
-                    throw LedgerError.physicalReservationNotConverged(volume: device)
-                }
+            if !volume.reserveFilePath.isEmpty {
+                try Self.resizeAndSync(URL(fileURLWithPath: volume.reserveFilePath), bytes: 0)
             }
+        }
+        for material in snapshot.materials {
+            let device = try Self.parseUInt(material.volume)
+            let expectedSize = material.status == 2 ? try Self.parse(material.actualBytes) : try Self.parse(material.bytes)
+            let extent = URL(fileURLWithPath: material.extentFilePath)
+            do { try Self.resizeAndSync(extent, bytes: expectedSize, expectedDevice: device) }
+            catch { throw LedgerError.physicalReservationNotConverged(volume: device) }
         }
     }
 
@@ -303,13 +383,25 @@ public actor ChangeSetQuotaLedger {
                      ledgerBytes: fixed(ledgerBytes), materials: snapshot.materials, volumes: volumes)
     }
 
-    private static func consuming(_ snapshot: Snapshot, materialIndex: Int, volumeIndex: Int, bytes: Int) -> Snapshot {
+    private static func settingStatus(_ snapshot: Snapshot, materialIndex: Int, status: Int) -> Snapshot {
+        var materials = snapshot.materials
+        let material = materials[materialIndex]
+        materials[materialIndex] = .init(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
+                                         bytes: material.bytes, actualBytes: material.actualBytes,
+                                         expectedSHA256: material.expectedSHA256, sha256: material.sha256,
+                                         volume: material.volume, extentFilePath: material.extentFilePath, status: status)
+        return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
+                     ledgerBytes: snapshot.ledgerBytes, materials: materials, volumes: snapshot.volumes)
+    }
+
+    private static func authorizing(_ snapshot: Snapshot, materialIndex: Int, volumeIndex: Int, actualBytes: Int, digest: String) -> Snapshot {
         var materials = snapshot.materials, volumes = snapshot.volumes
         let material = materials[materialIndex]
         materials[materialIndex] = .init(id: material.id, idempotencyKey: material.idempotencyKey, kind: material.kind,
-                                         bytes: material.bytes, sha256: material.sha256, volume: material.volume, status: 1)
+                                         bytes: material.bytes, actualBytes: fixed(actualBytes), expectedSHA256: material.expectedSHA256,
+                                         sha256: digest, volume: material.volume, extentFilePath: material.extentFilePath, status: 2)
         let volume = volumes[volumeIndex]
-        let remaining = (try! parse(volume.remainingBytes)) - bytes
+        let remaining = (try! parse(volume.remainingBytes)) - (try! parse(material.bytes))
         volumes[volumeIndex] = .init(device: volume.device, directoryPath: volume.directoryPath, reserveFilePath: volume.reserveFilePath,
                                      totalBytes: volume.totalBytes, remainingBytes: fixed(remaining))
         return .init(schema: snapshot.schema, reservationID: snapshot.reservationID, ledgerDevice: snapshot.ledgerDevice,
@@ -318,15 +410,20 @@ public actor ChangeSetQuotaLedger {
 
     private static func receipt(_ material: MaterialRecord, snapshot: Snapshot) -> Receipt {
         let volume = snapshot.volumes.first { $0.device == material.volume }!
-        return .init(materialID: material.id, idempotencyKey: material.idempotencyKey, bytes: try! parse(material.bytes),
+        return .init(materialID: material.id, idempotencyKey: material.idempotencyKey, bytes: try! parse(material.actualBytes),
                      remainingBytesOnVolume: try! parse(volume.remainingBytes), dataSHA256: material.sha256)
+    }
+
+    private static func adoptedReserve(_ material: MaterialRecord) -> AdoptedReserve {
+        .init(materialID: material.id, idempotencyKey: material.idempotencyKey,
+              extentURL: URL(fileURLWithPath: material.extentFilePath), capacityBytes: try! parse(material.bytes))
     }
 
     private static func view(_ snapshot: Snapshot) -> View {
         let materialBytes = snapshot.materials.reduce(0) { $0 + (try! parse($1.bytes)) }
         let remaining = snapshot.volumes.reduce(0) { $0 + (try! parse($1.remainingBytes)) }
         return .init(reservationID: snapshot.reservationID, ledgerBytes: try! parse(snapshot.ledgerBytes), materialBytes: materialBytes,
-                     remainingMaterialBytes: remaining, consumedMaterialIDs: Set(snapshot.materials.filter { $0.status == 1 }.map(\.id)),
+                     remainingMaterialBytes: remaining, consumedMaterialIDs: Set(snapshot.materials.filter { $0.status == 2 }.map(\.id)),
                      volumeRemainingBytes: Dictionary(uniqueKeysWithValues: snapshot.volumes.map { (try! parseUInt($0.device), try! parse($0.remainingBytes)) }))
     }
 
@@ -335,7 +432,8 @@ public actor ChangeSetQuotaLedger {
               lhs.ledgerDevice == rhs.ledgerDevice, lhs.ledgerBytes == rhs.ledgerBytes else { return false }
         let normalizedMaterials = lhs.materials.map {
             MaterialRecord(id: $0.id, idempotencyKey: $0.idempotencyKey, kind: $0.kind,
-                           bytes: $0.bytes, sha256: $0.sha256, volume: $0.volume, status: 0)
+                           bytes: $0.bytes, actualBytes: fixed(0), expectedSHA256: $0.expectedSHA256,
+                           sha256: zeroDigest, volume: $0.volume, extentFilePath: $0.extentFilePath, status: 0)
         }
         guard normalizedMaterials == rhs.materials, lhs.volumes.count == rhs.volumes.count else { return false }
         return zip(lhs.volumes, rhs.volumes).allSatisfy {
@@ -349,6 +447,10 @@ public actor ChangeSetQuotaLedger {
         var info = stat()
         guard fstat(descriptor, &info) == 0 else { let value = errno; close(descriptor); throw LedgerError.preallocationFailed(volume: 0, errno: value) }
         let device = UInt64(info.st_dev)
+        if bytes == 0 {
+            guard fsync(descriptor) == 0, close(descriptor) == 0 else { throw LedgerError.preallocationFailed(volume: device, errno: errno) }
+            return
+        }
         var allocation = fstore_t(fst_flags: UInt32(F_ALLOCATEALL), fst_posmode: Int32(F_PEOFPOSMODE), fst_offset: 0, fst_length: off_t(bytes), fst_bytesalloc: 0)
         guard fcntl(descriptor, F_PREALLOCATE, &allocation) != -1, allocation.fst_bytesalloc >= bytes,
               ftruncate(descriptor, off_t(bytes)) == 0, fsync(descriptor) == 0 else {
@@ -356,6 +458,28 @@ public actor ChangeSetQuotaLedger {
             throw LedgerError.preallocationFailed(volume: device, errno: value)
         }
         guard close(descriptor) == 0 else { throw LedgerError.preallocationFailed(volume: device, errno: errno) }
+    }
+
+    private static func requireExtent(_ url: URL, device: UInt64, size: Int) throws {
+        let descriptor = open(url.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw LedgerError.physicalReservationNotConverged(volume: device) }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, UInt64(info.st_dev) == device, Int(info.st_size) == size else {
+            throw LedgerError.physicalReservationNotConverged(volume: device)
+        }
+    }
+
+    private static func resizeAndSync(_ url: URL, bytes: Int, expectedDevice: UInt64? = nil) throws {
+        let descriptor = open(url.path, O_RDWR | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw LedgerError.durableWriteFailed("extent open: \(errno)") }
+        defer { close(descriptor) }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0,
+              expectedDevice == nil || UInt64(info.st_dev) == expectedDevice,
+              ftruncate(descriptor, off_t(bytes)) == 0, fsync(descriptor) == 0 else {
+            throw LedgerError.durableWriteFailed("extent resize: \(errno)")
+        }
     }
 
     private static func atomicDurableWrite(_ data: Data, to destination: URL) throws {
@@ -397,6 +521,7 @@ public actor ChangeSetQuotaLedger {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(snapshot)
     }
+    private static let zeroDigest = String(repeating: "0", count: 64)
     private static func sha256(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
     private static func validIdentifier(_ value: String) -> Bool {
         !value.isEmpty && value.utf8.count <= 128 && value.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains($0) }
