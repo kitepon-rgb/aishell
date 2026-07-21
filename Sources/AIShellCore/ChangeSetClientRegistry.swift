@@ -313,6 +313,11 @@ public actor ChangeSetClientRegistry {
         image.receipts.compactMap { $0 }.filter { $0.expiresAt > referenceDate }.count
     }
 
+    /// legacy cutoverのfrozen provenance。通常のregistry generation進行では変更しない。
+    public func legacyImportReceipt() -> ChangeSetLegacyImportReceipt? {
+        image.legacyImportReceipt
+    }
+
     /// active slotだけをslot index、sequenceの順に返す。最大64×256件で固定bounded。
     public func replayReferences() -> [ChangeSetReplayReference] {
         image.slots

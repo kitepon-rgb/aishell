@@ -10,7 +10,9 @@ final class ChangeSetClientRegistryTests: XCTestCase {
 
         let registry = try fixture.open()
         let initial = await registry.snapshot()
+        let pristineImportReceipt = await registry.legacyImportReceipt()
         XCTAssertEqual(initial.generation, 0)
+        XCTAssertNil(pristineImportReceipt)
         XCTAssertEqual(initial.slots.count, 64)
         XCTAssertEqual(Set(initial.slots.map(\.clientID)).count, 64)
         XCTAssertTrue(initial.slots.allSatisfy { $0.allocationState == .free && $0.currentEpoch == 0 })
@@ -309,8 +311,10 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         let legacy = fixture.legacySnapshot(from: pristine)
 
         let imported = try await registry.initializeFromLegacy(legacySnapshot: legacy)
+        let importedProvenance = await registry.legacyImportReceipt()
         XCTAssertEqual(imported.registryGeneration, legacy.registryGeneration)
         XCTAssertEqual(imported.snapshotDigest.count, 64)
+        XCTAssertEqual(importedProvenance, imported)
         let importedSnapshot = await registry.snapshot()
         XCTAssertEqual(importedSnapshot.generation, legacy.registryGeneration)
         XCTAssertEqual(importedSnapshot.controlReceiptCount, 1)
@@ -333,11 +337,39 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         )
         XCTAssertEqual(postImportAllocation.registryGeneration, legacy.registryGeneration + 1)
         XCTAssertEqual(postImportAllocation.slotIndex, 1)
+        let provenanceAfterAllocate = await registry.legacyImportReceipt()
+        XCTAssertEqual(provenanceAfterAllocate, imported)
+
+        let allocatedClientID = try XCTUnwrap(postImportAllocation.clientID)
+        let allocatedEpoch = try XCTUnwrap(postImportAllocation.currentEpoch)
+        let rotated = try await registry.rotateEpoch(
+            controlRequestID: fixture.uuid(65),
+            proofIDDigest: fixture.digest(65),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            clientID: allocatedClientID,
+            expectedEpoch: allocatedEpoch,
+            nextEpoch: allocatedEpoch + 1,
+            expectedRegistryGeneration: postImportAllocation.registryGeneration
+        )
+        let provenanceAfterRotate = await registry.legacyImportReceipt()
+        XCTAssertEqual(provenanceAfterRotate, imported)
+        let retired = try await registry.retire(
+            controlRequestID: fixture.uuid(66),
+            proofIDDigest: fixture.digest(66),
+            proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
+            clientID: allocatedClientID,
+            expectedEpoch: allocatedEpoch + 1,
+            expectedRegistryGeneration: rotated.registryGeneration
+        )
+        let provenanceAfterRetire = await registry.legacyImportReceipt()
+        XCTAssertEqual(provenanceAfterRetire, imported)
 
         let restarted = try fixture.open()
         let restartedSnapshot = await restarted.snapshot()
-        XCTAssertEqual(restartedSnapshot.generation, postImportAllocation.registryGeneration)
-        XCTAssertEqual(restartedSnapshot.slots[1].allocationState, .active)
+        XCTAssertEqual(restartedSnapshot.generation, retired.registryGeneration)
+        XCTAssertEqual(restartedSnapshot.slots[1].allocationState, .free)
+        let restartedProvenance = await restarted.legacyImportReceipt()
+        XCTAssertEqual(restartedProvenance, imported)
         let replayed = try await restarted.initializeFromLegacy(legacySnapshot: legacy)
         XCTAssertEqual(replayed, imported)
         XCTAssertEqual(replayed.registryGeneration, legacy.registryGeneration)
@@ -348,7 +380,7 @@ final class ChangeSetClientRegistryTests: XCTestCase {
                 controlRequestID: fixture.uuid(62),
                 proofIDDigest: fixture.digest(60),
                 proofExpiresAt: fixture.clock.now().addingTimeInterval(300),
-                expectedRegistryGeneration: postImportAllocation.registryGeneration
+                expectedRegistryGeneration: retired.registryGeneration
             )
         }
     }
