@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "789d7394ca846e8be6bd751a69d13762a0d3978d37b07fa5bc05c3e860a86d22",
+  "evidence_id": "ace-051-change-set-safety-net-20260721",
+  "git_blob_oid": "f955473f06f740010e3d7b56057b5037a755baed",
+  "media_type": "text/x-swift",
+  "path": "Tests/AIShellCoreTests/ChangeSetSafetyNetTests.swift",
+  "repo_id": "self"
+}
