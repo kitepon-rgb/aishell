@@ -2,12 +2,18 @@ import AIShellCore
 import Foundation
 
 final class MCPServer {
-    private let store = RuntimeStore()
-    private let toolProfile = ProcessInfo.processInfo.environment["AISHELL_TOOL_PROFILE"]
-        ?? "development"
+    private let store: RuntimeStore
+    private let toolProfile: String
     private lazy var files = NativeFileService(store: store)
     private lazy var processes = NativeProcessService(store: store)
     private lazy var development = DevelopmentRuntimeService(runtimeStore: store)
+
+    init(runtimeStore: RuntimeStore = RuntimeStore(), toolProfile: String? = nil) {
+        store = runtimeStore
+        self.toolProfile = toolProfile
+            ?? ProcessInfo.processInfo.environment["AISHELL_TOOL_PROFILE"]
+            ?? "development"
+    }
 
     func run() async {
         while let line = readLine() {
@@ -74,7 +80,7 @@ final class MCPServer {
         }
     }
 
-    private func callTool(id: JSONValue, params: JSONValue?) async -> JSONRPCResponse {
+    func callTool(id: JSONValue, params: JSONValue?) async -> JSONRPCResponse {
         guard let params = params?.objectValue,
               let name = params["name"]?.stringValue else {
             return .failure(id: id, code: -32602, message: "tools/callにはnameが必要です。")
@@ -430,6 +436,7 @@ final class MCPServer {
         case .notConfigured: return ("NOT_CONFIGURED", error.localizedDescription)
         case .paused: return ("RUNTIME_PAUSED", error.localizedDescription)
         case .outsideAllowedRoot: return ("OUTSIDE_ALLOWED_ROOT", error.localizedDescription)
+        case .reservedPath: return ("RESERVED_PATH", error.localizedDescription)
         case .invalidPath: return ("INVALID_PATH", error.localizedDescription)
         case .itemAlreadyExists: return ("ITEM_ALREADY_EXISTS", error.localizedDescription)
         case .itemNotFound: return ("ITEM_NOT_FOUND", error.localizedDescription)
