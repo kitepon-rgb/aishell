@@ -2,6 +2,19 @@ import XCTest
 @testable import AIShellCore
 
 final class EvidenceStoreTests: XCTestCase {
+    func testFindCompleteArtifactReusesVerifiedStableHandle() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let store = EvidenceStore(baseDirectory: fixture.base.appendingPathComponent("evidence"))
+        let metadata = try await store.store(data: Data("durable".utf8), kind: "apply-change-set-diff", producer: "ApplyChangeSetService", retentionSeconds: 60)
+        let found = try await store.findCompleteArtifact(kind: metadata.kind, producer: metadata.producer, sha256: metadata.sha256)
+        XCTAssertEqual(found?.handle, metadata.handle)
+        XCTAssertEqual(found?.sha256, metadata.sha256)
+        XCTAssertEqual(found?.sizeBytes, metadata.sizeBytes)
+        let missing = try await store.findCompleteArtifact(kind: metadata.kind, producer: metadata.producer, sha256: String(repeating: "0", count: 64))
+        XCTAssertNil(missing)
+    }
+
     func testStoresLosslessArtifactAndReadsBoundedSlices() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
@@ -60,6 +73,15 @@ final class EvidenceStoreTests: XCTestCase {
             retentionSeconds: 10
         )
         clock.now = Date(timeIntervalSince1970: 1_011)
+        let verified = try await store.verifyCompleteArtifact(
+            handle: metadata.handle,
+            kind: metadata.kind,
+            producer: metadata.producer,
+            sha256: metadata.sha256
+        )
+        XCTAssertEqual(verified.handle, metadata.handle)
+        let finalized = try await store.finalizeArtifact(handle: metadata.handle, expiresAt: metadata.expiresAt)
+        XCTAssertEqual(finalized.expiresAt, metadata.expiresAt)
         _ = try await store.garbageCollectExpired()
 
         do {

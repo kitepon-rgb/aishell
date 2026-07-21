@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 public actor EvidenceStore {
@@ -11,6 +12,18 @@ public actor EvidenceStore {
     private let clock: @Sendable () -> Date
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+
+    public struct QuotaMaterial: Sendable {
+        public let ledger: ChangeSetQuotaLedger
+        public let materialID: String
+        public let idempotencyKey: String
+
+        public init(ledger: ChangeSetQuotaLedger, materialID: String, idempotencyKey: String) {
+            self.ledger = ledger
+            self.materialID = materialID
+            self.idempotencyKey = idempotencyKey
+        }
+    }
 
     public init(
         baseDirectory: URL,
@@ -69,12 +82,159 @@ public actor EvidenceStore {
             expiresAt: now.addingTimeInterval(max(1, retentionSeconds)),
             producer: producer
         )
-        try data.write(to: dataURL(for: handle), options: [.atomic])
+        try Self.atomicDurableWrite(data, to: dataURL(for: handle))
         do {
-            try encoder.encode(metadata).write(to: metadataURL(for: handle), options: [.atomic])
+            try Self.atomicDurableWrite(encoder.encode(metadata), to: metadataURL(for: handle))
+            _ = try verifyCompleteArtifact(handle: handle, kind: kind, producer: producer, sha256: metadata.sha256)
         } catch {
             try? FileManager.default.removeItem(at: dataURL(for: handle))
             throw error
+        }
+        return metadata
+    }
+
+    /// apply_change_set用のquota-controlled write。
+    /// dataとmetadataを、それぞれ事前予約されたextentへ直接書いてから最終pathへmaterializeする。
+    public func store(
+        data: Data,
+        kind: String,
+        producer: String,
+        retentionSeconds: TimeInterval = EvidenceStore.defaultRetentionSeconds,
+        dataQuota: QuotaMaterial,
+        metadataQuota: QuotaMaterial,
+        simulateCrashAfterDataRename: Bool = false
+    ) async throws -> ArtifactMetadata {
+        guard !kind.isEmpty, !producer.isEmpty else {
+            throw AIShellError.invalidArgument("artifactのkindとproducerは必須です。")
+        }
+        try ensureDirectory()
+        try garbageCollectExpired()
+        let now = clock()
+        let stableHandleDigest = SHA256.hash(data: Data((dataQuota.materialID + "\u{0}" + dataQuota.idempotencyKey).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let handle = "art_" + stableHandleDigest.prefix(32)
+        let metadata = ArtifactMetadata(
+            handle: handle,
+            kind: kind,
+            sizeBytes: data.count,
+            lineCount: Self.lineCount(in: data),
+            sha256: SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(max(1, retentionSeconds)),
+            producer: producer
+        )
+        let metadataData = try encoder.encode(metadata)
+        do {
+            try await Self.materialize(data, to: dataURL(for: handle), quota: dataQuota,
+                crashPoint: simulateCrashAfterDataRename ? .quotaMaterialRenameAfter : nil)
+            try await Self.materialize(metadataData, to: metadataURL(for: handle), quota: metadataQuota)
+            return try verifyCompleteArtifact(handle: handle, kind: kind, producer: producer, sha256: metadata.sha256)
+        } catch let crash as ApplyChangeSetSimulatedCrash {
+            throw crash
+        } catch {
+            // quota ledgerがstatus=3で所有するfinalをここで直接消すと、次回reconcileが
+            // identity欠損で停止する。terminal recoveryがledger identity照合付きで収束させる。
+            throw error
+        }
+    }
+
+    public func findCompleteArtifact(kind: String, producer: String, sha256: String, retentionSeconds: TimeInterval = EvidenceStore.defaultRetentionSeconds) throws -> ArtifactMetadata? {
+        guard FileManager.default.fileExists(atPath: baseDirectory.path) else { return nil }
+        let urls = try FileManager.default.contentsOfDirectory(at: baseDirectory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for url in urls {
+            guard let metadata = try? decoder.decode(ArtifactMetadata.self, from: Data(contentsOf: url)),
+                  metadata.kind == kind, metadata.producer == producer, metadata.sha256 == sha256,
+                  clock() <= metadata.expiresAt else { continue }
+            return try verifyCompleteArtifact(handle: metadata.handle, kind: kind, producer: producer, sha256: sha256)
+        }
+        let dataURLs = try FileManager.default.contentsOfDirectory(at: baseDirectory, includingPropertiesForKeys: [.contentModificationDateKey])
+            .filter { $0.pathExtension == "data" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for url in dataURLs where !FileManager.default.fileExists(atPath: metadataURL(for: url.deletingPathExtension().lastPathComponent).path) {
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            guard digest == sha256 else { continue }
+            let created = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? clock()
+            let metadata = ArtifactMetadata(handle: url.deletingPathExtension().lastPathComponent, kind: kind,
+                sizeBytes: data.count, lineCount: Self.lineCount(in: data), sha256: digest, createdAt: created,
+                expiresAt: created.addingTimeInterval(max(1, retentionSeconds)), producer: producer)
+            try Self.atomicDurableWrite(encoder.encode(metadata), to: metadataURL(for: metadata.handle))
+            return try verifyCompleteArtifact(handle: metadata.handle, kind: kind, producer: producer, sha256: sha256)
+        }
+        return nil
+    }
+
+    public func finalizeArtifact(handle: String, expiresAt: Date) throws -> ArtifactMetadata {
+        let current = try loadMetadata(handle: handle)
+        if current.expiresAt == expiresAt {
+            return try verifyCompleteArtifact(handle: handle, kind: current.kind, producer: current.producer, sha256: current.sha256)
+        }
+        let finalized = ArtifactMetadata(handle: current.handle, kind: current.kind, sizeBytes: current.sizeBytes,
+            lineCount: current.lineCount, sha256: current.sha256, createdAt: current.createdAt,
+            expiresAt: expiresAt, producer: current.producer)
+        try Self.atomicDurableWrite(encoder.encode(finalized), to: metadataURL(for: handle))
+        return try verifyCompleteArtifact(handle: handle, kind: current.kind, producer: current.producer, sha256: current.sha256)
+    }
+
+    /// quota-controlled artifact metadataのterminal世代を、旧世代とのatomic replacementで確定する。
+    public func finalizeArtifact(
+        handle: String,
+        expiresAt: Date,
+        currentQuota: QuotaMaterial,
+        finalQuota: QuotaMaterial
+    ) async throws -> ArtifactMetadata {
+        // replacement intentの再開でfinal pathが新世代へ収束し得るため、metadataはreconcile後に読む。
+        _ = try await finalQuota.ledger.reconcile()
+        let current = try loadMetadata(handle: handle)
+        let finalized = ArtifactMetadata(handle: current.handle, kind: current.kind, sizeBytes: current.sizeBytes,
+            lineCount: current.lineCount, sha256: current.sha256, createdAt: current.createdAt,
+            expiresAt: expiresAt, producer: current.producer)
+        let data = try encoder.encode(finalized)
+        let destination = metadataURL(for: handle)
+        let views = try await finalQuota.ledger.materialViews()
+        if views.contains(where: { $0.id == finalQuota.materialID && $0.state == .materialized }) {
+            guard current.expiresAt == expiresAt else {
+                throw ApplyChangeSetError(.changeSetStoreCorrupt, "terminal evidence expiry differs from quota receipt")
+            }
+            return try verifyCompleteArtifact(handle: handle, kind: current.kind, producer: current.producer, sha256: current.sha256)
+        }
+
+        let adopted = try await finalQuota.ledger.adoptReserve(materialID: finalQuota.materialID,
+            idempotencyKey: finalQuota.idempotencyKey, finalURL: destination)
+        let descriptor = open(adopted.extentURL.path, O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+        do {
+            try data.withUnsafeBytes { raw in
+                var remaining = raw.count
+                var pointer = raw.baseAddress
+                while remaining > 0 {
+                    let wrote = Darwin.write(descriptor, pointer, remaining)
+                    guard wrote > 0 else { throw POSIXError(.EIO) }
+                    remaining -= wrote
+                    pointer = pointer?.advanced(by: wrote)
+                }
+            }
+            guard fsync(descriptor) == 0, close(descriptor) == 0 else { throw POSIXError(.EIO) }
+            _ = try await finalQuota.ledger.authorizeActual(materialID: finalQuota.materialID,
+                idempotencyKey: finalQuota.idempotencyKey, data: data)
+            _ = try await finalQuota.ledger.commitReplacement(oldMaterialID: currentQuota.materialID,
+                oldIdempotencyKey: currentQuota.idempotencyKey, newMaterialID: finalQuota.materialID,
+                newIdempotencyKey: finalQuota.idempotencyKey, finalURL: destination)
+        } catch {
+            close(descriptor)
+            throw error
+        }
+        return try verifyCompleteArtifact(handle: handle, kind: finalized.kind, producer: finalized.producer, sha256: finalized.sha256)
+    }
+
+    public func verifyCompleteArtifact(handle: String, kind: String, producer: String, sha256: String) throws -> ArtifactMetadata {
+        let metadata = try loadMetadata(handle: handle)
+        // Expiry controls public reads and garbage collection. Recovery must still be able to
+        // authenticate a complete artifact after its public retention window has elapsed.
+        guard metadata.kind == kind, metadata.producer == producer, metadata.sha256 == sha256,
+              let data = try? Data(contentsOf: dataURL(for: handle), options: .mappedIfSafe), data.count == metadata.sizeBytes,
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == metadata.sha256 else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "EVIDENCE_CORRUPT: artifact verification failed")
         }
         return metadata
     }
@@ -203,6 +363,82 @@ public actor EvidenceStore {
             throw AIShellError.handleNotFound(handle)
         }
         return try decoder.decode(ArtifactMetadata.self, from: Data(contentsOf: metadataURL(for: handle)))
+    }
+
+    private static func atomicDurableWrite(_ data: Data, to destination: URL) throws {
+        let directory = destination.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let temporary = directory.appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
+        let fd = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw POSIXError(.EIO) }
+        do {
+            try data.withUnsafeBytes { raw in
+                var remaining = raw.count; var pointer = raw.baseAddress
+                while remaining > 0 {
+                    let wrote = Darwin.write(fd, pointer, remaining)
+                    guard wrote > 0 else { throw POSIXError(.EIO) }
+                    remaining -= wrote; pointer = pointer?.advanced(by: wrote)
+                }
+            }
+            guard fsync(fd) == 0, close(fd) == 0, rename(temporary.path, destination.path) == 0 else { throw POSIXError(.EIO) }
+            let directoryFD = open(directory.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+            guard directoryFD >= 0, fsync(directoryFD) == 0 else { if directoryFD >= 0 { close(directoryFD) }; throw POSIXError(.EIO) }
+            close(directoryFD)
+        } catch {
+            close(fd); unlink(temporary.path); throw error
+        }
+    }
+
+    private static func materialize(_ data: Data, to destination: URL, quota: QuotaMaterial,
+        crashPoint: ApplyChangeSetFailurePoint? = nil) async throws {
+        do {
+            _ = try await quota.ledger.reconcile()
+            _ = try await quota.ledger.commitMaterialization(materialID: quota.materialID,
+                idempotencyKey: quota.idempotencyKey, finalURL: destination)
+            return
+        } catch ChangeSetQuotaLedger.LedgerError.materializationIncomplete { }
+        catch ChangeSetQuotaLedger.LedgerError.finalPathMismatch { }
+        let adopted = try await quota.ledger.adoptReserve(
+            materialID: quota.materialID,
+            idempotencyKey: quota.idempotencyKey,
+            finalURL: destination
+        )
+        let descriptor = open(adopted.extentURL.path, O_WRONLY | O_TRUNC | O_CLOEXEC | O_NOFOLLOW)
+        guard descriptor >= 0 else { throw POSIXError(.EIO) }
+        do {
+            try data.withUnsafeBytes { raw in
+                var remaining = raw.count
+                var pointer = raw.baseAddress
+                while remaining > 0 {
+                    let wrote = Darwin.write(descriptor, pointer, remaining)
+                    guard wrote > 0 else { throw POSIXError(.EIO) }
+                    remaining -= wrote
+                    pointer = pointer?.advanced(by: wrote)
+                }
+            }
+            guard fsync(descriptor) == 0, close(descriptor) == 0 else { throw POSIXError(.EIO) }
+            _ = try await quota.ledger.authorizeActual(
+                materialID: quota.materialID,
+                idempotencyKey: quota.idempotencyKey,
+                data: data
+            )
+            guard rename(adopted.extentURL.path, destination.path) == 0 else { throw POSIXError(.EXDEV) }
+            let directoryFD = open(destination.deletingLastPathComponent().path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+            guard directoryFD >= 0, fsync(directoryFD) == 0 else {
+                if directoryFD >= 0 { close(directoryFD) }
+                throw POSIXError(.EIO)
+            }
+            close(directoryFD)
+            if let crashPoint { throw ApplyChangeSetSimulatedCrash(point: crashPoint) }
+            _ = try await quota.ledger.commitMaterialization(
+                materialID: quota.materialID,
+                idempotencyKey: quota.idempotencyKey,
+                finalURL: destination
+            )
+        } catch {
+            close(descriptor)
+            throw error
+        }
     }
 
     func discard(handle: String) {

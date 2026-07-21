@@ -370,7 +370,7 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             await XCTAssertThrowsSimulatedCrash { try await f.service.apply(request) }
             _ = try await f.restartedService().recover(root: f.root)
             let admitted = try await f.probe.isAdmitted(request)
-            XCTAssertTrue(admitted ? try f.text("one.txt") == "after" : try f.text("one.txt") == "before")
+            XCTAssertEqual(try f.text("one.txt"), "before")
             let admissionCount = try await f.probe.admissionCount(request)
             XCTAssertEqual(admissionCount, admitted ? 1 : 0)
         }
@@ -426,13 +426,16 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         defer { f.cleanup() }
         let transaction = try await f.prepareRecoverableTransaction()
         let service = try await f.restartedService(autoRecover: false)
+        let queuedMutation = try f.replayRequest(sequence: 2)
         async let recovery = service.recover(root: f.root)
         await f.probe.waitUntilRecoveryStarted(transaction)
-        await XCTAssertThrowsApplyCode(.changeSetRecoveryRequired) { try await service.currentCursor(root: f.root) }
-        await XCTAssertThrowsApplyCode(.changeSetRecoveryRequired) { try await service.apply(try await f.singleWriteRequest()) }
+        async let queuedCursor = service.currentCursor(root: f.root)
+        async let mutation = service.apply(queuedMutation)
         _ = try await recovery
-        let currentRoot = try await service.currentCursor(root: f.root).root
+        let currentRoot = try await queuedCursor.root
+        let mutationResult = try await mutation
         XCTAssertEqual(currentRoot, f.root.path)
+        XCTAssertEqual(mutationResult.status, .committed)
     }
 
     func testCompatibilityCatalogAndFrozenBenchmarkV1RemainByteForByteStable() async throws {
@@ -537,7 +540,16 @@ private struct ChangeSetFixture {
     }
     func expectedMixedAfterDigest() throws -> String { try probe.expectedMixedAfterDigest(root) }
     func restartedService(autoRecover: Bool = true) async throws -> ApplyChangeSetService { try await probe.restartedService(failureInjector: faults, clock: clock, autoRecover: autoRecover) }
-    func prepareRecoverableTransaction() async throws -> ApplyChangeSetTransactionID { try await probe.prepareRecoverableTransaction(service: service, request: try await singleWriteRequest()) }
+    func prepareRecoverableTransaction() async throws -> ApplyChangeSetTransactionID {
+        let request = try await singleWriteRequest()
+        await faults.crashOnce(at: .admissionFSyncAfter)
+        do {
+            _ = try await service.apply(request)
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "recoverable fixture did not stop after admission")
+        } catch is ApplyChangeSetSimulatedCrash {
+            return ApplyChangeSetTransactionID(request.transactionIdentity)
+        }
+    }
     func deleteRequest() async throws -> ApplyChangeSetRequest { try await probe.deleteRequest(root: root, client: client, service: service) }
     func prepareTrashRecovery(_ ambiguity: ApplyChangeSetTrashRecoveryAmbiguity) async throws -> ApplyChangeSetTransactionID { try await probe.prepareTrashRecovery(service: service, ambiguity: ambiguity) }
     func request(for fixture: ApplyChangeSetContentFixture) throws -> ApplyChangeSetRequest { try probe.request(for: fixture, client: client) }
