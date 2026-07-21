@@ -139,6 +139,19 @@ final class ChangeSetClientRegistryTests: XCTestCase {
             try await registry.lookup(clientID: client.clientID, epoch: client.currentEpoch, sequence: 3, requestDigest: fixture.digest(23))
         }
 
+        let invalidRetentionExpiry = fixture.clock.now().addingTimeInterval(60)
+        await XCTAssertRegistryError(.invalidEnvelope) {
+            try await registry.markTerminal(
+                clientID: client.clientID,
+                epoch: client.currentEpoch,
+                sequence: 1,
+                state: .committed,
+                terminalResponseDigest: fixture.digest(24),
+                artifact: ChangeSetReplayArtifact(handle: "expires-too-early", expiresAt: invalidRetentionExpiry.addingTimeInterval(-1)),
+                retentionExpiresAt: invalidRetentionExpiry,
+                expectedRegistryGeneration: admittedGeneration
+            )
+        }
         let terminalGeneration = try await registry.markTerminal(
             clientID: client.clientID,
             epoch: client.currentEpoch,
@@ -416,6 +429,76 @@ final class ChangeSetClientRegistryTests: XCTestCase {
         }
         let afterDuplicate = await registry.snapshot()
         XCTAssertEqual(afterDuplicate.generation, 0)
+    }
+
+    func testLegacyCutoverRejectsInvalidTerminalNonterminalAndRetentionShapes() async throws {
+        let fixture = try RegistryFixture()
+        defer { fixture.cleanup() }
+        let registry = try fixture.open()
+        let pristine = await registry.snapshot()
+        let valid = fixture.legacySnapshot(from: pristine)
+
+        func replacingFirstReplay(_ envelope: ChangeSetReplayEnvelope) -> ChangeSetLegacyRegistrySnapshot {
+            var slots = valid.slots
+            let first = slots[0]
+            var replay = first.replay
+            replay[0] = envelope
+            slots[0] = ChangeSetLegacyClientSlot(
+                number: first.number,
+                clientID: first.clientID,
+                slotGeneration: first.slotGeneration,
+                allocationState: first.allocationState,
+                currentEpoch: first.currentEpoch,
+                highWater: first.highWater,
+                replay: replay
+            )
+            return ChangeSetLegacyRegistrySnapshot(
+                rootIdentityDigest: valid.rootIdentityDigest,
+                registryGeneration: valid.registryGeneration,
+                slots: slots,
+                controlReceipts: valid.controlReceipts
+            )
+        }
+
+        let terminalWithoutRetention = replacingFirstReplay(ChangeSetReplayEnvelope(
+            sequence: 1,
+            requestDigest: fixture.digest(51),
+            transactionID: "legacy-tx-1",
+            state: .committed,
+            terminalResponseDigest: fixture.digest(61)
+        ))
+        await XCTAssertRegistryError(.storeCorrupt) {
+            try await registry.initializeFromLegacy(legacySnapshot: terminalWithoutRetention)
+        }
+
+        let nonterminalWithTerminalMaterial = replacingFirstReplay(ChangeSetReplayEnvelope(
+            sequence: 1,
+            requestDigest: fixture.digest(51),
+            transactionID: "legacy-tx-1",
+            state: .pending,
+            artifact: ChangeSetReplayArtifact(handle: "must-not-exist", expiresAt: fixture.clock.now().addingTimeInterval(600)),
+            retentionExpiresAt: fixture.clock.now().addingTimeInterval(600)
+        ))
+        await XCTAssertRegistryError(.storeCorrupt) {
+            try await registry.initializeFromLegacy(legacySnapshot: nonterminalWithTerminalMaterial)
+        }
+
+        let retentionExpiry = fixture.clock.now().addingTimeInterval(600)
+        let artifactExpiresTooEarly = replacingFirstReplay(ChangeSetReplayEnvelope(
+            sequence: 1,
+            requestDigest: fixture.digest(51),
+            transactionID: "legacy-tx-1",
+            state: .committed,
+            terminalResponseDigest: fixture.digest(61),
+            artifact: ChangeSetReplayArtifact(handle: "expires-too-early", expiresAt: retentionExpiry.addingTimeInterval(-1)),
+            retentionExpiresAt: retentionExpiry
+        ))
+        await XCTAssertRegistryError(.storeCorrupt) {
+            try await registry.initializeFromLegacy(legacySnapshot: artifactExpiresTooEarly)
+        }
+        let afterInvalidImports = await registry.snapshot()
+        XCTAssertEqual(afterInvalidImports.generation, 0)
+        XCTAssertTrue(afterInvalidImports.slots.allSatisfy { $0.allocationState == .free })
     }
 }
 

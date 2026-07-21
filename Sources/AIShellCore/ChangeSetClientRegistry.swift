@@ -718,9 +718,7 @@ private extension ChangeSetClientRegistry {
             for record in slot.replay.compactMap({ $0 }) {
                 guard record.sequence > 0, record.sequence <= slot.highWater,
                       isSHA256(record.requestDigest), !record.transactionID.isEmpty, record.transactionID.utf8.count <= 128,
-                      record.state.isTerminal == (record.terminalResponseDigest != nil),
-                      record.terminalResponseDigest.map(isSHA256) ?? true,
-                      record.artifact.map({ !$0.handle.isEmpty && $0.handle.utf8.count <= 512 }) ?? true else {
+                      isValidReplayEnvelope(record) else {
                     throw ChangeSetClientRegistryError(.storeCorrupt, "replay envelope is invalid")
                 }
             }
@@ -742,6 +740,17 @@ private extension ChangeSetClientRegistry {
                 throw ChangeSetClientRegistryError(.storeCorrupt, "legacy import receipt is invalid")
             }
         }
+    }
+
+    static func isValidReplayEnvelope(_ record: ChangeSetReplayEnvelope) -> Bool {
+        if record.state.isTerminal {
+            guard let responseDigest = record.terminalResponseDigest, isSHA256(responseDigest),
+                  let retentionExpiry = record.retentionExpiresAt else { return false }
+            return record.artifact.map {
+                !$0.handle.isEmpty && $0.handle.utf8.count <= 512 && $0.expiresAt >= retentionExpiry
+            } ?? true
+        }
+        return record.terminalResponseDigest == nil && record.artifact == nil && record.retentionExpiresAt == nil
     }
 
     static func isPristine(_ image: RegistryImage) -> Bool {
