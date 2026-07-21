@@ -138,6 +138,7 @@ public struct ChangeSetReplayReference: Equatable, Sendable {
     public let terminalResponseDigest: String?
     public let artifactHandle: String?
     public let artifactExpiresAt: Date?
+    public let retentionExpiresAt: Date?
 }
 
 public struct ChangeSetLegacyClientSlot: Codable, Equatable, Sendable {
@@ -307,6 +308,11 @@ public actor ChangeSetClientRegistry {
         )
     }
 
+    /// snapshotの総receipt数は変えず、指定時刻にcapacityを占有するreceiptだけを数える。
+    public func unexpiredControlReceiptCount(at referenceDate: Date) -> Int {
+        image.receipts.compactMap { $0 }.filter { $0.expiresAt > referenceDate }.count
+    }
+
     /// active slotだけをslot index、sequenceの順に返す。最大64×256件で固定bounded。
     public func replayReferences() -> [ChangeSetReplayReference] {
         image.slots
@@ -326,7 +332,8 @@ public actor ChangeSetClientRegistry {
                             state: envelope.state,
                             terminalResponseDigest: envelope.terminalResponseDigest,
                             artifactHandle: envelope.artifact?.handle,
-                            artifactExpiresAt: envelope.artifact?.expiresAt
+                            artifactExpiresAt: envelope.artifact?.expiresAt,
+                            retentionExpiresAt: envelope.retentionExpiresAt
                         )
                     }
             }
