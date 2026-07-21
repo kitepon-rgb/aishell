@@ -55,7 +55,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             let before = try f.publicTreeDigest()
             await XCTAssertThrowsApplyCode(code) { try await f.service.apply(build(f)) }
             XCTAssertEqual(try f.publicTreeDigest(), before, name)
-            XCTAssertEqual(try await f.probe.targetMutationReceiptCount(), 0, name)
+            let targetMutationReceiptCount = try await f.probe.targetMutationReceiptCount()
+            XCTAssertEqual(targetMutationReceiptCount, 0, name)
         }
     }
 
@@ -87,7 +88,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             let beforeOutside = try f.outsideDigest()
             await XCTAssertThrowsAnyApplyError { try await f.service.apply(request) }
             XCTAssertEqual(try f.outsideDigest(), beforeOutside)
-            XCTAssertEqual(try await f.probe.unpinnedPathMutationCount(), 0)
+            let unpinnedPathMutationCount = try await f.probe.unpinnedPathMutationCount()
+            XCTAssertEqual(unpinnedPathMutationCount, 0)
         }
     }
 
@@ -100,7 +102,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
                 try await f.service.apply(try await f.singleWriteRequest())
             }
             XCTAssertEqual(try f.publicTreeDigest(), before)
-            XCTAssertEqual(try await f.probe.pathBasedFallbackCount(), 0)
+            let pathBasedFallbackCount = try await f.probe.pathBasedFallbackCount()
+            XCTAssertEqual(pathBasedFallbackCount, 0)
         }
     }
 
@@ -117,8 +120,10 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         }
         try await f.probe.installLegacyCursorAndCheckpoint()
         try await f.service.migrateNamespace(root: f.root)
-        XCTAssertTrue(try await f.probe.legacyCursorIsExpired())
-        XCTAssertFalse(try await f.probe.legacyCheckpointEntriesWereReused())
+        let legacyCursorIsExpired = try await f.probe.legacyCursorIsExpired()
+        let legacyCheckpointEntriesWereReused = try await f.probe.legacyCheckpointEntriesWereReused()
+        XCTAssertTrue(legacyCursorIsExpired)
+        XCTAssertFalse(legacyCheckpointEntriesWereReused)
     }
 
     func testInjectedPrepareCommitRuntimeDiffAndTrashFailuresRecoverToWholeBeforeOrAfter() async throws {
@@ -131,8 +136,10 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             await XCTAssertThrowsSimulatedCrash { try await f.service.apply(request) }
             let recovered = try await f.restartedService().recover(root: f.root)
             let after = try f.publicTreeDigest()
-            XCTAssertTrue(after == before || after == try f.expectedMixedAfterDigest(), point.rawValue)
-            XCTAssertFalse(try await f.probe.hasStablePartialGraph(), point.rawValue)
+            let expectedMixedAfterDigest = try f.expectedMixedAfterDigest()
+            XCTAssertTrue(after == before || after == expectedMixedAfterDigest, point.rawValue)
+            let hasStablePartialGraph = try await f.probe.hasStablePartialGraph()
+            XCTAssertFalse(hasStablePartialGraph, point.rawValue)
             XCTAssertTrue(recovered.allSatisfy { !$0.evidenceMissing }, point.rawValue)
         }
     }
@@ -146,7 +153,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             await f.faults.raceOnce(at: point, action: try f.externalFDWriteAction(bytes: externalBytes))
             await XCTAssertThrowsApplyCode(.externalConflictDuringCommit) { try await f.service.apply(request) }
             XCTAssertEqual(try f.data("one.txt"), externalBytes)
-            XCTAssertEqual(try await f.probe.transactionState(for: request), .recoveryRequired)
+            let transactionState = try await f.probe.transactionState(for: request)
+            XCTAssertEqual(transactionState, .recoveryRequired)
         }
     }
 
@@ -159,7 +167,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             let before = try f.publicTreeDigest()
             await XCTAssertThrowsApplyCode(.changeSetStoreCorrupt) { try await f.restartedService().recover(root: f.root) }
             XCTAssertEqual(try f.publicTreeDigest(), before)
-            XCTAssertTrue(try await f.probe.transactionMaterialExists(transaction))
+            let transactionMaterialExists = try await f.probe.transactionMaterialExists(transaction)
+            XCTAssertTrue(transactionMaterialExists)
         }
     }
 
@@ -175,7 +184,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         let delta = try await f.probe.delta(from: request.cursor)
         XCTAssertEqual(Set(delta.events.map(\.transactionID)), [request.transactionIdentity])
         XCTAssertEqual(delta.events.count, request.changes.count)
-        XCTAssertEqual(try await f.probe.fullRescanCount(), 0)
+        let fullRescanCount = try await f.probe.fullRescanCount()
+        XCTAssertEqual(fullRescanCount, 0)
     }
 
     func testCheckpointMarkerAndTransactionReceiptCrashOrderingIsIdempotent() async throws {
@@ -186,7 +196,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             await f.faults.crashOnce(at: point)
             await XCTAssertThrowsSimulatedCrash { try await f.service.apply(request) }
             _ = try await f.restartedService().recover(root: f.root)
-            XCTAssertEqual(try await f.probe.runtimeCommitCount(request), 1)
+            let runtimeCommitCount = try await f.probe.runtimeCommitCount(request)
+            XCTAssertEqual(runtimeCommitCount, 1)
         }
         for mismatch in ApplyChangeSetCheckpointCorruption.allCases {
             let f = try await ChangeSetFixture.make(label: String(describing: mismatch))
@@ -205,15 +216,18 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             await f.faults.crashOnce(at: point)
             await XCTAssertThrowsSimulatedCrash { try await f.service.apply(request) }
             _ = try await f.restartedService().recover(root: f.root)
-            XCTAssertEqual(try await f.probe.trashReceiptCount(request), 1)
-            XCTAssertTrue(try await f.probe.internalDeleteBackupWasPinnedUntilReceipt(request))
+            let trashReceiptCount = try await f.probe.trashReceiptCount(request)
+            let internalDeleteBackupWasPinnedUntilReceipt = try await f.probe.internalDeleteBackupWasPinnedUntilReceipt(request)
+            XCTAssertEqual(trashReceiptCount, 1)
+            XCTAssertTrue(internalDeleteBackupWasPinnedUntilReceipt)
         }
         for ambiguity in ApplyChangeSetTrashRecoveryAmbiguity.allCases {
             let f = try await ChangeSetFixture.make(label: String(describing: ambiguity))
             defer { f.cleanup() }
             let transaction = try await f.prepareTrashRecovery(ambiguity)
             await XCTAssertThrowsApplyCode(.changeSetRecoveryRequired) { try await f.restartedService().recover(root: f.root) }
-            XCTAssertTrue(try await f.probe.transactionMaterialExists(transaction))
+            let transactionMaterialExists = try await f.probe.transactionMaterialExists(transaction)
+            XCTAssertTrue(transactionMaterialExists)
         }
     }
 
@@ -264,10 +278,12 @@ final class ChangeSetSafetyNetTests: XCTestCase {
 
         let request = try await f.singleWriteRequest()
         let first = try await f.service.apply(request)
-        XCTAssertEqual(try await f.service.apply(request), first)
+        let replayed = try await f.service.apply(request)
+        XCTAssertEqual(replayed, first)
         await XCTAssertThrowsApplyCode(.changeSetSequenceConflict) { try await f.service.apply(request.replacingFirstContent(.utf8("different"))) }
         try await f.probe.fillReplayRing(through: 257)
-        XCTAssertEqual(try await f.service.apply(f.replayRequest(sequence: 2)).requestSequence, 2)
+        let replaySequence = try await f.service.apply(f.replayRequest(sequence: 2)).requestSequence
+        XCTAssertEqual(replaySequence, 2)
         await XCTAssertThrowsApplyCode(.changeSetExpired) { try await f.service.apply(f.replayRequest(sequence: 1)) }
         try await f.probe.removeReplaySlot(sequence: 2)
         await XCTAssertThrowsApplyCode(.changeSetStoreCorrupt) { try await f.service.apply(f.replayRequest(sequence: 2)) }
@@ -281,7 +297,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         let reallocated = try await f.allocateClient()
         XCTAssertEqual(reallocated.clientID, retired.clientID)
         XCTAssertEqual(reallocated.epoch, retired.epoch + 1)
-        XCTAssertEqual(try await f.probe.registrySlotCount(), 64)
+        let registrySlotCount = try await f.probe.registrySlotCount()
+        XCTAssertEqual(registrySlotCount, 64)
 
         for tamper in ApplyChangeSetOwnerProofTamper.allCases {
             await XCTAssertThrowsApplyCode(.clientOwnerProofInvalid) { try await f.performControl(with: tamper) }
@@ -298,7 +315,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             defer { f.cleanup() }
             let outcomes = try await f.runControlRace(race)
             XCTAssertEqual(outcomes.filter(\.isSuccess).count, 1)
-            XCTAssertTrue(try await f.probe.registryIsInternallyConsistent())
+            let registryIsInternallyConsistent = try await f.probe.registryIsInternallyConsistent()
+            XCTAssertTrue(registryIsInternallyConsistent)
         }
         for point in ApplyChangeSetFailurePoint.registryAtomicReplacePoints {
             let f = try await ChangeSetFixture.make(label: point.rawValue)
@@ -308,8 +326,10 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             await XCTAssertThrowsSimulatedCrash { try await f.service.control(operation.request) }
             let restarted = try await f.restartedService()
             let replay = try await restarted.control(operation.request)
-            XCTAssertEqual(try await restarted.control(operation.request), replay)
-            XCTAssertTrue(try await f.probe.registryIsInternallyConsistent())
+            let repeatedReplay = try await restarted.control(operation.request)
+            let registryIsInternallyConsistent = try await f.probe.registryIsInternallyConsistent()
+            XCTAssertEqual(repeatedReplay, replay)
+            XCTAssertTrue(registryIsInternallyConsistent)
         }
         let full = try await ChangeSetFixture.make(controlReceiptCount: 128)
         defer { full.cleanup() }
@@ -324,17 +344,20 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         let request = try await f.canonicalReservationRequest()
         let reservation = try await f.probe.reserveWithoutAdmission(request)
         XCTAssertEqual(try f.probe.independentlyComputedReservationDigest(reservation), reservation.requestDigest)
-        XCTAssertEqual(try await f.probe.decryptRequest(reservation), request)
+        let decryptedRequest = try await f.probe.decryptRequest(reservation)
+        XCTAssertEqual(decryptedRequest, request)
         for tamper in ApplyChangeSetReservationTamper.allCases {
             try await f.probe.restoreReservation(reservation)
             try await f.probe.tamperReservation(tamper)
             await XCTAssertThrowsApplyCode(.changeSetReservationCorrupt) { try await f.service.resumeReservation(reservation.id) }
-            XCTAssertEqual(try await f.probe.targetMutationReceiptCount(), 0)
+            let targetMutationReceiptCount = try await f.probe.targetMutationReceiptCount()
+            XCTAssertEqual(targetMutationReceiptCount, 0)
         }
         for secretFailure in ApplyChangeSetSecretFailure.allCases {
             try await f.probe.injectSecretFailure(secretFailure)
             await XCTAssertThrowsApplyCode(.changeSetSecretStoreUnavailable) { try await f.service.apply(request) }
-            XCTAssertTrue(try await f.probe.logsContainNone(of: request.secretFragments))
+            let logsContainNone = try await f.probe.logsContainNone(of: request.secretFragments)
+            XCTAssertTrue(logsContainNone)
         }
     }
 
@@ -348,14 +371,16 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             _ = try await f.restartedService().recover(root: f.root)
             let admitted = try await f.probe.isAdmitted(request)
             XCTAssertTrue(admitted ? try f.text("one.txt") == "after" : try f.text("one.txt") == "before")
-            XCTAssertEqual(try await f.probe.admissionCount(request), admitted ? 1 : 0)
+            let admissionCount = try await f.probe.admissionCount(request)
+            XCTAssertEqual(admissionCount, admitted ? 1 : 0)
         }
         for orphan in ApplyChangeSetOrphanCase.allCases {
             let f = try await ChangeSetFixture.make(label: String(describing: orphan))
             defer { f.cleanup() }
             let reservation = try await f.probe.installOrphan(orphan)
             try await f.restartedService().recover(root: f.root)
-            XCTAssertEqual(try await f.probe.reservationExists(reservation), orphan.mustRemainPinned)
+            let reservationExists = try await f.probe.reservationExists(reservation)
+            XCTAssertEqual(reservationExists, orphan.mustRemainPinned)
         }
     }
 
@@ -373,7 +398,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
                     XCTAssertFalse(result.transactionCursorAdvanced)
                 } else {
                     await XCTAssertThrowsAnyApplyError { try await f.service.apply(request) }
-                    XCTAssertNotEqual(try await f.probe.transactionState(for: request), .abortedBeforeSideEffect)
+                    let transactionState = try await f.probe.transactionState(for: request)
+                    XCTAssertNotEqual(transactionState, .abortedBeforeSideEffect)
                 }
             }
         }
@@ -390,7 +416,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
             } else {
                 await XCTAssertThrowsAnyApplyError { try await f.ownerAbort(transaction) }
             }
-            XCTAssertEqual(try await f.probe.materialRetention(transaction), state.expectedRetention)
+            let materialRetention = try await f.probe.materialRetention(transaction)
+            XCTAssertEqual(materialRetention, state.expectedRetention)
         }
     }
 
@@ -404,7 +431,8 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         await XCTAssertThrowsApplyCode(.changeSetRecoveryRequired) { try await service.currentCursor(root: f.root) }
         await XCTAssertThrowsApplyCode(.changeSetRecoveryRequired) { try await service.apply(try await f.singleWriteRequest()) }
         _ = try await recovery
-        XCTAssertEqual(try await service.currentCursor(root: f.root).root, f.root.path)
+        let currentRoot = try await service.currentCursor(root: f.root).root
+        XCTAssertEqual(currentRoot, f.root.path)
     }
 
     func testCompatibilityCatalogAndFrozenBenchmarkV1RemainByteForByteStable() async throws {
