@@ -4,6 +4,62 @@ import XCTest
 @testable import AIShellCore
 
 final class SearchContextServiceTests: XCTestCase {
+    func testFrozenBenchmarkV2FourQueryRequestHasCompleteCoverageAndNoDuplicateIdentity() async throws {
+        let fixture = try SearchFixture()
+        defer { fixture.cleanup() }
+        let files = [
+            ("src/a.mjs", "export const needle = 1;\n"),
+            ("src/b.mjs", "export const other = needle;\n"),
+            ("test/a.test.mjs", "// needle test\n"),
+        ]
+        for (relative, contents) in files {
+            let url = fixture.root.appendingPathComponent(relative)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try contents.write(to: url, atomically: true, encoding: .utf8)
+        }
+        let indexed = try files.map { try fixture.indexedFile(relativePath: $0.0) }
+        let environment = fixture.environment(
+            indexedFiles: indexed,
+            changedPaths: Set(files.map { $0.0 }),
+            testPaths: ["test/a.test.mjs"]
+        )
+        let service = try fixture.service()
+        let request = SearchContextRequestV2(
+            path: fixture.root.path,
+            queries: [
+                .init(id: "fixed-needle", kind: .fixed, pattern: "needle", caseMode: .sensitive),
+                .init(id: "regex-export", kind: .regex, pattern: "export\\s+const", caseMode: .sensitive),
+                .init(id: "glob-src", kind: .glob, pattern: "src/**"),
+                .init(id: "glob-test", kind: .glob, pattern: "test/**"),
+            ],
+            ranking: [.changed, .tests], changedSinceCursor: environment.observedFrom,
+            maxResults: 500, byteBudget: 65_536
+        )
+
+        var page = try await service.search(request, environment: environment)
+        var matches = page.matches
+        var descriptors = page.oversizedDescriptors
+        XCTAssertLessThanOrEqual(page.returnedBytes, request.byteBudget)
+        while let continuation = page.continuation {
+            page = try await service.continueSearch(continuation)
+            XCTAssertLessThanOrEqual(page.returnedBytes, request.byteBudget)
+            matches.append(contentsOf: page.matches)
+            descriptors.append(contentsOf: page.oversizedDescriptors)
+        }
+
+        let matchedPaths = Set(matches.map { $0.path })
+        let queryCoverage = Set(matches.flatMap { $0.queryIDs })
+        let identities: [String] = matches.map { $0.canonicalIdentity }
+            + descriptors.map { $0.canonicalIdentity }
+        let sourceTextMatches = matches.filter { $0.kind == "text" && $0.path.hasPrefix("src/") }
+        XCTAssertEqual(matchedPaths, Set(files.map { $0.0 }))
+        XCTAssertEqual(queryCoverage, Set(["fixed-needle", "regex-export", "glob-src", "glob-test"]))
+        XCTAssertEqual(identities.count, Set(identities).count)
+        XCTAssertTrue(sourceTextMatches.allSatisfy {
+            $0.queryIDs == ["fixed-needle", "regex-export"]
+        })
+    }
+
     func testMultipleQueriesDeduplicateOneLocationAndShareBudgetAcrossPages() async throws {
         let fixture = try SearchFixture()
         defer { fixture.cleanup() }
