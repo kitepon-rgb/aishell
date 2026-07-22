@@ -4,6 +4,80 @@ import XCTest
 @testable import AIShellCore
 
 final class BuildManifestChangeImpactProviderTests: XCTestCase {
+    func testPhase6AblationSeparatesLexicalSemanticAndBuildEvidenceWithoutChangingDefaults() async throws {
+        let fixture = try await ProviderFixture()
+        defer { fixture.cleanup() }
+        let aSHA = try fixture.write("Sources/Core/A.swift", "public struct A {}\n")
+        _ = try fixture.write("Sources/App/B.swift", "let b = A()\n")
+        _ = try fixture.write("Tests/CoreTests/ATests.swift", "let t = A()\n")
+        try fixture.writeManifest([
+            "Core": (sources: ["Sources/Core/A.swift"], dependencies: []),
+            "App": (sources: ["Sources/App/B.swift"], dependencies: ["Core"]),
+            "CoreTests": (sources: ["Tests/CoreTests/ATests.swift"], dependencies: ["Core"]),
+        ])
+        let cursor = try await fixture.runtime.snapshot(path: fixture.root.path).cursor
+        let input = ChangeImpactProviderInput(root: fixture.root, workspaceCursor: cursor,
+            changedPaths: [.init(path: "Sources/Core/A.swift", contentSHA256: aSHA)],
+            changedSymbols: [.init(path: "Sources/Core/A.swift", contentSHA256: aSHA,
+                name: "A", startOffset: 14, endOffset: 15)])
+        let clock = ContinuousClock()
+        let lexicalStart = clock.now
+        let lexical = try await FileSystemChangeImpactProvider().analyze(input)
+        let lexicalDuration = lexicalStart.duration(to: clock.now)
+        let semanticService = SourceKitLSPService(runtimeStore: fixture.store,
+            workspaceRuntime: fixture.runtime, worker: SemanticWorker(locations: [
+                .init(path: "Sources/App/B.swift", line: 0, character: 8),
+                .init(path: "Tests/CoreTests/ATests.swift", line: 0, character: 8),
+            ]))
+        let semanticStart = clock.now
+        let semantic = try await SourceKitChangeImpactProvider(service: semanticService).analyze(input)
+        let semanticDuration = semanticStart.duration(to: clock.now)
+        let dependencyStart = clock.now
+        let dependency = try await BuildManifestChangeImpactProvider().analyze(input)
+        let dependencyDuration = dependencyStart.duration(to: clock.now)
+
+        XCTAssertTrue(lexical.evidence.contains { $0.relation == .lexicalReference })
+        XCTAssertEqual(Set(semantic.evidence.map(\.candidate.category)), [.dependencies, .relatedTests])
+        XCTAssertTrue(semantic.evidence.allSatisfy { $0.strength == .semanticMatch })
+        XCTAssertEqual(Set(dependency.evidence.map(\.candidate.category)), [.dependencies, .relatedTests, .buildTargets])
+        XCTAssertTrue(dependency.evidence.allSatisfy { $0.strength == .declaredEdge })
+        print("ACE064_ABLATION lexical=\(lexicalDuration) semantic=\(semanticDuration) dependency=\(dependencyDuration)")
+
+        let defaultResult = try await ChangeImpactService(runtimeStore: fixture.store,
+            workspaceRuntime: fixture.runtime,
+            evidenceStore: fixture.evidenceStore()).analyze(.init(
+                root: fixture.root.path, workspaceCursor: cursor,
+                changedPaths: input.changedPaths, changedSymbols: input.changedSymbols,
+                byteBudget: 1_048_576
+            ))
+        let defaultProviders = Set(defaultResult.items.compactMap { $0.providerReport?.descriptor.providerID })
+        XCTAssertEqual(defaultProviders, ["aishell.filesystem-impact", "static-import"])
+        XCTAssertFalse(defaultProviders.contains("sourcekit"))
+        XCTAssertFalse(defaultProviders.contains("swiftpm-build-manifest"))
+        XCTAssertFalse(defaultProviders.contains("depfile"))
+    }
+
+    func testSourceKitEditDuringProviderQueryReturnsStaleWithoutEvidence() async throws {
+        let fixture = try await ProviderFixture()
+        defer { fixture.cleanup() }
+        let aSHA = try fixture.write("Sources/Core/A.swift", "public struct A {}\n")
+        _ = try fixture.write("Sources/App/B.swift", "let b = A()\n")
+        let cursor = try await fixture.runtime.snapshot(path: fixture.root.path).cursor
+        let worker = EditingSemanticWorker(url: fixture.root.appendingPathComponent("Sources/Core/A.swift"),
+            runtime: fixture.runtime)
+        let service = SourceKitLSPService(runtimeStore: fixture.store,
+            workspaceRuntime: fixture.runtime, worker: worker)
+        let output = try await SourceKitChangeImpactProvider(service: service).analyze(.init(
+            root: fixture.root, workspaceCursor: cursor, changedPaths: [],
+            changedSymbols: [.init(path: "Sources/Core/A.swift", contentSHA256: aSHA,
+                name: "A", startOffset: 14, endOffset: 15)]
+        ))
+        XCTAssertEqual(output.report.status, .stale)
+        XCTAssertEqual(output.report.reasonCode, "sourcekit_stale")
+        XCTAssertTrue(output.evidence.isEmpty)
+        XCTAssertTrue(output.freshnessBindings.isEmpty)
+    }
+
     func testSwiftPMManifestReturnsDependentSourceTestAndTargets() async throws {
         let fixture = try await ProviderFixture()
         defer { fixture.cleanup() }
@@ -65,6 +139,16 @@ private struct SemanticWorker: SourceKitLSPWorker {
     }
 }
 
+private struct EditingSemanticWorker: SourceKitLSPWorker {
+    let url: URL
+    let runtime: WorkspaceStateRuntime
+    func query(_ request: SourceKitLSPRequest, document: Data) async throws -> SourceKitLSPWorkerResult {
+        try Data("public struct Changed {}\n".utf8).write(to: url)
+        await runtime.ingestObservedPaths([url.path])
+        return .success([.init(path: "Sources/App/B.swift", line: 0, character: 8)])
+    }
+}
+
 private final class ProviderFixture: @unchecked Sendable {
     let base: URL
     let root: URL
@@ -107,6 +191,9 @@ private final class ProviderFixture: @unchecked Sendable {
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: base) }
+    func evidenceStore() -> EvidenceStore {
+        EvidenceStore(baseDirectory: base.appendingPathComponent("evidence", isDirectory: true))
+    }
     private static func sha(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }

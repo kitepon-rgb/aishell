@@ -305,3 +305,10 @@ working directoryを分離する。
 ACE-034は`AIShellCore`へ候補graphとprovider seamを実装し、`AIShellMCP`にはschema変換だけを置く。
 Phase 3の価値は完全影響解析の宣言ではなく、OS現在状態へ束縛した候補と根拠でAI hostの再探索を減らすことにある。
 providerを追加する場合も、freshness判定をproviderへ委譲せず、OS SHAへ束縛できない結果は採用しない。
+
+Phase 6のablationではSourceKit semantic referenceとSwiftPM build manifestが候補categoryを増やす一方、
+現行serviceにはecosystem／入力別にproviderを選ぶrouterがないことを確認した。この状態で全default requestへ追加すると、
+対象外projectでもworker試行とcoverage gapが増える。したがってACE-064時点のdefault routingは
+`aishell.filesystem-impact`と`static-import`だけを維持し、`sourcekit`、`swiftpm-build-manifest`、`depfile`は
+明示注入可能なproviderとして保持する。default昇格は、選択routerと実worker込みbenchmarkでtotal token／wallの改善を
+確認した場合だけ行う。
