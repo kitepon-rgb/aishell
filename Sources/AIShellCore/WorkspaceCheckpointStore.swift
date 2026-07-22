@@ -29,6 +29,11 @@ struct WorkspaceCheckpointEntry: Codable, Equatable, Sendable {
     }
 }
 
+struct WorkspaceCheckpointJournalChange: Codable, Equatable, Sendable {
+    let sequence: UInt64
+    let change: WorkspaceChange
+}
+
 struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
     static let currentSchema = "aishell.workspace-checkpoint.v1"
 
@@ -42,6 +47,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
     let lastEventID: UInt64?
     let journalSequence: UInt64
     let journalEvents: [ObservationJournalEvent]
+    let journalChanges: [WorkspaceCheckpointJournalChange]?
     let entries: [WorkspaceCheckpointEntry]
     let createdAt: Date
     let lastAccessedAt: Date
@@ -58,6 +64,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         lastEventID: UInt64?,
         journalSequence: UInt64 = 0,
         journalEvents: [ObservationJournalEvent] = [],
+        journalChanges: [WorkspaceCheckpointJournalChange]? = nil,
         entries: [WorkspaceCheckpointEntry],
         createdAt: Date,
         lastAccessedAt: Date,
@@ -73,6 +80,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         self.lastEventID = lastEventID
         self.journalSequence = journalSequence
         self.journalEvents = journalEvents
+        self.journalChanges = journalChanges
         self.entries = entries
         self.createdAt = createdAt
         self.lastAccessedAt = lastAccessedAt
@@ -89,6 +97,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
         case lastEventID = "last_event_id"
         case journalSequence = "journal_sequence"
         case journalEvents = "journal_events"
+        case journalChanges = "journal_changes"
         case createdAt = "created_at"
         case lastAccessedAt = "last_accessed_at"
         case payloadSHA256 = "payload_sha256"
@@ -106,6 +115,7 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
             lastEventID: lastEventID,
             journalSequence: journalSequence,
             journalEvents: journalEvents.sorted { $0.sequence < $1.sequence },
+            journalChanges: journalChanges?.sorted { $0.sequence < $1.sequence },
             entries: entries.sorted { $0.path < $1.path },
             createdAt: createdAt,
             lastAccessedAt: lastAccessedAt,
@@ -373,9 +383,13 @@ actor WorkspaceCheckpointStore {
 
     private static func validateJournal(_ checkpoint: WorkspaceCheckpoint, path: String) throws {
         let sequences = checkpoint.journalEvents.map(\.sequence)
+        let changeSequences = (checkpoint.journalChanges ?? []).map(\.sequence)
         guard sequences == sequences.sorted(),
               Set(sequences).count == sequences.count,
               checkpoint.journalEvents.allSatisfy({ $0.sequence <= checkpoint.journalSequence }),
+              changeSequences == changeSequences.sorted(),
+              Set(changeSequences).count == changeSequences.count,
+              Set(changeSequences).isSubset(of: Set(sequences)),
               checkpoint.lastEventID.map({ last in
                   checkpoint.journalEvents.compactMap(\.eventID).allSatisfy { $0 <= last }
               }) ?? checkpoint.journalEvents.allSatisfy({ $0.eventID == nil }) else {

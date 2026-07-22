@@ -748,7 +748,9 @@ public actor WorkspaceStateRuntime {
                 retentionLimit: journalLimit
             ),
             knownTransactionIDs: [],
-            knownChangesBySequence: [:],
+            knownChangesBySequence: Dictionary(uniqueKeysWithValues:
+                (restored?.journalChanges ?? []).map { ($0.sequence, $0.change) }
+            ),
             knownEchoes: [:],
             checkpointState: checkpointRejectedForRebuild ? "rebuilt" : (restored == nil ? "missing" : "restored"),
             observer: nil,
@@ -1107,6 +1109,10 @@ public actor WorkspaceStateRuntime {
             lastEventID: state.journal.lastEventID,
             journalSequence: state.journal.sequence,
             journalEvents: state.journal.events,
+            journalChanges: state.knownChangesBySequence
+                .filter { sequence, _ in state.journal.events.contains { $0.sequence == sequence } }
+                .map { WorkspaceCheckpointJournalChange(sequence: $0.key, change: $0.value) }
+                .sorted { $0.sequence < $1.sequence },
             entries: state.entries.values.map(Self.checkpointEntry),
             createdAt: now,
             lastAccessedAt: now

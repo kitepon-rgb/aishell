@@ -3,6 +3,33 @@ import XCTest
 @testable import AIShellCore
 
 final class WorkspaceCheckpointStoreTests: XCTestCase {
+    func testJournalSemanticChangeMustBindToRetainedEventSequence() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let store = WorkspaceCheckpointStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        let change = WorkspaceChange(
+            kind: .modified, path: "State.swift", previousPath: nil,
+            entry: WorkspaceEntry(
+                path: "State.swift", identity: "1:2", isDirectory: false,
+                sizeBytes: 1, modifiedAt: nil, sha256: String(repeating: "a", count: 64)
+            )
+        )
+        let checkpoint = makeCheckpoint(
+            journalSequence: 2,
+            journalEvents: [ObservationJournalEvent(sequence: 1, path: "/fixture/workspace/State.swift", eventID: 42)],
+            journalChanges: [WorkspaceCheckpointJournalChange(sequence: 2, change: change)]
+        )
+
+        do {
+            _ = try await store.save(checkpoint)
+            XCTFail("retained eventへ束縛されないsemantic changeを保存しました。")
+        } catch {
+            guard case AIShellError.checkpointCorrupt = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
     func testSaveAndWarmLoadRoundTripUsesDeterministicEntryOrder() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
@@ -244,6 +271,9 @@ final class WorkspaceCheckpointStoreTests: XCTestCase {
     private func makeCheckpoint(
         generation: String = "generation-1",
         rootDigest: String = String(repeating: "a", count: 64),
+        journalSequence: UInt64 = 0,
+        journalEvents: [ObservationJournalEvent] = [],
+        journalChanges: [WorkspaceCheckpointJournalChange]? = nil,
         entries: [WorkspaceCheckpointEntry] = []
     ) -> WorkspaceCheckpoint {
         WorkspaceCheckpoint(
@@ -254,6 +284,9 @@ final class WorkspaceCheckpointStoreTests: XCTestCase {
             eventStoreUUID: "11111111-1111-1111-1111-111111111111",
             generation: generation,
             lastEventID: 42,
+            journalSequence: journalSequence,
+            journalEvents: journalEvents,
+            journalChanges: journalChanges,
             entries: entries,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             lastAccessedAt: Date(timeIntervalSince1970: 1_700_000_100)
