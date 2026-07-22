@@ -40,7 +40,7 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 | arm | commit | release binary SHA-256 | tools catalog |
 | --- | --- | --- | --- |
 | current-aishell-0.3.3 | `2705b407cde704873c40b833507059eba99a1a82` | `982b9a3d07a358440937acecc6535063f7e9691dd8f8a8ae0368dcf7a0b43c4c` | 7 tools, digest `9b539dc63e48868152fadd59a575325464af1b67b64826032daf1a27af1f0b36` |
-| candidate | `a4cd9ae9a3150757400c9ba5a2657923ae0c5499` | `c6fc0ed4e0a906446c8ba5c04ec68dc3534638804e6ddea54b2b226f74fdf560` | expanded 9 tools, digest `f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58` |
+| candidate | `aca3a95129baecb740e892fea897446f4b03f8b8` | `c6fc0ed4e0a906446c8ba5c04ec68dc3534638804e6ddea54b2b226f74fdf560` | expanded 9 tools, digest `f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58` |
 
 current armは隔離worktreeから、candidate armは上記commitの製品sourceをrelease buildして固定した。candidateのbinary/catalog digestはblocker解消後に実MCP `initialize` / `tools/list` から再採取済み。
 
