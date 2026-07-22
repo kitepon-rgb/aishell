@@ -171,6 +171,10 @@ symbol locator、manifest由来のtarget/test IDを使い、表示名だけをid
 昇格させない。`evidenceStrength`の順序は`heuristic < lexical_match < declared_edge`だけであり、数値confidence、
 確率、重み付きscoreを生成しない。複数根拠を集約してordinalを加算したり、完全性の保証へ変換したりもしない。
 ACE-033がfocused check候補を順位付けする時も、このclosed ordinalと個別根拠をそのまま使う。
+filesystem providerがtest file名から`naming_heuristic`を生成する場合、変更fileのstemはtest basenameの
+非英数字境界で区切られた完全token、またはstemへ`test | tests | spec | specs`を直結したbasename全体とだけ一致させる。
+任意substring一致は使わない。たとえば変更file `a.mjs`に対して`a.test.mjs`は候補になるが、
+`unrelated.test.mjs`は候補にしない。解析中に読んだ非一致test fileもfreshness bindingには残す。
 referenceはsymbolのstable IDがない場合、同名tokenの
 lexical candidateに留める。dependencyの向き、testとproduction targetの区別、直接／推移edgeを明示し、
 循環はvisited identityで打ち切る。推移探索にはrequest/resultで可視な上限を設け、上限到達を

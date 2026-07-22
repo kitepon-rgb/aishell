@@ -399,14 +399,13 @@ public struct FileSystemChangeImpactProvider: ChangeImpactProvider {
                     ))
                 }
             }
-            let lowerName = file.deletingPathExtension().lastPathComponent.lowercased()
             let isTest = relative.hasPrefix("Tests/") || relative.contains("/Tests/")
                 || relative.lowercased().contains(".test.")
             if isTest {
                 for changed in input.changedPaths {
                     let changedStem = URL(fileURLWithPath: changed.path).deletingPathExtension()
                         .lastPathComponent.lowercased()
-                    guard !changedStem.isEmpty, lowerName.contains(changedStem) else { continue }
+                    guard testFileName(file, matchesChangedStem: changedStem) else { continue }
                     let candidate = ChangeImpactCandidateSeed(category: .relatedTests, subject: .test(path: relative))
                     evidence.append(ChangeImpactEvidenceSeed(
                         inputIdentity: pathIdentity(changed),
@@ -414,7 +413,7 @@ public struct FileSystemChangeImpactProvider: ChangeImpactProvider {
                         relation: .namingHeuristic,
                         locator: .init(path: relative, contentSHA256: sha),
                         strength: .heuristic,
-                        summary: "test file名が変更file名を含む"
+                        summary: "test file名tokenが変更file名と一致"
                     ))
                 }
             }
@@ -509,6 +508,14 @@ public struct FileSystemChangeImpactProvider: ChangeImpactProvider {
             searchStart = range.upperBound
         }
         return result
+    }
+
+    private func testFileName(_ file: URL, matchesChangedStem changedStem: String) -> Bool {
+        guard !changedStem.isEmpty else { return false }
+        let name = file.deletingPathExtension().lastPathComponent.lowercased()
+        let tokens = name.split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        if tokens.contains(changedStem) { return true }
+        return ["test", "tests", "spec", "specs"].contains { name == changedStem + $0 }
     }
 
     private func isIdentifierByte(_ byte: UInt8?) -> Bool {

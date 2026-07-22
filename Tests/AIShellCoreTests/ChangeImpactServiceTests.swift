@@ -324,6 +324,28 @@ final class ChangeImpactServiceTests: XCTestCase {
         })
     }
 
+    func testFilesystemTestNameHeuristicRequiresAStemBoundary() async throws {
+        let fixture = try ImpactFixture()
+        defer { fixture.cleanup() }
+        let changedSHA = try fixture.write("src/a.mjs", "export const a = 2;\n")
+        _ = try fixture.write("test/a.test.mjs", "import '../src/a.mjs';\n")
+        _ = try fixture.write("test/unrelated.test.mjs", "export const unrelated = true;\n")
+
+        let output = try await FileSystemChangeImpactProvider().analyze(.init(
+            root: fixture.root,
+            workspaceCursor: "cursor-1",
+            changedPaths: [.init(path: "src/a.mjs", contentSHA256: changedSHA)],
+            changedSymbols: []
+        ))
+
+        XCTAssertEqual(
+            output.evidence.compactMap { evidence in
+                evidence.candidate.category == .relatedTests ? evidence.candidate.subject.path : nil
+            },
+            ["test/a.test.mjs"]
+        )
+    }
+
     func testRecommendKeepsFocusedSetResolvableAndEmitsClosedItemsWithoutProcess() async throws {
         let fixture = try ImpactFixture()
         defer { fixture.cleanup() }
