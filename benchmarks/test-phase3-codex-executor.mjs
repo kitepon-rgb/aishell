@@ -206,6 +206,8 @@ for (const arm of ['native', 'current-aishell-0.3.3', 'candidate']) {
     'response.created', 'response.completed', 'response.created', 'response.completed',
   ]);
   assert.equal(await readFile(path.join(outputDirectory, attempt.attemptID, 'stderr.log'), 'utf8'), 'fixture diagnostic\n');
+  const invocation = JSON.parse(await readFile(path.join(outputDirectory, attempt.attemptID, 'codex-invocation.json')));
+  assert.deepEqual(invocation.environmentBindings, { GIT_CEILING_DIRECTORIES: outputDirectory });
 }
 
 assert.equal(invocations.length, 3);
@@ -234,6 +236,7 @@ for (const invocation of invocations) {
   assert.equal(invocation.args.includes('model_reasoning_effort="high"'), true);
   assert.equal(invocation.args.includes('fixture_host_catalog=true'), true);
   assert.equal(invocation.context.env.RUST_LOG, 'tungstenite::protocol=trace');
+  assert.equal(invocation.context.env.GIT_CEILING_DIRECTORIES, outputDirectory);
 }
 assert.equal(new Set(invocations.map(({ context }) => context.cwd)).size, 3, 'every arm must get a fresh workspace');
 

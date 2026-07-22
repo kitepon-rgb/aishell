@@ -423,10 +423,15 @@ export function createPhase3CodexExecutor(rawOptions) {
     await writeJSON(path.join(runDirectory, 'codex-invocation.json'), {
       command: options.codexCommand, args, cwd: workspace,
       armBinding, isolation,
+      environmentBindings: { GIT_CEILING_DIRECTORIES: options.outputDirectory },
     });
     const started = performance.now();
     const execution = await options.runProcess(options.codexCommand, args, {
-      cwd: workspace, env: { ...process.env, ...(options.environment ?? {}), RUST_LOG: 'tungstenite::protocol=trace' },
+      cwd: workspace, env: {
+        ...process.env, ...(options.environment ?? {}),
+        GIT_CEILING_DIRECTORIES: options.outputDirectory,
+        RUST_LOG: 'tungstenite::protocol=trace',
+      },
       timeoutMilliseconds: options.timeoutMilliseconds,
     });
     const wallMilliseconds = Math.round(performance.now() - started);

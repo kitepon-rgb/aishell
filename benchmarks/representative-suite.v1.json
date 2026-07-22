@@ -3,7 +3,7 @@
   "frozenAt": "2026-07-21",
   "minimumTaskCount": 30,
   "repetitionsPerTask": 3,
-  "promptTemplate": "Complete benchmark scenario {task_id} in the provided disposable fixture. Goal: {goal} Parameters: {model_parameters} Use only the capabilities available in this arm. When an arm-specific capability directly answers the goal, use it; otherwise use the available native capabilities. Make the smallest necessary observations or changes, preserve unrelated files, and finish by returning exactly one JSON object matching this report contract with observed values and no prose: {agent_report_contract}",
+  "promptTemplate": "Complete benchmark scenario {task_id} in the provided disposable fixture. Goal: {goal} Parameters: {model_parameters} Use only the capabilities available in this arm. When an arm-specific capability directly answers the goal, you must use it at least once for that observation; do not substitute native shell, process, or file inspection for that capability. Otherwise use the available native capabilities. Make the smallest necessary observations or changes, preserve unrelated files, and finish by returning exactly one JSON object matching this report contract with observed values and no prose: {agent_report_contract}",
   "commonHostCatalog": {"capabilities":["bounded-file-read","lexical-search","direct-process-launch","sha-guarded-file-edit"],"rule":"the exact host tool definitions and their catalog digest are identical across all three arms and recorded for every benchmark run"},
   "arms": [
     {"id":"native","binding":"Codex native tools; AIShell MCP absent","aishellTools":[],"controls":[]},
