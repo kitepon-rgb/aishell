@@ -1,0 +1,49 @@
+{
+  "schema": "aishell.phase4-acceptance.v1",
+  "measuredAt": "2026-07-22T20:59:23.541Z",
+  "binary": "/Users/kite/Developer/aishell/.build/debug/aishell-mcp",
+  "fixture": "benchmarks/fixtures/capability-v2",
+  "longBuildIncrementalFailure": {
+    "candidate": {
+      "firstUsefulMilliseconds": 48.93,
+      "wallMilliseconds": 10083.654,
+      "firstUsefulToolRoundTrips": 4,
+      "terminalToolRoundTrips": 10,
+      "terminalState": "failed",
+      "stderrArtifactSHA256": "940879a643ee60009a8f5f42ad1219ad6507893f57c285426f8f99666f44ffff"
+    },
+    "pollingBaseline": {
+      "firstUsefulMilliseconds": 10160.566,
+      "wallMilliseconds": 10160.566,
+      "toolRoundTrips": 1,
+      "terminalState": "failed"
+    },
+    "firstUsefulRatio": 0.004815676606992169,
+    "wallRatio": 0.9924303429553039
+  },
+  "cancel": {
+    "acknowledgementMilliseconds": 158.109,
+    "acknowledgementState": "cancelled",
+    "candidateWallMilliseconds": 159.23,
+    "terminalState": "cancelled",
+    "baselineWorkerMilliseconds": 10000
+  },
+  "externalEdit": {
+    "candidateWallMilliseconds": 133.783,
+    "candidateWaitCalls": 1,
+    "baselineWallMilliseconds": 562.977,
+    "baselinePollCalls": 1,
+    "changedPaths": [
+      "state.txt"
+    ]
+  },
+  "assertions": {
+    "firstUsefulEarlier": true,
+    "terminalWallNonRegression": true,
+    "cancelBeforeNaturalExit": true,
+    "externalEditNoWallRegression": true,
+    "externalEditRoundTripsNotIncreased": true,
+    "silentFallbacks": 0
+  },
+  "binarySHA256": "742f082d557b69435f4b2d2b510fc6382431a36a6e6eb68f016e54ac31339bcc"
+}

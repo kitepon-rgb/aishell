@@ -26,7 +26,7 @@ function runCheckStart(fixtureRoot, taskId) {
       arguments: {
         schema: 'aishell.run-check.v2',
         invocation: {
-          mode: 'direct', executable: '/usr/bin/node', arguments: ['slow.mjs'],
+          mode: 'direct', executable: 'node', arguments: ['slow.mjs'],
           working_directory: fixtureRoot, environment: {},
         },
         dispatch: { mode: 'start', client_run_key: `benchmark-v2-${taskId}` },
@@ -71,7 +71,7 @@ export function materializeCapabilityRequestV2(input) {
   case 'workspace-wait-external-edit':
   case 'workspace-wait-event-gap':
     request = {
-      path: fixtureRoot, cursor: setupCursor, timeout_ms: 5000, change_limit: 1000,
+      path: fixtureRoot, from_cursor: setupCursor, timeout_ms: 5000,
     };
     break;
   default: throw new Error(`unhandled benchmark v2 task: ${taskId}`);
