@@ -67,6 +67,15 @@ export function createRepresentativeProductionHarness(options) {
       preStateDigest: preState.digest,
       ...prepared.fields,
     };
+    const frozen = await frozenPromise;
+    materializeRequestContract({
+      taskId: input.attempt.taskID,
+      workspaceRoot: input.workspace,
+      preAttemptManifest: preState,
+      baselineManifest: input.baselineManifest,
+      setupEvidence: benchmarkSetupEvidence,
+      ...frozen,
+    });
     setupStates.set(input.attempt.attemptID, { prepared: structuredClone(prepared), benchmarkSetupEvidence });
     return benchmarkSetupEvidence;
   };

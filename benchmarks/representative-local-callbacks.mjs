@@ -427,6 +427,7 @@ export function createRepresentativeLocalCallbacks({ armBinaries }) {
     if (attempt.taskID.startsWith('workspace-persistence-')) {
       const snapshot = await fullSnapshot(attempt, armBinaries, workspace, stateDirectory);
       fields.checkpoint = snapshot?.cursor ?? 'native-no-workspace-checkpoint';
+      fields.cursor = fields.checkpoint;
       trustedProductionSetup.workspace_snapshot = { cursor: snapshot?.cursor ?? null, checkpointState: snapshot?.checkpointState ?? null };
     } else if (attempt.taskID.startsWith('project-profile-')) {
       const snapshot = await fullSnapshot(attempt, armBinaries, workspace, stateDirectory,
