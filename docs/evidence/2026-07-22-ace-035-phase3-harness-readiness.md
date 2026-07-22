@@ -2,7 +2,7 @@
 
 ## 結論
 
-Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。初回preflightのactual provider model、MCP original bytes、production profile入力の全blockerを正規の製品／観測契約で解消した。release binaryを使うsingle candidate preflightも成功した。ただし54実model attemptとexternal oracle aggregationは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
+Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。release binaryを使うsingle candidate product preflightは成功した。実Codex attempt preflightではexpanded capability配線とMCP承認経路を修正した一方、auto-reviewerのprovider event/tokenをmain modelから分離して総tokenへ加算する証拠契約が未実装と判明した。54実model attemptとexternal oracle aggregationは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
 
 requested model名、合成profile、canonical再serializationを証拠の代用にしない。
 
@@ -74,4 +74,4 @@ fake process/MCPを使うself-testは実model成功を主張しない。
 
 ## 次の実行gate
 
-上記freezeを入力として54実model attempt、external oracle aggregationの順で実行する。preflight blockerは残っていない。
+auto-reviewer（実測`gpt-5.4`）とmain agent（実測`gpt-5.6-sol`）のprovider eventを相関し、reviewer tokenを総model tokenへ含めるclosed evidence contractを追加する。そのfocused testとsingle attempt preflightを通した後、candidate commit／sandbox digestを再freezeし、54実model attempt、external oracle aggregationの順で実行する。
