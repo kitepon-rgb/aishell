@@ -46,14 +46,14 @@ function sandboxArguments(configuration) {
   if (approvalPolicy === 'bypass' && filesystem === 'danger-full-access' && network === true) {
     return ['--dangerously-bypass-approvals-and-sandbox'];
   }
-  if (approvalPolicy !== 'never' || typeof network !== 'boolean'
+  if (!['never', 'on-request'].includes(approvalPolicy) || typeof network !== 'boolean'
     || !['read-only', 'workspace-write', 'danger-full-access'].includes(filesystem)) {
     throw new Error('sandboxConfiguration has no exact Codex argv mapping');
   }
   if ((filesystem === 'read-only' && network !== false) || (filesystem === 'danger-full-access' && network !== true)) {
     throw new Error('sandboxConfiguration network policy cannot be represented exactly');
   }
-  const args = ['--sandbox', filesystem, '--config', 'approval_policy="never"'];
+  const args = ['--sandbox', filesystem, '--config', `approval_policy=${tomlString(approvalPolicy)}`];
   if (filesystem === 'workspace-write') {
     args.push('--config', `sandbox_workspace_write.network_access=${network ? 'true' : 'false'}`);
   }

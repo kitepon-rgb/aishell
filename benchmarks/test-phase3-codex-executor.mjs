@@ -35,7 +35,7 @@ await chmod(candidateBinary, 0o755);
 const configuration = {
   schema: 'aishell.phase3-run-configuration.v1', provider: 'fixture-provider',
   modelSnapshot: 'fixture-model-snapshot', reasoningEffort: 'high',
-  sandbox: { approvalPolicy: 'never', filesystem: 'workspace-write', network: false },
+  sandbox: { approvalPolicy: 'on-request', filesystem: 'workspace-write', network: false },
   commonHostCatalogDigest: digest('host-catalog'),
   armBindings: {
     native: { binding: 'native', aishellBinaryDigest: null, aishellToolCatalogDigest: null },
@@ -198,7 +198,7 @@ assert.equal(nativeInvocation.args.includes('--ignore-user-config'), true);
 assert.equal(nativeInvocation.args.includes('--dangerously-bypass-approvals-and-sandbox'), false);
 assert.equal(nativeInvocation.args.includes('--sandbox'), true);
 assert.equal(nativeInvocation.args.includes('workspace-write'), true);
-assert.equal(nativeInvocation.args.includes('approval_policy="never"'), true);
+assert.equal(nativeInvocation.args.includes('approval_policy="on-request"'), true);
 assert.equal(nativeInvocation.args.includes('sandbox_workspace_write.network_access=false'), true);
 assert.equal(nativeInvocation.args.some((value) => value.includes('mcp_servers.aishell')), false);
 assert.equal(currentInvocation.args.some((value) => value.includes(currentBinary)), true);

@@ -58,6 +58,7 @@ current armは隔離worktreeから、candidate armは上記commitの製品source
 - release package build: 成功
 - actual release binary＋actual MCP single candidate preflight: exact profile/check解決、`miss_executed`、process 1、publication 1で成功
 - candidate capabilityは`AISHELL_TOOL_PROFILE=development`と`AISHELL_CAPABILITY_SET=expanded-v1`を分離して注入する。`expanded-v1`をtool profileへ誤投入して7-toolへ縮退する配線をfreeze採取時に検出し、正規の9-tool catalogへ修正した。
+- destructive annotation付きMCPを`approval_policy=never`で黙ってcancelしていた実Codex preflightを受け、全arm共通の`workspace-write`・network offを維持したまま、公式の非対話経路である`on-request`＋`approvals_reviewer=auto_review`をrun isolationへ固定した。dangerous bypassは使わない。
 - read-only反証のenvironment closure、npm shell迂回、NUL fail-late、profile environment失効を修正し、最終再監査で確実なP0–P2残存なし
 
 fake process/MCPを使うself-testは実model成功を主張しない。
