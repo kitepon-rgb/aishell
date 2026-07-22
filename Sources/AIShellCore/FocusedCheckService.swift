@@ -131,7 +131,37 @@ public actor FocusedCheckService {
         public let expiresAt: Date
     }
 
+    /// focused run_checkがcurrent profile/catalogを照合する前に読む、immutable setの
+    /// read-only receipt。registry stateをコピーしてauthority化せず、set ID/digestとexpiryを
+    /// actor内で検証してから返す。
+    public struct PreparedSetReceipt: Codable, Equatable, Sendable {
+        public let focusedSetID: String
+        public let focusedSetDigest: String
+        public let expiresAt: Date
+        public let rootIdentity: String
+        public let generation: String
+        public let cursor: String
+        public let profileDigest: String
+        public let manifestIdentity: String
+        public let impactArtifactDigest: String
+    }
+
     public struct Selection: Codable, Equatable, Sendable {
+        /// 返却selectionをcurrent admissionへ再照合するための、保存済みset由来receipt。
+        public struct AdmissionReceipt: Codable, Equatable, Sendable {
+            public let focusedSetID: String
+            public let focusedSetDigest: String
+            public let rootIdentity: String
+            public let generation: String
+            public let cursor: String
+            public let profileDigest: String
+            public let manifestIdentity: String
+            public let impactArtifactDigest: String
+            public let requestedCheckIDs: [String]
+            public let plannedCheckIDs: [String]
+            public let selectionDigest: String
+        }
+
         public struct ResolvedCandidate: Codable, Equatable, Sendable {
             public let focusedCheckID: String
             public let profileCheckID: String
@@ -154,6 +184,7 @@ public actor FocusedCheckService {
         /// 実行側が公開済みDAGの各stepを元candidateとexactに対応付けるための加法的情報。
         public let resolvedCandidates: [ResolvedCandidate]
         public let selectionDigest: String
+        public let admissionReceipt: AdmissionReceipt
     }
 
     public struct Admission: Sendable {
@@ -179,6 +210,26 @@ public actor FocusedCheckService {
     private var sets: [String: FocusedSet] = [:]
 
     public init(now: @escaping @Sendable () -> Date = Date.init) { self.now = now }
+
+    /// current catalog/profile admissionを組み立てる前のimmutable receipt取得。
+    public func prepare(focusedSetID: String, focusedSetDigest: String) throws -> PreparedSetReceipt {
+        guard let set = sets[focusedSetID],
+              set.digest == focusedSetDigest,
+              set.expiresAt > now() else {
+            throw Error.selectionStale
+        }
+        return PreparedSetReceipt(
+            focusedSetID: set.id,
+            focusedSetDigest: set.digest,
+            expiresAt: set.expiresAt,
+            rootIdentity: set.rootIdentity,
+            generation: set.generation,
+            cursor: set.cursor,
+            profileDigest: set.profileDigest,
+            manifestIdentity: set.manifestIdentity,
+            impactArtifactDigest: set.impactArtifactDigest
+        )
+    }
 
     /// 同じ logical descriptor の理由を一候補へ集約し、content-addressed set を登録する。
     /// expiry は admission validity であり identity ではない。同じ identity が既に登録済みなら、
@@ -232,6 +283,19 @@ public actor FocusedCheckService {
         }
         guard Set(selectedSteps.map(\.id)).count == selectedSteps.count else { throw Error.invocationInvalid }
         let selectionDigest = digest(parts: [set.digest] + requestedCheckIDs + requestedCheckIDs.flatMap { [candidateByID[$0]!.dagDigest] })
+        let receipt = Selection.AdmissionReceipt(
+            focusedSetID: set.id,
+            focusedSetDigest: set.digest,
+            rootIdentity: set.rootIdentity,
+            generation: set.generation,
+            cursor: set.cursor,
+            profileDigest: set.profileDigest,
+            manifestIdentity: set.manifestIdentity,
+            impactArtifactDigest: set.impactArtifactDigest,
+            requestedCheckIDs: requestedCheckIDs,
+            plannedCheckIDs: requestedCheckIDs,
+            selectionDigest: selectionDigest
+        )
         return Selection(
             focusedSetID: set.id,
             focusedSetDigest: set.digest,
@@ -239,8 +303,34 @@ public actor FocusedCheckService {
             plannedCheckIDs: requestedCheckIDs,
             steps: selectedSteps,
             resolvedCandidates: resolvedCandidates,
-            selectionDigest: selectionDigest
+            selectionDigest: selectionDigest,
+            admissionReceipt: receipt
         )
+    }
+
+    /// public run_check join用のexact resolver。保存済みimmutable setのID/digestと、
+    /// callerがplanへ束縛したselection digestを同じadmissionで再照合する。
+    public func resolve(
+        focusedSetID: String,
+        focusedSetDigest: String,
+        requestedCheckIDs: [String],
+        expectedSelectionDigest: String,
+        admission: Admission
+    ) throws -> Selection {
+        let selection = try resolve(
+            focusedSetID: focusedSetID,
+            focusedSetDigest: focusedSetDigest,
+            requestedCheckIDs: requestedCheckIDs,
+            admission: admission
+        )
+        guard selection.selectionDigest == expectedSelectionDigest,
+              selection.admissionReceipt.focusedSetID == focusedSetID,
+              selection.admissionReceipt.focusedSetDigest == focusedSetDigest,
+              selection.admissionReceipt.requestedCheckIDs == requestedCheckIDs,
+              selection.admissionReceipt.plannedCheckIDs == requestedCheckIDs else {
+            throw Error.selectionStale
+        }
+        return selection
     }
 
     /// planがset digestを運ばない場合も、service内のimmutable receiptを正本として解決し、
@@ -252,14 +342,13 @@ public actor FocusedCheckService {
         admission: Admission
     ) throws -> Selection {
         guard let set = sets[focusedSetID] else { throw Error.selectionStale }
-        let selection = try resolve(
+        return try resolve(
             focusedSetID: focusedSetID,
             focusedSetDigest: set.digest,
             requestedCheckIDs: requestedCheckIDs,
+            expectedSelectionDigest: expectedSelectionDigest,
             admission: admission
         )
-        guard selection.selectionDigest == expectedSelectionDigest else { throw Error.selectionStale }
-        return selection
     }
 
     private func normalized(_ candidate: Candidate) throws -> Candidate {

@@ -481,6 +481,31 @@ final class ProjectProfileServiceTests: XCTestCase {
             (resolved.catalogRoot as NSString).resolvingSymlinksInPath,
             (root.path as NSString).resolvingSymlinksInPath
         )
+        let profileResolution = try await service.resolveExactProfile(profileDigest: profile.profileDigest)
+        XCTAssertEqual(profileResolution.profile.profileDigest, profile.profileDigest)
+        XCTAssertEqual(profileResolution.profile.projectId, profile.projectId)
+        XCTAssertEqual(profileResolution.catalogRoot, resolved.catalogRoot)
+
+        do {
+            _ = try await service.resolveExactProfile(profileDigest: String(repeating: "0", count: 64))
+            XCTFail("unknown profile digestを受理しました")
+        } catch {
+            guard case ProjectProfileResolutionError.profileDigestNotFound = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        do {
+            _ = try ProjectProfileService.selectExactProfile(
+                profileDigest: profile.profileDigest,
+                catalogs: [catalog, catalog]
+            )
+            XCTFail("duplicate profile digestを曖昧でないものとして受理しました")
+        } catch {
+            guard case ProjectProfileResolutionError.profileDigestAmbiguous(let digest) = error,
+                  digest == profile.profileDigest else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
 
         do {
             _ = try await service.resolveExactCheck(
@@ -503,6 +528,22 @@ final class ProjectProfileServiceTests: XCTestCase {
             XCTFail("unknown checkを受理しました")
         } catch {
             guard case ProjectProfileResolutionError.checkNotFound("missing-check") = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+
+        // cacheに残る旧profileをauthorityにせず、rootからfresh catalogを作り直す。
+        try FileManager.default.removeItem(at: root.appendingPathComponent("package.json"))
+        do {
+            _ = try await service.resolveExactCheck(
+                projectID: profile.projectId,
+                profileDigest: profile.profileDigest,
+                checkID: check.checkId
+            )
+            XCTFail("消滅済みprojectをcacheから解決しました")
+        } catch {
+            guard case ProjectProfileResolutionError.projectNotFound(let id) = error,
+                  id == profile.projectId else {
                 return XCTFail("想定外のエラー: \(error)")
             }
         }

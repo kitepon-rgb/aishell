@@ -120,6 +120,27 @@ public struct RunCheckInvocationPlan: Equatable, Sendable {
         }
     }
 
+    /// public `run_check` schemaのdirect/profile preparation用入力。selection digestは
+    /// Coreがcanonical invocation materialから生成するため、callerはplaceholderを渡さない。
+    public struct PreparedRequest: Equatable, Sendable {
+        public let invocation: Invocation
+        public let dispatch: Dispatch
+        public let cachePolicy: CachePolicy
+        public let executionPolicy: ExecutionPolicy
+
+        public init(
+            invocation: Invocation,
+            dispatch: Dispatch,
+            cachePolicy: CachePolicy,
+            executionPolicy: ExecutionPolicy = .init()
+        ) {
+            self.invocation = invocation
+            self.dispatch = dispatch
+            self.cachePolicy = cachePolicy
+            self.executionPolicy = executionPolicy
+        }
+    }
+
     /// MCP adapter が v1 flat fields と v2 object を同時に受けたことを、曖昧な優先順なしに
     /// compiler へ伝えるための closed input。
     public enum Request: Equatable, Sendable {
@@ -182,16 +203,47 @@ public struct RunCheckInvocationPlan: Equatable, Sendable {
                 requestDigest: requestDigest
             )
         case let .v2(v2):
+            // direct/profile selection は caller が選んだ hash ではなく、閉じた invocation
+            // material から Core 自身が導出する。focused だけは immutable set receipt
+            // から導出済みの digest を admission 時に再照合するため入力として運ぶ。
+            let selectionDigest = canonicalSelectionDigest(for: v2.invocation) ?? v2.selectionDigest
             return try make(
                 invocation: v2.invocation,
                 dispatch: v2.dispatch,
                 cachePolicy: v2.cachePolicy,
                 executionPolicy: v2.executionPolicy,
-                selectionDigest: v2.selectionDigest,
-                requestDigest: sha256(encodeV2(v2))
+                selectionDigest: selectionDigest,
+                requestDigest: sha256(encodeV2(v2, effectiveSelectionDigest: selectionDigest))
             )
         case .mixed:
             throw Error.invocationInvalid
+        }
+    }
+
+    /// selectionをcaller supplied fieldとして持たないdirect/profileの公開prepare入口。
+    /// focused setは保存receipt由来selectionをexactに照合するため、この型では受けない。
+    public static func prepare(_ request: PreparedRequest) throws -> RunCheckInvocationPlan {
+        guard let selectionDigest = canonicalSelectionDigest(for: request.invocation) else {
+            throw Error.invocationInvalid
+        }
+        return try make(
+            invocation: request.invocation,
+            dispatch: request.dispatch,
+            cachePolicy: request.cachePolicy,
+            executionPolicy: request.executionPolicy,
+            selectionDigest: selectionDigest,
+            requestDigest: sha256(encodePrepared(request, selectionDigest: selectionDigest))
+        )
+    }
+
+    /// caller supplied selection hashを信頼してはならない invocation のcanonical selection
+    /// digest。focused set は保存済みreceiptと照合して初めて確定するため `nil` を返す。
+    public static func canonicalSelectionDigest(for invocation: Invocation) -> String? {
+        switch invocation {
+        case .direct, .profileCheck:
+            return sha256(encodeInvocation(invocation))
+        case .focusedSet:
+            return nil
         }
     }
 
@@ -264,14 +316,27 @@ public struct RunCheckInvocationPlan: Equatable, Sendable {
         ])
     }
 
-    private static func encodeV2(_ request: V2Request) -> Data {
+    private static func encodeV2(_ request: V2Request, effectiveSelectionDigest: String) -> Data {
         encode([
             ("request_version", Data("v2".utf8)),
             ("invocation", encodeInvocation(request.invocation)),
             ("dispatch", encodeDispatch(request.dispatch)),
             ("cache", Data(request.cachePolicy.rawValue.utf8)),
             ("execution_policy", encodeExecutionPolicy(request.executionPolicy)),
-            ("selection_digest", Data(request.selectionDigest.utf8)),
+            ("selection_digest", Data(effectiveSelectionDigest.utf8)),
+        ])
+    }
+
+    private static func encodePrepared(_ request: PreparedRequest, selectionDigest: String) -> Data {
+        encode([
+            // preparedはv2 wireのdirect/profile正規入口。effective canonical materialを
+            // 既存v2互換経路と一致させ、入口だけで別plan identityを作らない。
+            ("request_version", Data("v2".utf8)),
+            ("invocation", encodeInvocation(request.invocation)),
+            ("dispatch", encodeDispatch(request.dispatch)),
+            ("cache", Data(request.cachePolicy.rawValue.utf8)),
+            ("execution_policy", encodeExecutionPolicy(request.executionPolicy)),
+            ("selection_digest", Data(selectionDigest.utf8)),
         ])
     }
 

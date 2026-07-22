@@ -118,6 +118,9 @@ final class FocusedCheckServiceTests: XCTestCase {
         let service = FocusedCheckService()
         let set = try await service.compile(request(candidates: [candidate()]))
         let id = set.candidates[0].focusedCheckID
+        let prepared = try await service.prepare(focusedSetID: set.id, focusedSetDigest: set.digest)
+        XCTAssertEqual(prepared.focusedSetID, set.id)
+        XCTAssertEqual(prepared.profileDigest, hash("profile"))
         let baseline = try await service.resolve(
             focusedSetID: set.id, focusedSetDigest: set.digest,
             requestedCheckIDs: [id], admission: admission()
@@ -127,10 +130,27 @@ final class FocusedCheckServiceTests: XCTestCase {
             expectedSelectionDigest: baseline.selectionDigest, admission: admission()
         )
         XCTAssertEqual(exact, baseline)
+        let exactWithSetDigest = try await service.resolve(
+            focusedSetID: set.id, focusedSetDigest: set.digest,
+            requestedCheckIDs: [id], expectedSelectionDigest: baseline.selectionDigest, admission: admission()
+        )
+        XCTAssertEqual(exactWithSetDigest.admissionReceipt.focusedSetID, set.id)
+        XCTAssertEqual(exactWithSetDigest.admissionReceipt.focusedSetDigest, set.digest)
+        XCTAssertEqual(exactWithSetDigest.admissionReceipt.requestedCheckIDs, [id])
+        XCTAssertEqual(exactWithSetDigest.admissionReceipt.plannedCheckIDs, [id])
         await XCTAssertThrowsErrorAsync({
             try await service.resolve(
                 focusedSetID: set.id, requestedCheckIDs: [id],
                 expectedSelectionDigest: self.hash("wrong"), admission: self.admission()
+            )
+        }, { XCTAssertEqual($0 as? FocusedCheckService.Error, .selectionStale) })
+        await XCTAssertThrowsErrorAsync({
+            try await service.prepare(focusedSetID: set.id, focusedSetDigest: self.hash("wrong-set"))
+        }, { XCTAssertEqual($0 as? FocusedCheckService.Error, .selectionStale) })
+        await XCTAssertThrowsErrorAsync({
+            try await service.resolve(
+                focusedSetID: set.id, focusedSetDigest: self.hash("other-set"),
+                requestedCheckIDs: [id], expectedSelectionDigest: baseline.selectionDigest, admission: self.admission()
             )
         }, { XCTAssertEqual($0 as? FocusedCheckService.Error, .selectionStale) })
     }

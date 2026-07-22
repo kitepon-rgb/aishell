@@ -171,12 +171,21 @@ public struct ProjectProfileCheckResolution: Equatable, Sendable {
     public let check: ProjectProfileCheck
 }
 
+/// focused selection receiptが持つprofile digestから、fresh catalog上のprofileをexactに得る結果。
+public struct ProjectProfileResolution: Equatable, Sendable {
+    public let catalogRoot: String
+    public let observedCursor: String
+    public let profile: ProjectProfile
+}
+
 public enum ProjectProfileResolutionError: Error, Equatable, Sendable {
     case projectNotFound(String)
     case projectAmbiguous(String)
     case profileDigestChanged(expected: String, actual: String)
     case checkNotFound(String)
     case checkAmbiguous(String)
+    case profileDigestNotFound(String)
+    case profileDigestAmbiguous(String)
 }
 
 public struct ProjectProfileToolchain: Codable, Equatable, Sendable {
@@ -515,7 +524,8 @@ public actor ProjectProfileService {
         )
     }
 
-    /// cacheはroot発見の索引にだけ使い、返すprofile/checkはfresh workspace snapshotから再構成する。
+    /// cacheはowner root発見の索引にだけ使い、profile/checkのidentity判断には使わない。
+    /// 指定projectを含むfresh catalogだけからexact profile/checkを選ぶ。
     public func resolveExactCheck(
         projectID: String,
         profileDigest: String,
@@ -523,27 +533,28 @@ public actor ProjectProfileService {
         sinceCursor: String? = nil
     ) async throws -> ProjectProfileCheckResolution {
         try loadCacheIfNeeded()
-        let candidates = cache.values.filter { $0.profile.projectId == projectID }
-        guard !candidates.isEmpty else { throw ProjectProfileResolutionError.projectNotFound(projectID) }
-        let ownerRoots = Set(candidates.map(\.ownerRootPath))
-        guard ownerRoots.count == 1, let ownerRoot = ownerRoots.first else {
+        let roots = Dictionary(grouping: cache.values, by: \.ownerRootPath)
+        guard !roots.isEmpty else { throw ProjectProfileResolutionError.projectNotFound(projectID) }
+        var matches: [(catalog: ProjectProfileCatalogResult, profile: ProjectProfile)] = []
+        for ownerRoot in roots.keys.sorted() {
+            guard let entries = roots[ownerRoot], let indexed = entries.sorted(by: {
+                $0.profile.observedCursor < $1.profile.observedCursor
+            }).last else { continue }
+            let snapshot = try await workspaceRuntime.snapshot(
+                path: ownerRoot,
+                sinceCursor: sinceCursor ?? indexed.profile.observedCursor,
+                entryLimit: 1,
+                contextBudget: 0
+            )
+            let fresh = try await catalog(for: snapshot)
+            matches += fresh.profiles.filter { $0.projectId == projectID }.map { (fresh, $0) }
+        }
+        guard matches.count == 1, let match = matches.first else {
+            if matches.isEmpty { throw ProjectProfileResolutionError.projectNotFound(projectID) }
             throw ProjectProfileResolutionError.projectAmbiguous(projectID)
         }
-        let observationBase = sinceCursor
-            ?? candidates.first(where: { $0.profile.profileDigest == profileDigest })?.profile.observedCursor
-            ?? candidates[0].profile.observedCursor
-        let snapshot = try await workspaceRuntime.snapshot(
-            path: ownerRoot,
-            sinceCursor: observationBase,
-            entryLimit: 1,
-            contextBudget: 0
-        )
-        let fresh = try await catalog(for: snapshot)
-        let profiles = fresh.profiles.filter { $0.projectId == projectID }
-        guard profiles.count == 1, let profile = profiles.first else {
-            if profiles.isEmpty { throw ProjectProfileResolutionError.projectNotFound(projectID) }
-            throw ProjectProfileResolutionError.projectAmbiguous(projectID)
-        }
+        let fresh = match.catalog
+        let profile = match.profile
         guard profile.profileDigest == profileDigest else {
             throw ProjectProfileResolutionError.profileDigestChanged(
                 expected: profileDigest,
@@ -560,6 +571,50 @@ public actor ProjectProfileService {
             observedCursor: fresh.observedCursor,
             profile: profile,
             check: check
+        )
+    }
+
+    /// focused preparation receiptのprofile digestを、cacheのprofile stateではなくfresh catalogへ
+    /// exact joinする。root indexの候補の一つでも再観測不能なら、そのままfail closedする。
+    public func resolveExactProfile(
+        profileDigest: String,
+        sinceCursor: String? = nil
+    ) async throws -> ProjectProfileResolution {
+        try loadCacheIfNeeded()
+        let roots = Dictionary(grouping: cache.values, by: \.ownerRootPath)
+        guard !roots.isEmpty else { throw ProjectProfileResolutionError.profileDigestNotFound(profileDigest) }
+        var catalogs: [ProjectProfileCatalogResult] = []
+        for ownerRoot in roots.keys.sorted() {
+            guard let entries = roots[ownerRoot], let indexed = entries.sorted(by: {
+                $0.profile.observedCursor < $1.profile.observedCursor
+            }).last else { continue }
+            let snapshot = try await workspaceRuntime.snapshot(
+                path: ownerRoot,
+                sinceCursor: sinceCursor ?? indexed.profile.observedCursor,
+                entryLimit: 1,
+                contextBudget: 0
+            )
+            catalogs.append(try await catalog(for: snapshot))
+        }
+        return try Self.selectExactProfile(profileDigest: profileDigest, catalogs: catalogs)
+    }
+
+    /// fresh catalog群からのclosed exact choice。複数hitは同一digestでも受理しない。
+    static func selectExactProfile(
+        profileDigest: String,
+        catalogs: [ProjectProfileCatalogResult]
+    ) throws -> ProjectProfileResolution {
+        let matches = catalogs.flatMap { catalog in
+            catalog.profiles.filter { $0.profileDigest == profileDigest }.map { (catalog, $0) }
+        }
+        guard matches.count == 1, let match = matches.first else {
+            if matches.isEmpty { throw ProjectProfileResolutionError.profileDigestNotFound(profileDigest) }
+            throw ProjectProfileResolutionError.profileDigestAmbiguous(profileDigest)
+        }
+        return ProjectProfileResolution(
+            catalogRoot: match.0.root,
+            observedCursor: match.0.observedCursor,
+            profile: match.1
         )
     }
 

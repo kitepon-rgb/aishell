@@ -59,6 +59,34 @@ final class RunCheckInvocationPlanTests: XCTestCase {
         XCTAssertEqual(plan.selectionDigest.count, 64)
     }
 
+    func testPreparedDirectAndProfileDoNotRequireCallerSelectionDigest() throws {
+        let direct = try RunCheckInvocationPlan.prepare(.init(
+            invocation: .direct(.init(executable: "/usr/bin/swift", arguments: ["test"], workingDirectory: "/repo", effectiveEnvironment: [:])),
+            dispatch: .sync,
+            cachePolicy: .off
+        ))
+        let profileInvocation = RunCheckInvocationPlan.Invocation.profileCheck(
+            .init(projectID: "project", profileDigest: digest("profile"), checkID: "test")
+        )
+        let profile = try RunCheckInvocationPlan.prepare(.init(
+            invocation: profileInvocation,
+            dispatch: .start(clientRunKey: "run"),
+            cachePolicy: .prefer
+        ))
+        XCTAssertEqual(direct.selectionDigest, RunCheckInvocationPlan.canonicalSelectionDigest(for: direct.invocation))
+        XCTAssertEqual(profile.selectionDigest, RunCheckInvocationPlan.canonicalSelectionDigest(for: profileInvocation))
+        let legacyV2Profile = try RunCheckInvocationPlan.compile(.v2(.init(
+            invocation: profileInvocation,
+            dispatch: .start(clientRunKey: "run"),
+            cachePolicy: .prefer,
+            selectionDigest: digest("caller-does-not-matter")
+        )))
+        XCTAssertEqual(profile, legacyV2Profile)
+        XCTAssertThrowsError(try RunCheckInvocationPlan.prepare(.init(
+            invocation: .focusedSet(.init(setID: "set", orderedCheckIDs: ["check"])), dispatch: .sync, cachePolicy: .off
+        )))
+    }
+
     func testMixedV1AndV2AndInvalidClosedUnionMaterialFailBeforeAdmission() {
         let legacy = RunCheckInvocationPlan.LegacyDirectRequest(
             executable: "/usr/bin/swift", arguments: [], workingDirectory: "/repo", effectiveEnvironment: [:]
@@ -89,7 +117,7 @@ final class RunCheckInvocationPlanTests: XCTestCase {
         }
     }
 
-    func testPlanDigestBindsDispatchSelectionPolicyAndOrderedCheckIDsButNotRequestIdentity() throws {
+    func testPlanDigestUsesCanonicalDirectProfileSelectionAndBindsFocusedSelection() throws {
         let profile = RunCheckInvocationPlan.Invocation.profileCheck(
             .init(projectID: "project", profileDigest: digest("profile"), checkID: "test")
         )
@@ -107,7 +135,8 @@ final class RunCheckInvocationPlanTests: XCTestCase {
         )
 
         XCTAssertNotEqual(baseline.digest, start.digest)
-        XCTAssertNotEqual(baseline.digest, selectionChanged.digest)
+        XCTAssertEqual(baseline.digest, selectionChanged.digest)
+        XCTAssertEqual(baseline.selectionDigest, RunCheckInvocationPlan.canonicalSelectionDigest(for: profile))
         XCTAssertNotEqual(baseline.digest, policyChanged.digest)
         XCTAssertNotEqual(orderedFirst.digest, orderedSecond.digest)
         XCTAssertNotEqual(baseline.requestDigest, start.requestDigest)
@@ -173,7 +202,7 @@ final class RunCheckInvocationPlanTests: XCTestCase {
         }
     }
 
-    func testDigestInputsRequireLowercaseASCIISHA256() {
+    func testProfileDigestAndFocusedSelectionRequireLowercaseASCIISHA256() {
         let lowercase = digest("digest")
         let uppercaseProfile = RunCheckInvocationPlan.V2Request(
             invocation: .profileCheck(.init(projectID: "project", profileDigest: lowercase.uppercased(), checkID: "test")),
@@ -183,20 +212,25 @@ final class RunCheckInvocationPlanTests: XCTestCase {
             invocation: .profileCheck(.init(projectID: "project", profileDigest: String(repeating: "ａ", count: 64), checkID: "test")),
             dispatch: .sync, cachePolicy: .off, selectionDigest: lowercase
         )
-        let uppercaseSelection = RunCheckInvocationPlan.V2Request(
+        let uppercaseFocusedSelection = RunCheckInvocationPlan.V2Request(
+            invocation: .focusedSet(.init(setID: "set", orderedCheckIDs: ["check"])),
+            dispatch: .sync, cachePolicy: .off, selectionDigest: lowercase.uppercased()
+        )
+        let unicodeFocusedSelection = RunCheckInvocationPlan.V2Request(
+            invocation: .focusedSet(.init(setID: "set", orderedCheckIDs: ["check"])),
+            dispatch: .sync, cachePolicy: .off, selectionDigest: String(repeating: "ａ", count: 64)
+        )
+        let ignoredProfileSelection = RunCheckInvocationPlan.V2Request(
             invocation: .profileCheck(.init(projectID: "project", profileDigest: lowercase, checkID: "test")),
             dispatch: .sync, cachePolicy: .off, selectionDigest: lowercase.uppercased()
         )
-        let unicodeSelection = RunCheckInvocationPlan.V2Request(
-            invocation: .profileCheck(.init(projectID: "project", profileDigest: lowercase, checkID: "test")),
-            dispatch: .sync, cachePolicy: .off, selectionDigest: String(repeating: "ａ", count: 64)
-        )
 
-        for request in [uppercaseProfile, unicodeProfile, uppercaseSelection, unicodeSelection] {
+        for request in [uppercaseProfile, unicodeProfile, uppercaseFocusedSelection, unicodeFocusedSelection] {
             XCTAssertThrowsError(try RunCheckInvocationPlan.compile(.v2(request))) { error in
                 XCTAssertEqual(error as? RunCheckInvocationPlan.Error, .invocationInvalid)
             }
         }
+        XCTAssertNoThrow(try RunCheckInvocationPlan.compile(.v2(ignoredProfileSelection)))
     }
 
     private func compile(
