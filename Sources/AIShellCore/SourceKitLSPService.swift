@@ -63,6 +63,7 @@ public struct SourceKitLSPWorkerLocation: Equatable, Sendable {
 
 public enum SourceKitLSPWorkerResult: Equatable, Sendable {
     case success([SourceKitLSPWorkerLocation])
+    case successWithEngine([SourceKitLSPWorkerLocation], String)
     case indexing(String)
     case unavailable(String)
 }
@@ -85,6 +86,11 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
         guard let text = String(data: document, encoding: .utf8) else {
             return .unavailable("source document is not UTF-8")
         }
+        if request.operation == .references,
+           !FileManager.default.fileExists(atPath: request.root.appendingPathComponent("Package.swift").path),
+           let locations = try semanticBatchReferences(request: request, primaryText: text) {
+            return .successWithEngine(locations, "swift-frontend-semantic-batch")
+        }
         do {
             let process = Process()
             let input = Pipe(), output = Pipe(), error = Pipe()
@@ -106,11 +112,13 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
             ])
             try connection.notify(method: "initialized", params: [:])
             let documentURL = request.root.appendingPathComponent(request.path).standardizedFileURL
-            try connection.notify(method: "textDocument/didOpen", params: [
-                "textDocument": [
-                    "uri": documentURL.absoluteString, "languageId": "swift", "version": 1, "text": text,
-                ],
-            ])
+            for (url, contents) in try Self.workspaceDocuments(request: request, primaryText: text) {
+                try connection.notify(method: "textDocument/didOpen", params: [
+                    "textDocument": [
+                        "uri": url.absoluteString, "languageId": "swift", "version": 1, "text": contents,
+                    ],
+                ])
+            }
             let method: String
             let params: [String: Any]
             switch request.operation {
@@ -142,6 +150,110 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
     private static func positionParams(_ request: SourceKitLSPRequest, uri: String) -> [String: Any] {
         ["textDocument": ["uri": uri],
          "position": ["line": request.line ?? 0, "character": request.character ?? 0]]
+    }
+
+    private static func workspaceDocuments(
+        request: SourceKitLSPRequest,
+        primaryText: String
+    ) throws -> [(URL, String)] {
+        let root = request.root.standardizedFileURL
+        let primary = root.appendingPathComponent(request.path).standardizedFileURL
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else {
+            return [(primary, primaryText)]
+        }
+        var urls: [URL] = []
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            let relative = String(url.standardizedFileURL.path.dropFirst(root.path.count + 1))
+            guard !relative.hasPrefix(".build/"), !relative.hasPrefix(".git/") else { continue }
+            urls.append(url.standardizedFileURL)
+            if urls.count > 2_048 {
+                throw NSError(
+                    domain: "AIShell.SourceKitLSP",
+                    code: 7,
+                    userInfo: [NSLocalizedDescriptionKey: "sourcekit-lsp workspace document limit exceeded"]
+                )
+            }
+        }
+        if !urls.contains(primary) { urls.append(primary) }
+        var totalBytes = 0
+        return try urls.sorted(by: { $0.path < $1.path }).map { url in
+            let contents: String
+            if url == primary {
+                contents = primaryText
+            } else {
+                let data = try Data(contentsOf: url, options: .mappedIfSafe)
+                guard let decoded = String(data: data, encoding: .utf8) else {
+                    throw NSError(
+                        domain: "AIShell.SourceKitLSP",
+                        code: 8,
+                        userInfo: [NSLocalizedDescriptionKey: "sourcekit-lsp workspace document is not UTF-8"]
+                    )
+                }
+                contents = decoded
+            }
+            totalBytes += contents.utf8.count
+            guard totalBytes <= 16 * 1_024 * 1_024 else {
+                throw NSError(
+                    domain: "AIShell.SourceKitLSP",
+                    code: 9,
+                    userInfo: [NSLocalizedDescriptionKey: "sourcekit-lsp workspace document byte limit exceeded"]
+                )
+            }
+            return (url, contents)
+        }
+    }
+
+    private func semanticBatchReferences(
+        request: SourceKitLSPRequest,
+        primaryText: String
+    ) throws -> [SourceKitLSPWorkerLocation]? {
+        guard let symbol = request.symbol, !symbol.isEmpty else { return nil }
+        let documents = try Self.workspaceDocuments(request: request, primaryText: primaryText)
+        guard !documents.isEmpty else { return nil }
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIShellSemantic-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let outputURL = scratch.appendingPathComponent("ast.txt")
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        let output = try FileHandle(forWritingTo: outputURL)
+        defer { try? output.close() }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = ["swiftc", "-typecheck", "-dump-ast"] + documents.map { $0.0.path }
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let data = try Data(contentsOf: outputURL, options: .mappedIfSafe)
+        guard data.count <= 64 * 1_024 * 1_024,
+              let ast = String(data: data, encoding: .utf8) else { return nil }
+        let escaped = NSRegularExpression.escapedPattern(for: symbol)
+        let expression = try NSRegularExpression(
+            pattern: #"\(declref_expr[^\n]*location=([^\s]+):(\d+):(\d+)[^\n]*decl=\"[^\"]*\."#
+                + escaped + #"(?:\(|@)"#
+        )
+        let range = NSRange(ast.startIndex..<ast.endIndex, in: ast)
+        return expression.matches(in: ast, range: range).compactMap { match in
+            guard let pathRange = Range(match.range(at: 1), in: ast),
+                  let lineRange = Range(match.range(at: 2), in: ast),
+                  let characterRange = Range(match.range(at: 3), in: ast),
+                  let line = Int(ast[lineRange]), let character = Int(ast[characterRange]) else { return nil }
+            let url = URL(fileURLWithPath: String(ast[pathRange])).standardizedFileURL
+            let root = request.root.standardizedFileURL
+            guard url.path.hasPrefix(root.path + "/") else { return nil }
+            return .init(
+                path: String(url.path.dropFirst(root.path.count + 1)),
+                line: max(0, line - 1),
+                character: max(0, character - 1)
+            )
+        }
     }
 
     private static func request(
@@ -286,7 +398,7 @@ public actor SourceKitLSPService {
         case let .unavailable(reason):
             return .init(status: .unavailable, operation: request.operation,
                 observedCursor: initial.cursor, locations: [], reason: reason)
-        case let .success(rawLocations):
+        case let .success(rawLocations), let .successWithEngine(rawLocations, _):
             let after = try await workspaceRuntime.snapshot(path: root.path, sinceCursor: request.workspaceCursor)
             guard after.changes.isEmpty,
                   let afterBytes = try? Data(contentsOf: documentURL, options: .mappedIfSafe),
@@ -301,10 +413,12 @@ public actor SourceKitLSPService {
                 locations.append(.init(path: String(url.path.dropFirst(root.path.count + 1)),
                     line: raw.line, character: raw.character, contentSHA256: Self.sha(bytes)))
             }
+            let engine: String?
+            if case let .successWithEngine(_, value) = workerResult { engine = value } else { engine = nil }
             return .init(status: .fresh, operation: request.operation,
                 observedCursor: after.cursor, locations: locations.sorted {
                     ($0.path, $0.line, $0.character) < ($1.path, $1.line, $1.character)
-                })
+                }, reason: engine)
         }
     }
 

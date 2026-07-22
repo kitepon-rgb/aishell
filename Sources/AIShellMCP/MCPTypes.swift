@@ -425,10 +425,10 @@ enum ToolCatalog {
             )
         ),
         tool(
-            "search_context", "複数queryの共有budget検索", "fixed、regex、globを一回の非破壊workspace観測へ束ね、dedup・変更/test順位・共有budget・完全証拠を返します。v1 queryも互換受理します。",
+            "search_context", "複数queryの共有budget検索", "fixed、regex、globを一回の非破壊workspace観測へ束ねます。action=semanticではSourceKit-LSPのdefinition/references/workspace_symbolsをcursorへ束縛し、fresh/stale/indexing/unavailableを明示してlexical fallbackしません。v1 queryも互換受理します。",
             properties: [
                 "query": string("固定文字列query"),
-                "action": enumString(["search"], "v2 action。Phase 2はsearch"),
+                "action": enumString(["search", "semantic"], "v2 action"),
                 "queries": .object([
                     "type": .string("array"),
                     "minItems": .number(1),
@@ -438,8 +438,12 @@ enum ToolCatalog {
                         "required": .array([.string("id"), .string("kind"), .string("pattern")]),
                         "properties": .object([
                             "id": string("request内で一意のquery ID"),
-                            "kind": enumString(["fixed", "regex", "glob"], "query kind"),
+                            "kind": enumString(["fixed", "regex", "glob", "semantic"], "query kind"),
                             "pattern": string("検索pattern"),
+                            "operation": enumString(["definition", "references", "workspace_symbols"], "semantic operation"),
+                            "path": string("semantic anchor document。省略時は現在indexからsymbol anchorを解決"),
+                            "line": integer("semantic anchorの0-based line", minimum: 0),
+                            "character": integer("semantic anchorの0-based UTF-16 character", minimum: 0),
                             "case": enumString(["sensitive", "insensitive", "smart"], "case mode"),
                             "before_lines": integer("前文脈行。0〜20", minimum: 0, maximum: 20),
                             "after_lines": integer("後文脈行。0〜20", minimum: 0, maximum: 20),
@@ -450,6 +454,8 @@ enum ToolCatalog {
                     ])
                 ]),
                 "path": string("検索root。省略時は先頭許可root"),
+                "provider": enumString(["sourcekit-lsp"], "semantic provider"),
+                "cursor": string("semantic観測を束縛するworkspace cursor"),
                 "ranking": .object([
                     "type": .string("array"),
                     "items": enumString(["changed", "tests"], "ranking criterion"),

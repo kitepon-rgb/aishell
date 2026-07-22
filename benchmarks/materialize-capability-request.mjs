@@ -55,7 +55,9 @@ function requestValues({ taskId, fixture, scenario, expected, root, preAttempt, 
     freshness_inputs:fixture.id === 'freshness-cache' ? ['check.mjs', 'src/value.mjs'] : seedTargets,
     diagnostic_adapter:'fixture-json',
     async:true,
-    run_id:() => requireString(setup.runId, 'runId'),
+    // 実run IDはrun_check完了前に存在しない。凍結requestではproducer結果への
+    // データ依存を表すtokenを使い、adapter traceが実値の一対一bindingを証明する。
+    run_id:'$run_check.run_id',
     changed_paths:paths,
     providers:[fixture.id === 'dependency-provider' ? 'depfile' : 'static-import'],
     handles,

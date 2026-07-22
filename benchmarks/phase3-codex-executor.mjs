@@ -330,6 +330,12 @@ function normalizeOptions(options) {
     observeToolCatalog: requireFunction(options.observeToolCatalog, 'observeToolCatalog'),
     observeProviderModel: requireFunction(options.observeProviderModel, 'observeProviderModel'),
     observeAttempt: requireFunction(options.observeAttempt, 'observeAttempt'),
+    beforeAgentAttempt: options.beforeAgentAttempt === undefined
+      ? (async () => {}) : requireFunction(options.beforeAgentAttempt, 'beforeAgentAttempt'),
+    afterAgentAttempt: options.afterAgentAttempt === undefined
+      ? (async () => {}) : requireFunction(options.afterAgentAttempt, 'afterAgentAttempt'),
+    materializePrompt: options.materializePrompt === undefined
+      ? (async ({ prompt }) => prompt) : requireFunction(options.materializePrompt, 'materializePrompt'),
     runProcess: options.runProcess ?? defaultRunProcess,
   };
 }
@@ -389,17 +395,29 @@ export function createPhase3CodexExecutor(rawOptions) {
       armBinding: structuredClone(armBinding),
       workspace,
       stateDirectory,
+      runDirectory,
       frozen: structuredClone(frozen),
       baselineManifest: structuredClone(baselineManifest),
-      applyFrozenMutation: async () => {
+      applyFrozenMutation: async (customApply) => {
         if (mutationCount !== 0) throw new Error(`frozen mutation applied more than once: ${attempt.attemptID}`);
         mutationCount += 1;
-        await applyMutation(workspace, frozen.mutation);
+        if (customApply === undefined) await applyMutation(workspace, frozen.mutation);
+        else {
+          if (typeof customApply !== 'function') throw new Error('custom frozen mutation must be a function');
+          await customApply(structuredClone(frozen.mutation));
+        }
       },
     });
     if (mutationCount !== 1) throw new Error(`setup did not apply frozen mutation exactly once: ${attempt.attemptID}`);
     if (!setup || typeof setup !== 'object') throw new Error(`setup evidence is missing: ${attempt.attemptID}`);
     await writeJSON(path.join(runDirectory, 'setup-evidence.json'), setup);
+    const materializedPrompt = await options.materializePrompt(Object.freeze({
+      attempt: structuredClone(attempt), prompt, workspace, stateDirectory, runDirectory,
+      setup: structuredClone(setup), frozen: structuredClone(frozen),
+    }));
+    if (typeof materializedPrompt !== 'string' || materializedPrompt.length === 0) {
+      throw new Error(`materialized prompt is invalid: ${attempt.attemptID}`);
+    }
     const preAttemptManifest = await captureManifest(workspace);
     const pairingKey = `${attempt.taskID}\0${attempt.repetition}`;
     const pairedDigest = pairedFixtureDigests.get(pairingKey);
@@ -419,12 +437,18 @@ export function createPhase3CodexExecutor(rawOptions) {
         throw new Error(`${attempt.arm} tool catalog digest differs from manifest`);
       }
     }
-    const args = codexArguments({ prompt, workspace, attempt, isolation, options, stateDirectory, mcpWireDirectory });
+    const args = codexArguments({ prompt: materializedPrompt, workspace, attempt, isolation, options, stateDirectory, mcpWireDirectory });
     await writeJSON(path.join(runDirectory, 'codex-invocation.json'), {
       command: options.codexCommand, args, cwd: workspace,
       armBinding, isolation,
+      ...(materializedPrompt === prompt ? {} : { promptTemplateSHA256: sha256Hex(Buffer.from(prompt, 'utf8')) }),
       environmentBindings: { GIT_CEILING_DIRECTORIES: options.outputDirectory },
     });
+    await options.beforeAgentAttempt(Object.freeze({
+      attempt: structuredClone(attempt), workspace, stateDirectory, runDirectory,
+      baselineManifest: structuredClone(baselineManifest), preAttemptManifest: structuredClone(preAttemptManifest),
+      setup: structuredClone(setup), frozen: structuredClone(frozen),
+    }));
     const started = performance.now();
     const execution = await options.runProcess(options.codexCommand, args, {
       cwd: workspace, env: {
@@ -434,6 +458,11 @@ export function createPhase3CodexExecutor(rawOptions) {
       },
       timeoutMilliseconds: options.timeoutMilliseconds,
     });
+    await options.afterAgentAttempt(Object.freeze({
+      attempt: structuredClone(attempt), workspace, stateDirectory, runDirectory,
+      setup: structuredClone(setup), frozen: structuredClone(frozen),
+      execution: structuredClone(execution),
+    }));
     const wallMilliseconds = Math.round(performance.now() - started);
     const stdout = Buffer.from(execution.stdout ?? '');
     const stderr = Buffer.from(execution.stderr ?? '');
@@ -493,7 +522,7 @@ export function createPhase3CodexExecutor(rawOptions) {
       binarySHA256: observedBinaryDigest,
       aishellToolCatalogSHA256: observedCatalogDigest,
       workspaceSHA256: preAttemptManifest.digest,
-      promptSHA256: sha256Hex(Buffer.from(prompt, 'utf8')),
+      promptSHA256: sha256Hex(Buffer.from(materializedPrompt, 'utf8')),
       sandboxSHA256: sha256Hex(canonicalJSONBytes(options.sandboxConfiguration)),
       commonHostCatalogSHA256: options.commonHostCatalogDigest,
       requestedModelSnapshot: isolation.modelSnapshot,

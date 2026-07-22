@@ -81,7 +81,7 @@ final class DepfileChangeImpactProviderTests: XCTestCase {
         XCTAssertEqual(output.coverageGaps[0].subject, .path("build.dep"))
     }
 
-    func testServiceWithExplicitDepfileProviderReturnsBothCandidateKinds() async throws {
+    func testProductionRuntimeRegistersDepfileProviderAndReturnsBothCandidateKinds() async throws {
         let fixture = try DepfileFixture()
         defer { fixture.cleanup() }
         _ = try fixture.write("src/a.c", "int a(void) { return 1; }\n")
@@ -89,14 +89,13 @@ final class DepfileChangeImpactProviderTests: XCTestCase {
         _ = try fixture.write("test/a.test", "test a\n")
         _ = try fixture.write("build.dep", "out: src/a.c include/a.h\n")
         let runtime = try await fixture.runtime()
-        let service = ChangeImpactService(
+        let service = DevelopmentRuntimeService(
             runtimeStore: runtime.store,
-            workspaceRuntime: runtime.workspace,
             evidenceStore: fixture.evidenceStore(),
-            providers: [DepfileChangeImpactProvider()]
+            workspaceRuntime: runtime.workspace
         )
 
-        let result = try await service.analyze(.init(
+        let result = try await service.analyzeChangeImpact(.init(
             root: fixture.root.path,
             workspaceCursor: runtime.cursor,
             changedPaths: [.init(path: "include/a.h", contentSHA256: changedSHA)],

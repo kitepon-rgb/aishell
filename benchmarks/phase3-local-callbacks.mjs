@@ -649,7 +649,7 @@ function rawToolCalls(events) {
   return events.filter((event) => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call');
 }
 
-async function observedToolCalls(events, mcpWireDirectory) {
+export async function observedToolCalls(events, mcpWireDirectory) {
   const hostCalls = rawToolCalls(events);
   if (mcpWireDirectory === undefined) {
     return hostCalls.map((event, index) => {
@@ -720,7 +720,7 @@ async function observedToolCalls(events, mcpWireDirectory) {
   return calls;
 }
 
-function observerMetrics(events, calls, attempt) {
+export function observerMetrics(events, calls, attempt) {
   const turns = events.filter(({ type }) => type === 'turn.completed').length;
   const results = calls.map(({ result }) => result);
   return {
@@ -738,7 +738,7 @@ function observerMetrics(events, calls, attempt) {
   };
 }
 
-function localToolAction(call) {
+export function localToolAction(call) {
   if (typeof call.request.action === 'string') return call.request.action;
   if (typeof call.request.operation === 'string') return call.request.operation;
   if (call.provider !== 'aishell') return call.tool;

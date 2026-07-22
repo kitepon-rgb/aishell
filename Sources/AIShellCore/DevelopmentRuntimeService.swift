@@ -11,6 +11,7 @@ public actor DevelopmentRuntimeService {
     private let projectProfiles: ProjectProfileService
     private let runCheckResolution: RunCheckResolutionService
     private let changeImpactService: ChangeImpactService
+    private let semanticSearchContextService: SemanticSearchContextService
 
     public init(
         runtimeStore: RuntimeStore = RuntimeStore(),
@@ -39,11 +40,27 @@ public actor DevelopmentRuntimeService {
             projectProfiles: profiles,
             workspaceRuntime: workspace
         )
+        let productionImpactProviders: [any ChangeImpactProvider] = [
+            FileSystemChangeImpactProvider(),
+            StaticImportChangeImpactProvider(),
+            DepfileChangeImpactProvider(),
+            BuildManifestChangeImpactProvider(),
+            SourceKitChangeImpactProvider(service: SourceKitLSPService(
+                runtimeStore: runtimeStore,
+                workspaceRuntime: workspace
+            )),
+        ]
         self.changeImpactService = changeImpactService ?? ChangeImpactService(
             runtimeStore: runtimeStore,
             workspaceRuntime: workspace,
             evidenceStore: self.evidenceStore,
+            providers: productionImpactProviders,
             focusedCheckService: focused
+        )
+        semanticSearchContextService = SemanticSearchContextService(
+            runtimeStore: runtimeStore,
+            workspaceRuntime: workspace,
+            evidenceStore: self.evidenceStore
         )
         contextCompiler = ContextCompilerService(
             runtimeStore: runtimeStore,
@@ -938,6 +955,12 @@ public actor DevelopmentRuntimeService {
         continuation: String? = nil
     ) async throws -> SearchContextResultV2 {
         try await contextCompiler.searchContextV2(request: request, continuation: continuation)
+    }
+
+    public func semanticSearchContext(
+        request: SemanticSearchContextRequest
+    ) async throws -> SearchContextResultV2 {
+        try await semanticSearchContextService.search(request)
     }
 
     public func analyzeChangeImpact(_ request: ChangeImpactRequest) async throws -> ChangeImpactResult {

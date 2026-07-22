@@ -448,7 +448,7 @@ final class MCPServer: @unchecked Sendable {
         case "search_context":
             try validateKeys(arguments, allowed: [
                 "action", "query", "queries", "path", "ranking", "changed_since_cursor",
-                "max_results", "byte_budget", "continuation"
+                "provider", "cursor", "max_results", "byte_budget", "continuation"
             ])
             if arguments["query"] != nil {
                 guard arguments["queries"] == nil, arguments["action"] == nil else {
@@ -469,8 +469,13 @@ final class MCPServer: @unchecked Sendable {
                 return try await .from(development.searchContextV2(continuation: continuation))
             }
             let action = try strictOptionalString("action", in: arguments) ?? "search"
+            if action == "semantic" {
+                return try await .from(development.semanticSearchContext(
+                    request: try semanticSearchContextRequest(arguments)
+                ))
+            }
             guard action == "search" else {
-                throw AIShellError.invalidArgument("Phase 2で利用できるactionはsearchだけです。")
+                throw AIShellError.invalidArgument("actionはsearchまたはsemanticです。")
             }
             return try await .from(development.searchContextV2(
                 request: try searchContextRequest(arguments)
@@ -690,6 +695,16 @@ final class MCPServer: @unchecked Sendable {
         return integer
     }
 
+    private func optionalBoundedInt(
+        _ key: String,
+        in arguments: [String: JSONValue],
+        minimum: Int,
+        maximum: Int
+    ) throws -> Int? {
+        guard arguments[key] != nil else { return nil }
+        return try boundedInt(key, in: arguments, default: minimum, minimum: minimum, maximum: maximum)
+    }
+
     private func boundedDouble(
         _ key: String,
         in arguments: [String: JSONValue],
@@ -821,6 +836,43 @@ final class MCPServer: @unchecked Sendable {
             queries: queries,
             ranking: rankings,
             changedSinceCursor: try strictOptionalString("changed_since_cursor", in: arguments),
+            maxResults: try boundedInt("max_results", in: arguments, default: 50, minimum: 1, maximum: 500),
+            byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1_024, maximum: 1_048_576)
+        )
+    }
+
+    private func semanticSearchContextRequest(
+        _ arguments: [String: JSONValue]
+    ) throws -> SemanticSearchContextRequest {
+        guard let queryValues = arguments["queries"]?.arrayValue, !queryValues.isEmpty else {
+            throw AIShellError.invalidArgument("semantic queriesは1件以上必要です。")
+        }
+        let queries = try queryValues.map { value -> SemanticSearchContextQuery in
+            guard let object = value.objectValue else {
+                throw AIShellError.invalidArgument("semantic queriesの各要素はobjectである必要があります。")
+            }
+            try validateKeys(object, allowed: ["id", "kind", "pattern", "operation", "path", "line", "character"])
+            guard try requiredString("kind", in: object) == "semantic" else {
+                throw AIShellError.invalidArgument("semantic query.kindはsemanticです。")
+            }
+            guard let operation = SourceKitLSPOperation(rawValue: try requiredString("operation", in: object)),
+                  operation != .diagnostics else {
+                throw AIShellError.invalidArgument("semantic operationはdefinition、references、workspace_symbolsです。")
+            }
+            return SemanticSearchContextQuery(
+                id: try requiredString("id", in: object),
+                pattern: try requiredString("pattern", in: object),
+                operation: operation,
+                path: try strictOptionalString("path", in: object),
+                line: try optionalBoundedInt("line", in: object, minimum: 0, maximum: 10_000_000),
+                character: try optionalBoundedInt("character", in: object, minimum: 0, maximum: 10_000_000)
+            )
+        }
+        return SemanticSearchContextRequest(
+            path: try strictOptionalString("path", in: arguments),
+            queries: queries,
+            provider: try requiredString("provider", in: arguments),
+            cursor: try requiredString("cursor", in: arguments),
             maxResults: try boundedInt("max_results", in: arguments, default: 50, minimum: 1, maximum: 500),
             byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1_024, maximum: 1_048_576)
         )

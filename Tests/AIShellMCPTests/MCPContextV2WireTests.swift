@@ -195,6 +195,52 @@ final class MCPContextV2WireTests: XCTestCase {
         )
     }
 
+    func testSemanticSearchActionIsPublicAndReturnsTypedProviderState() async throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aishell-mcp-semantic-\(UUID().uuidString)", isDirectory: true)
+        let root = temporary.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try Data("func target() {}\n".utf8).write(to: root.appendingPathComponent("src/a.swift"))
+        try Data("func caller() { target() }\n".utf8).write(to: root.appendingPathComponent("src/b.swift"))
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = RuntimeStore(baseDirectory: temporary.appendingPathComponent("state"))
+        try await store.setAllowedRoot(root)
+        let server = MCPServer(runtimeStore: store, capabilitySet: "expanded-v1")
+        let snapshot = await server.callTool(id: .number(1), params: .object([
+            "name": .string("workspace_snapshot"),
+            "arguments": .object(["path": .string(root.path), "context_budget": .number(0)])
+        ]))
+        let cursor = try XCTUnwrap(
+            snapshot.result?.objectValue?["structuredContent"]?.objectValue?["cursor"]?.stringValue
+        )
+
+        let response = await server.callTool(id: .number(2), params: .object([
+            "name": .string("search_context"),
+            "arguments": .object([
+                "action": .string("semantic"), "path": .string(root.path),
+                "provider": .string("sourcekit-lsp"), "cursor": .string(cursor),
+                "queries": .array([.object([
+                    "id": .string("refs"), "kind": .string("semantic"),
+                    "pattern": .string("target"), "operation": .string("references")
+                ])])
+            ])
+        ]))
+        let result = try XCTUnwrap(response.result?.objectValue)
+        XCTAssertEqual(result["isError"], .bool(false))
+        let structured = try XCTUnwrap(result["structuredContent"]?.objectValue)
+        XCTAssertEqual(structured["schema"], .string("aishell.search-context.v2"))
+        XCTAssertEqual(structured["provider"], .string("sourcekit-lsp"))
+        XCTAssertEqual(structured["scanMode"], .string("semantic_provider"))
+        let state = try XCTUnwrap(structured["freshness"]?.objectValue?["state"]?.stringValue)
+        XCTAssertTrue(["fresh", "indexing", "unavailable"].contains(state))
+        if state == "fresh" {
+            let paths = structured["matches"]?.arrayValue?.compactMap {
+                $0.objectValue?["path"]?.stringValue
+            } ?? []
+            XCTAssertTrue(paths.contains("src/b.swift"), "fresh SourceKit result omitted the cross-file reference")
+        }
+    }
+
     func testToolSchemasAdvertiseNestedV2ContextWithoutRemovingV1Fields() throws {
         let tools = try ToolCatalog.listedTools(profile: nil)
         let workspace = try XCTUnwrap(tools.first { $0.name == "workspace_snapshot" })
@@ -211,6 +257,12 @@ final class MCPContextV2WireTests: XCTestCase {
         XCTAssertNotNil(searchProperties["query"])
         XCTAssertNotNil(searchProperties["queries"])
         XCTAssertNotNil(searchProperties["changed_since_cursor"])
+        XCTAssertNotNil(searchProperties["provider"])
+        XCTAssertNotNil(searchProperties["cursor"])
+        XCTAssertEqual(
+            searchProperties["action"]?.objectValue?["enum"]?.arrayValue,
+            [.string("search"), .string("semantic")]
+        )
         let profileProperties = workspaceProperties["project_profile"]?.objectValue?["properties"]?.objectValue
         XCTAssertNotNil(profileProperties?["byte_budget"])
         XCTAssertNotNil(profileProperties?["profile_limit"])

@@ -189,7 +189,6 @@ export async function observeAttempt({ taskId, armId, workspace, baselineFile, p
         || createHash('sha256').update(canonical(event.result)).digest('hex') !== event.resultDigest) return false;
       const call = requestContract.requiredCalls.find(({tool,action}) => tool === event.tool && action === event.action);
       if (!call || !isSubset(call.requestSubset, event.request)) return false;
-      if (task.fixture === 'async-process' && event.tool === 'run_check' && event.result.runId !== setupEvidence.runId) return false;
       if (expectedError) {
         return event.status === 'failed' && event.isError === true
           && event.result.schemaVersion === 'aishell.error.v1' && event.result.error?.code === expectedError;

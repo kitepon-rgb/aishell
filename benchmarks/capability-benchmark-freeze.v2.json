@@ -1,7 +1,7 @@
 {
   "schema":"aishell.capability-benchmark-freeze.v2",
-  "revision":2,
-  "revisionReason":"pre-measurement wire repair: use PATH-resolved node and the implemented workspace_wait from_cursor field; tasks, fixtures, oracles and aggregation are unchanged",
+  "revision":3,
+  "revisionReason":"pre-measurement data-dependency repair: bind run_observe to the run_check result and permit verified arm-specific opaque artifact IDs; tasks, fixtures, oracles and aggregation are unchanged",
   "frozenAt":"2026-07-23",
   "latticeTask":"ACE-006",
   "canonicalization":"RFC 8785 JCS bytes with no trailing LF",
@@ -26,7 +26,7 @@
     "representative-task-goals.v1.json":{"bytes":4305,"sha256":"810103d0f1358685db035f6f1f711895f411c21e15ba0f8b9de1c3a6761d8e5d"},
     "representative-execution-contracts.v1.json":{"bytes":18798,"sha256":"aa02c3d604dbad28c182ff9ae1df836b7781d671b199a48f3df3e7a4fe3f6163"},
     "capability-fixtures.v1.json":{"bytes":8684,"sha256":"def2454c3e56917812c0cb07c67523a4b90d15c1f24f4834c5ff6fa189b03982"},
-    "materialize-capability-request.mjs":{"bytes":5109,"sha256":"0d9ebb7d1a5c565ec6476ef723dc5a0e96589a35291227d24cbd3d521747b4a3"}
+    "materialize-capability-request.mjs":{"bytes":5293,"sha256":"189da2b4473cce55123382edd4f67d0a9113f62c89167516a9c789a992910860"}
   },
   "specimen":{
     "source":"full workspace_snapshot from the existing pre-integration AIShell binary; no v2 candidate launched",
