@@ -31,11 +31,14 @@ export async function renderRepresentativePrompt(taskId) {
   const reportContract = {schema:'aishell.agent-benchmark-report.v1',taskId,
     assertions:Object.fromEntries(assertionKeys.map((key) => [key, `<observed ${key}>`]))};
   const typeContract = assertionKeys.map((key) => `${key}=${representativeJSONType(oracle[key])}`).join(', ');
+  const assertionGuidance = assertionKeys.length === 0
+    ? ' This task has no model-reported assertion values; return assertions as an empty JSON object.'
+    : ` Required JSON types for assertion values: ${typeContract}. The quoted <observed ...> tokens mark value locations only; replace each token with the observed value encoded in its required JSON type.`;
   return suite.promptTemplate
     .replace('{task_id}', taskId)
     .replace('{goal}', goals.goals[taskId])
     .replace('{model_parameters}', execution.modelParameters[taskId] ?? execution.modelParameters.default)
-    .replace('{agent_report_contract}', `${JSON.stringify(reportContract)} Required JSON types for assertion values: ${typeContract}. The quoted <observed ...> tokens mark value locations only; replace each token with the observed value encoded in its required JSON type.`);
+    .replace('{agent_report_contract}', `${JSON.stringify(reportContract)}${assertionGuidance}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

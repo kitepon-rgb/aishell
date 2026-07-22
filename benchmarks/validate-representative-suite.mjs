@@ -80,6 +80,9 @@ for (const task of suite.tasks) {
     assert.ok(renderedPrompt.includes(`${key}=${representativeJSONType(scenario.oracle[key])}`),
       `report JSON type must be model-visible: ${task.id}/${key}`);
   }
+  if (Object.keys(scenario.oracle).every((key) => suite.metrics.internalTelemetryKeys.includes(key))) {
+    assert.match(renderedPrompt, /return assertions as an empty JSON object/u);
+  }
   assert.equal(renderedPrompt, await renderRepresentativePrompt(task.id), `samePrompt bytes must be arm-independent: ${task.id}`);
 }
 for (const fixture of catalog.fixtures) {
