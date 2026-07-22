@@ -57,12 +57,17 @@ final class MCPTypesTests: XCTestCase {
         ])
         XCTAssertEqual(baselineFull.count, 25)
         XCTAssertFalse(baselineFull.map(\.name).contains("apply_change_set"))
+        XCTAssertFalse(baselineFull.map(\.name).contains("change_impact"))
         XCTAssertEqual(expandedDefault.map(\.name), [
             "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
-            "apply_change_set", "runtime_status", "runtime_open_manager"
+            "change_impact", "apply_change_set", "runtime_status", "runtime_open_manager"
         ])
-        XCTAssertEqual(expandedFull.count, 26)
+        XCTAssertEqual(expandedDefault.count, 9)
+        XCTAssertEqual(expandedFull.count, 27)
+        XCTAssertEqual(expandedFull.filter { $0.name == "change_impact" }.count, 1)
         XCTAssertEqual(expandedFull.filter { $0.name == "apply_change_set" }.count, 1)
+        XCTAssertFalse(expandedFull.map(\.name).contains("run_observe"))
+        XCTAssertFalse(expandedFull.map(\.name).contains("workspace_wait"))
 
         let first = try JSONEncoder.aishell.encode(expandedFull)
         let second = try JSONEncoder.aishell.encode(

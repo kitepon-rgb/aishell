@@ -47,11 +47,167 @@ struct MCPToolAnnotations: Encodable, Sendable {
     let openWorldHint: Bool
 }
 
+/// Wire decodeだけを所有するclosed DTO。Core planへの変換時、`.preparedByCore`は
+/// canonical selection APIで生成し、`.focusedSet`はFocusedCheckServiceで再照合する。
+enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
+    struct Legacy: Equatable, Sendable {
+        let executable: String
+        let arguments: [String]
+        let workingDirectory: String?
+        let environment: [String: String]
+        let timeoutSeconds: Double?
+        let retentionSeconds: Double?
+    }
+    enum Invocation: Equatable, Sendable {
+        case direct(executable: String, arguments: [String], workingDirectory: String?, environment: [String: String])
+        case profileCheck(projectID: String, profileDigest: String, checkID: String)
+        case focusedSet(id: String, orderedCheckIDs: [String])
+    }
+    enum Dispatch: Equatable, Sendable { case sync; case start(clientRunKey: String) }
+    enum Selection: Equatable, Sendable {
+        case preparedByCore
+        case focusedSet(focusedSetDigest: String, selectionDigest: String)
+    }
+    struct V2: Equatable, Sendable {
+        let invocation: Invocation
+        let dispatch: Dispatch
+        let cache: String
+        let timeoutMilliseconds: Int
+        let retentionSeconds: Int
+        let selection: Selection
+    }
+
+    case legacy(Legacy)
+    case v2(V2)
+
+    init(from decoder: Decoder) throws {
+        let object = try decoder.singleValueContainer().decode([String: JSONValue].self)
+        if object["schema"] == nil {
+            try Self.exactKeys(object, allowed: ["executable", "arguments", "working_directory", "environment", "timeout_seconds", "retention_seconds"])
+            guard let executable = object["executable"]?.stringValue, !executable.isEmpty else { throw Self.invalid(decoder) }
+            self = .legacy(.init(
+                executable: executable,
+                arguments: try Self.strings(object["arguments"]),
+                workingDirectory: try Self.optionalString(object["working_directory"]),
+                environment: try Self.map(object["environment"]),
+                timeoutSeconds: try Self.optionalNumber(object["timeout_seconds"], minimum: 0.1, maximum: 3_600),
+                retentionSeconds: try Self.optionalNumber(object["retention_seconds"], minimum: 1, maximum: nil)
+            ))
+            return
+        }
+        try Self.exactKeys(object, allowed: ["schema", "invocation", "dispatch", "cache", "execution_policy", "selection"])
+        guard object["schema"]?.stringValue == "aishell.run-check.v2",
+              let invocationObject = object["invocation"]?.objectValue,
+              let dispatchObject = object["dispatch"]?.objectValue,
+              let cache = object["cache"]?.stringValue,
+              ["off", "prefer", "only", "refresh"].contains(cache),
+              let policy = object["execution_policy"]?.objectValue,
+              let selectionObject = object["selection"]?.objectValue else { throw Self.invalid(decoder) }
+        try Self.exactKeys(policy, allowed: ["timeout_ms", "retention_seconds"])
+        guard let timeout = policy["timeout_ms"]?.intValue, (1...3_600_000).contains(timeout),
+              let retention = policy["retention_seconds"]?.intValue, (1...604_800).contains(retention) else { throw Self.invalid(decoder) }
+        let invocation = try Self.invocation(invocationObject, decoder: decoder)
+        let dispatch = try Self.dispatch(dispatchObject, decoder: decoder)
+        let selection = try Self.selection(selectionObject, decoder: decoder)
+        switch (invocation, selection) {
+        case (.focusedSet, .focusedSet), (.direct, .preparedByCore), (.profileCheck, .preparedByCore): break
+        default: throw Self.invalid(decoder)
+        }
+        self = .v2(.init(
+            invocation: invocation, dispatch: dispatch, cache: cache,
+            timeoutMilliseconds: timeout, retentionSeconds: retention, selection: selection
+        ))
+    }
+
+    private static func invocation(_ object: [String: JSONValue], decoder: Decoder) throws -> Invocation {
+        switch object["mode"]?.stringValue {
+        case "direct":
+            try exactKeys(object, allowed: ["mode", "executable", "arguments", "working_directory", "environment"])
+            guard let executable = object["executable"]?.stringValue, !executable.isEmpty else { throw invalid(decoder) }
+            return .direct(executable: executable, arguments: try strings(object["arguments"]), workingDirectory: try optionalString(object["working_directory"]), environment: try map(object["environment"]))
+        case "profile_check":
+            try exactKeys(object, allowed: ["mode", "project_id", "profile_digest", "check_id"])
+            guard let project = object["project_id"]?.stringValue, !project.isEmpty,
+                  let digest = object["profile_digest"]?.stringValue, isDigest(digest),
+                  let check = object["check_id"]?.stringValue, !check.isEmpty else { throw invalid(decoder) }
+            return .profileCheck(projectID: project, profileDigest: digest, checkID: check)
+        case "focused_set":
+            try exactKeys(object, allowed: ["mode", "focused_set_id", "ordered_check_ids"])
+            guard let id = object["focused_set_id"]?.stringValue, !id.isEmpty else { throw invalid(decoder) }
+            let ids = try strings(object["ordered_check_ids"])
+            guard !ids.isEmpty, Set(ids).count == ids.count else { throw invalid(decoder) }
+            return .focusedSet(id: id, orderedCheckIDs: ids)
+        default: throw invalid(decoder)
+        }
+    }
+
+    private static func dispatch(_ object: [String: JSONValue], decoder: Decoder) throws -> Dispatch {
+        switch object["mode"]?.stringValue {
+        case "sync": try exactKeys(object, allowed: ["mode"]); return .sync
+        case "start":
+            try exactKeys(object, allowed: ["mode", "client_run_key"])
+            guard let key = object["client_run_key"]?.stringValue, !key.isEmpty, key.utf8.count <= 128 else { throw invalid(decoder) }
+            return .start(clientRunKey: key)
+        default: throw invalid(decoder)
+        }
+    }
+
+    private static func selection(_ object: [String: JSONValue], decoder: Decoder) throws -> Selection {
+        switch object["binding"]?.stringValue {
+        case "prepare": try exactKeys(object, allowed: ["binding"]); return .preparedByCore
+        case "verify_focused_set":
+            try exactKeys(object, allowed: ["binding", "focused_set_digest", "selection_digest"])
+            guard let set = object["focused_set_digest"]?.stringValue, isDigest(set),
+                  let selection = object["selection_digest"]?.stringValue, isDigest(selection) else { throw invalid(decoder) }
+            return .focusedSet(focusedSetDigest: set, selectionDigest: selection)
+        default: throw invalid(decoder)
+        }
+    }
+
+    private static func exactKeys(_ object: [String: JSONValue], allowed: Set<String>) throws {
+        guard Set(object.keys).isSubset(of: allowed) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "unknown run_check field"))
+        }
+    }
+    private static func strings(_ value: JSONValue?) throws -> [String] {
+        guard let value else { return [] }
+        guard let values = value.arrayValue else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string array required")) }
+        let strings = values.compactMap(\.stringValue)
+        guard strings.count == values.count else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string array required")) }
+        return strings
+    }
+    private static func map(_ value: JSONValue?) throws -> [String: String] {
+        guard let value else { return [:] }
+        guard let values = value.objectValue else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string map required")) }
+        let strings = values.compactMapValues(\.stringValue)
+        guard strings.count == values.count else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string map required")) }
+        return strings
+    }
+    private static func optionalString(_ value: JSONValue?) throws -> String? {
+        guard let value else { return nil }
+        guard let string = value.stringValue, !string.isEmpty else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "non-empty string required")) }
+        return string
+    }
+    private static func optionalNumber(_ value: JSONValue?, minimum: Double, maximum: Double?) throws -> Double? {
+        guard let value else { return nil }
+        guard let number = value.doubleValue, number >= minimum, maximum.map({ number <= $0 }) ?? true else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bounded number required"))
+        }
+        return number
+    }
+    private static func isDigest(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.allSatisfy { $0.isNumber || ("a"..."f").contains(String($0)) }
+    }
+    private static func invalid(_ decoder: Decoder) -> DecodingError {
+        .dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "invalid closed run_check request"))
+    }
+}
+
 enum ToolCatalog {
     static let developmentToolNames: Set<String> = [
         "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context"
     ]
-    static let implementedExpandedToolNames: Set<String> = ["apply_change_set"]
+    static let implementedExpandedToolNames: Set<String> = ["change_impact", "apply_change_set"]
     static let controlToolNames: Set<String> = [
         "runtime_status", "runtime_open_manager"
     ]
@@ -67,11 +223,12 @@ enum ToolCatalog {
         let visibleNames = expanded
             ? defaultToolNames.union(implementedExpandedToolNames)
             : defaultToolNames
+        let catalog = expanded ? expandedTools : tools
         switch profile {
         case "full", "legacy":
-            return expanded ? tools : tools.filter { !implementedExpandedToolNames.contains($0.name) }
+            return expanded ? catalog : catalog.filter { !implementedExpandedToolNames.contains($0.name) }
         default:
-            return tools.filter { visibleNames.contains($0.name) }.map(compactTool)
+            return catalog.filter { visibleNames.contains($0.name) }.map(compactTool)
         }
     }
 
@@ -82,6 +239,7 @@ enum ToolCatalog {
             "workspace_snapshot": "初回状態のbounded previewと埋込context、以後のFSEvents deltaを返す。",
             "read_context": "複数fileを共有byte budgetとcontinuationで読む。",
             "search_context": "rg workerで変更近接性付きbounded検索を行う。",
+            "change_impact": "OS現在状態へ束縛した変更影響候補とfocused check候補を返す。",
             "apply_change_set": "複数file変更を一つのdurable transactionとして適用する。"
         ]
         return MCPTool(
@@ -269,6 +427,7 @@ enum ToolCatalog {
                 ]
             )
         ),
+        changeImpactTool,
         tool(
             "apply_change_set", "複数fileを原子的に変更", "一つの許可root内のcreate、write、delete、renameをexpected SHAとworkspace cursorで固定し、durable transactionとして適用します。途中失敗を部分成功へ丸めず、完全diff artifactと更新後cursorを返します。",
             properties: [
@@ -468,6 +627,379 @@ enum ToolCatalog {
             required: ["executable"], destructive: true, idempotent: false, openWorld: true
         )
     ]
+
+    /// baselineのv1 schemaを一切変更せず、capability opt-in時だけv2 closed unionへ置換する。
+    private static var expandedTools: [MCPTool] {
+        tools.map { tool in
+            guard tool.name == "run_check" else { return tool }
+            return MCPTool(
+                name: tool.name,
+                title: tool.title,
+                description: tool.description,
+                inputSchema: runCheckExpandedInputSchema(legacy: tool.inputSchema),
+                outputSchema: runCheckExpandedOutputSchema(legacy: tool.outputSchema!),
+                annotations: tool.annotations
+            )
+        }
+    }
+
+    private static let changeImpactTool = MCPTool(
+        name: "change_impact",
+        title: "変更影響候補を取得",
+        description: "workspace cursorとcontent SHAへ束縛した参照・依存・関連test・build target候補、または明示実行用focused check候補を返します。解析や候補生成はtest/buildを起動しません。",
+        inputSchema: changeImpactInputSchema,
+        outputSchema: changeImpactOutputSchema,
+        annotations: MCPToolAnnotations(
+            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false
+        )
+    )
+
+    private static let sha256Schema: JSONValue = .object([
+        "type": .string("string"), "pattern": .string("^[0-9a-f]{64}$")
+    ])
+
+    private static let executionPolicySchema: JSONValue = closedObject(
+        required: ["timeout_ms", "retention_seconds"],
+        properties: [
+            "timeout_ms": integer("timeout milliseconds", minimum: 1, maximum: 3_600_000),
+            "retention_seconds": integer("artifact retention seconds", minimum: 1, maximum: 604_800)
+        ]
+    )
+
+    private static let dispatchSchema: JSONValue = .object(["oneOf": .array([
+        closedObject(required: ["mode"], properties: ["mode": constString("sync")]),
+        closedObject(required: ["mode", "client_run_key"], properties: [
+            "mode": constString("start"),
+            "client_run_key": boundedString(minLength: 1, maxLength: 128)
+        ])
+    ])])
+
+    private static let directInvocationSchema: JSONValue = closedObject(
+        required: ["mode", "executable"],
+        properties: [
+            "mode": constString("direct"),
+            "executable": boundedString(minLength: 1, maxLength: 4_096),
+            "arguments": boundedStringArray(minItems: 0, maxItems: 4_096),
+            "working_directory": boundedString(minLength: 1, maxLength: 4_096),
+            "environment": stringMap("effective environment override")
+        ]
+    )
+
+    private static let profileInvocationSchema: JSONValue = closedObject(
+        required: ["mode", "project_id", "profile_digest", "check_id"],
+        properties: [
+            "mode": constString("profile_check"),
+            "project_id": boundedString(minLength: 1, maxLength: 4_096),
+            "profile_digest": sha256Schema,
+            "check_id": boundedString(minLength: 1, maxLength: 4_096)
+        ]
+    )
+
+    private static let focusedInvocationSchema: JSONValue = closedObject(
+        required: ["mode", "focused_set_id", "ordered_check_ids"],
+        properties: [
+            "mode": constString("focused_set"),
+            "focused_set_id": boundedString(minLength: 1, maxLength: 4_096),
+            "ordered_check_ids": boundedStringArray(minItems: 1, maxItems: 4_096, uniqueItems: true)
+        ]
+    )
+
+    /// `prepare`はadapterにCore canonical APIでselectionを生成させる型。caller提供hashを
+    /// profile selectionとして盲信しない。focused setだけはservice発行digestを再照合する。
+    private static let preparedSelectionSchema = closedObject(
+        required: ["binding"], properties: ["binding": constString("prepare")]
+    )
+    private static let focusedSelectionSchema = closedObject(
+        required: ["binding", "focused_set_digest", "selection_digest"],
+        properties: [
+            "binding": constString("verify_focused_set"),
+            "focused_set_digest": sha256Schema,
+            "selection_digest": sha256Schema
+        ]
+    )
+
+    private static func runCheckV2Variant(invocation: JSONValue, selection: JSONValue) -> JSONValue {
+        closedObject(
+            required: ["schema", "invocation", "dispatch", "cache", "execution_policy", "selection"],
+            properties: [
+                "schema": constString("aishell.run-check.v2"),
+                "invocation": invocation,
+                "dispatch": dispatchSchema,
+                "cache": enumType(["off", "prefer", "only", "refresh"]),
+                "execution_policy": executionPolicySchema,
+                "selection": selection
+            ]
+        )
+    }
+
+    private static func runCheckExpandedInputSchema(legacy: JSONValue) -> JSONValue {
+        .object([
+        "oneOf": .array([
+            legacy,
+            runCheckV2Variant(invocation: directInvocationSchema, selection: preparedSelectionSchema),
+            runCheckV2Variant(invocation: profileInvocationSchema, selection: preparedSelectionSchema),
+            runCheckV2Variant(invocation: focusedInvocationSchema, selection: focusedSelectionSchema)
+        ])
+        ])
+    }
+
+    private static let artifactSchema = closedObject(
+        required: ["handle", "kind", "sizeBytes", "lineCount", "sha256", "createdAt", "expiresAt", "producer"],
+        properties: [
+            "handle": type("string"), "kind": type("string"), "sizeBytes": type("integer"),
+            "lineCount": type("integer"), "sha256": sha256Schema, "createdAt": type("string"),
+            "expiresAt": type("string"), "producer": type("string")
+        ]
+    )
+
+    private static let lookupEvidenceSchema = closedObject(
+        required: ["stepID", "status", "ineligibilityReason"],
+        properties: [
+            "stepID": type("string"), "status": enumType(["hit", "miss", "expired", "incomplete", "ineligible"]),
+            "ineligibilityReason": nullableEnumType(["binding_unavailable", "binding_incomplete", "unsupported"])
+        ]
+    )
+
+    private static let pipelineStepSchema = closedObject(
+        required: ["stepID", "terminalState", "sourceRunID", "stdoutArtifactSHA256", "stderrArtifactSHA256", "artifacts", "skippedBecauseDependencyFailed"],
+        properties: [
+            "stepID": type("string"),
+            "terminalState": enumType(["passed", "failed", "timed_out", "cancelled", "signaled", "launch_failed", "artifact_failed"]),
+            "sourceRunID": type("string"), "stdoutArtifactSHA256": sha256Schema, "stderrArtifactSHA256": sha256Schema,
+            "artifacts": arrayOf(artifactSchema), "skippedBecauseDependencyFailed": type("boolean")
+        ]
+    )
+
+    private static let runCheckV2SuccessSchema = closedObject(
+        required: ["schemaVersion", "planDigest", "selectionDigest", "requestedCheckIDs", "plannedCheckIDs", "cacheState", "processesStarted", "publications", "steps", "lookupEvidence"],
+        properties: [
+            "schemaVersion": constString("aishell.run-check.v2"), "planDigest": sha256Schema,
+            "selectionDigest": sha256Schema, "requestedCheckIDs": arrayOf(type("string")),
+            "plannedCheckIDs": arrayOf(type("string")),
+            "cacheState": enumType(["disabled", "hit", "miss_executed", "refresh_executed", "ineligible"]),
+            "processesStarted": type("integer"), "publications": type("integer"),
+            "steps": arrayOf(pipelineStepSchema), "lookupEvidence": arrayOf(lookupEvidenceSchema)
+        ]
+    )
+
+    private static let runCheckV2ErrorSchema = closedObject(
+        required: ["schemaVersion", "error"],
+        properties: [
+            "schemaVersion": constString("aishell.run-check.v2"),
+            "error": closedObject(required: ["code", "message", "processesStarted", "lookupEvidence"], properties: [
+                "code": enumType(["RUN_CHECK_INVOCATION_INVALID", "RUN_CHECK_CACHE_NOT_ALLOWED", "RUN_CHECK_SELECTION_STALE", "RUN_CHECK_CACHE_MISS", "CACHE_CORRUPT", "CONTENT_CHANGED", "RUN_CHECK_CACHE_FAILED", "RUN_CHECK_START_NOT_READY", "RUN_KEY_CONFLICT"]),
+                "message": type("string"), "processesStarted": type("integer"),
+                "lookupEvidence": arrayOf(lookupEvidenceSchema)
+            ])
+        ]
+    )
+
+    private static func runCheckExpandedOutputSchema(legacy: JSONValue) -> JSONValue {
+        let legacyVariants = legacy.objectValue?["oneOf"]?.arrayValue ?? []
+        return .object([
+            "oneOf": .array(legacyVariants + [runCheckV2SuccessSchema, runCheckV2ErrorSchema])
+        ])
+    }
+
+    private static let changedPathSchema: JSONValue = .object(["oneOf": .array([
+        closedObject(required: ["path", "content_sha256"], properties: [
+            "path": boundedString(minLength: 1, maxLength: 4_096), "content_sha256": sha256Schema
+        ]),
+        closedObject(required: ["path", "expected_absent"], properties: [
+            "path": boundedString(minLength: 1, maxLength: 4_096), "expected_absent": .object([
+                "type": .string("boolean"), "const": .bool(true)
+            ])
+        ])
+    ])])
+    private static let changedSymbolSchema = closedObject(
+        required: ["path", "content_sha256", "name", "start_offset", "end_offset"],
+        properties: [
+            "path": boundedString(minLength: 1, maxLength: 4_096), "content_sha256": sha256Schema,
+            "name": boundedString(minLength: 1, maxLength: 1_024),
+            "start_offset": integer("UTF-8 byte start", minimum: 0),
+            "end_offset": integer("UTF-8 byte end", minimum: 0),
+            "stable_id": boundedString(minLength: 1, maxLength: 4_096)
+        ]
+    )
+    private static let changeImpactSharedProperties: [String: JSONValue] = [
+        "root": boundedString(minLength: 1, maxLength: 4_096),
+        "workspace_cursor": boundedString(minLength: 1, maxLength: 4_096),
+        "changed_paths": arrayOf(changedPathSchema, minItems: 1, maxItems: 4_096),
+        "changed_symbols": arrayOf(changedSymbolSchema, minItems: 1, maxItems: 4_096),
+        "required_providers": boundedStringArray(minItems: 0, maxItems: 64, uniqueItems: true),
+        "byte_budget": integer("primary response byte budget", minimum: 1, maximum: 1_048_576)
+    ]
+
+    private static func changeImpactInitialSchema(operation: String, recommending: Bool) -> JSONValue {
+        var properties = changeImpactSharedProperties
+        properties["operation"] = constString(operation)
+        var required = ["operation", "workspace_cursor"]
+        if recommending {
+            properties["project_id"] = boundedString(minLength: 1, maxLength: 4_096)
+            properties["profile_digest"] = sha256Schema
+            required += ["project_id", "profile_digest"]
+        }
+        var value = closedObject(required: required, properties: properties).objectValue!
+        value["anyOf"] = .array([
+            .object(["required": .array([.string("changed_paths")])]),
+            .object(["required": .array([.string("changed_symbols")])])
+        ])
+        return .object(value)
+    }
+
+    private static let changeImpactInputSchema: JSONValue = .object([
+        "oneOf": .array([
+            changeImpactInitialSchema(operation: "analyze", recommending: false),
+            changeImpactInitialSchema(operation: "recommend", recommending: true),
+            closedObject(required: ["continuation"], properties: [
+                "continuation": boundedString(minLength: 1, maxLength: 16_384),
+                "byte_budget": integer("same or increased byte budget", minimum: 1, maximum: 1_048_576)
+            ])
+        ])
+    ])
+
+    private static let changeImpactFreshnessSchema = closedObject(
+        required: ["rootIdentity", "workspaceGeneration", "inputCursor", "observedCursor", "bindingDigest", "bindingCount"],
+        properties: [
+            "rootIdentity": type("string"), "workspaceGeneration": type("string"),
+            "inputCursor": type("string"), "observedCursor": type("string"),
+            "bindingDigest": sha256Schema, "bindingCount": type("integer")
+        ]
+    )
+    private static let changeImpactCountsSchema = closedObject(
+        required: ["references", "dependencies", "relatedTests", "buildTargets"],
+        properties: [
+            "references": type("integer"), "dependencies": type("integer"),
+            "relatedTests": type("integer"), "buildTargets": type("integer")
+        ]
+    )
+    private static let changeImpactAnalyzeItemSchema: JSONValue = .object([
+        "oneOf": .array([
+            changeImpactItem(kind: "input_path", fields: ["changedPath": type("object")]),
+            changeImpactItem(kind: "input_symbol", fields: ["changedSymbol": type("object")]),
+            changeImpactItem(kind: "required_provider", fields: ["providerID": type("string")]),
+            changeImpactItem(kind: "freshness_binding", fields: ["freshnessBinding": type("object")]),
+            changeImpactItem(kind: "provider_report", fields: ["providerReport": type("object")]),
+            changeImpactItem(kind: "coverage_gap", fields: ["coverageGap": type("object")]),
+            changeImpactItem(kind: "candidate", fields: [
+                "candidateID": sha256Schema, "category": enumType(["references", "dependencies", "related_tests", "build_targets"]),
+                "subject": type("object")
+            ]),
+            changeImpactItem(kind: "evidence", fields: [
+                "evidenceID": sha256Schema, "providerID": type("string"), "inputIdentity": type("string"),
+                "subject": type("object"), "relation": enumType(["lexical_reference", "declared_dependency", "contains_source", "contains_test", "naming_heuristic"]),
+                "locator": type("object"), "evidenceStrength": enumType(["heuristic", "lexical_match", "declared_edge"]), "summary": type("string")
+            ]),
+            changeImpactItem(kind: "candidate_evidence", fields: ["candidateID": sha256Schema, "evidenceID": sha256Schema])
+        ])
+    ])
+
+    private static func changeImpactItem(kind: String, fields: [String: JSONValue]) -> JSONValue {
+        closedObject(required: ["kind", "itemID"] + fields.keys.sorted(), properties: [
+            "kind": constString(kind), "itemID": type("string")
+        ].merging(fields) { _, new in new })
+    }
+
+    private static let selectorSchema: JSONValue = .object(["oneOf": .array([
+        closedObject(required: ["kind", "path"], properties: ["kind": constString("test_path"), "path": type("string")]),
+        closedObject(required: ["kind", "id"], properties: ["kind": constString("profile_check"), "id": type("string")]),
+        closedObject(required: ["kind", "ecosystemID", "profileIdentity", "manifestPath", "declaredID"], properties: [
+            "kind": constString("target"), "ecosystemID": type("string"), "profileIdentity": type("string"),
+            "manifestPath": type("string"), "declaredID": type("string")
+        ])
+    ])])
+    private static let focusedStepSchema = closedObject(
+        required: ["id", "descriptorDigest", "dependsOn", "ordinal"],
+        properties: [
+            "id": type("string"), "descriptorDigest": sha256Schema,
+            "dependsOn": arrayOf(type("string")), "ordinal": nullableType("integer")
+        ]
+    )
+    private static let recommendationItemSchema: JSONValue = .object(["oneOf": .array([
+        changeImpactItem(kind: "focused_candidate", fields: [
+            "focusedCheckID": type("string"), "profileCheckID": type("string"),
+            "profileDigest": sha256Schema, "selector": selectorSchema
+        ]),
+        changeImpactItem(kind: "focused_step", fields: ["focusedCheckID": type("string"), "step": focusedStepSchema]),
+        changeImpactItem(kind: "dependency_edge", fields: ["focusedCheckID": type("string"), "dependsOn": type("string")]),
+        changeImpactItem(kind: "manifest_binding", fields: ["manifest": type("object")]),
+        changeImpactItem(kind: "impact_evidence", fields: ["focusedCheckID": type("string"), "evidence": type("object")]),
+        changeImpactItem(kind: "coverage_gap", fields: ["coverageGap": type("object")])
+    ])])
+
+    private static let analyzeOutputSchema = closedObject(
+        required: ["schemaVersion", "operation", "coverage", "freshness", "counts", "items", "returnedBytes", "omittedBytes", "hasMore", "continuation", "artifact"],
+        properties: [
+            "schemaVersion": constString("aishell.change-impact.v2"), "operation": constString("analyze"),
+            "coverage": enumType(["complete", "partial"]), "freshness": changeImpactFreshnessSchema,
+            "counts": changeImpactCountsSchema, "items": arrayOf(changeImpactAnalyzeItemSchema, maxItems: 4_096),
+            "returnedBytes": type("integer"), "omittedBytes": type("integer"), "hasMore": type("boolean"),
+            "continuation": nullableType("string"), "artifact": artifactSchema
+        ]
+    )
+    private static let recommendOutputSchema = closedObject(
+        required: ["schema", "operation", "executionPolicy", "focusedSetID", "focusedSetDigest", "expiresAt", "freshness", "coverage", "candidateCount", "stepCount", "limitationCount", "items", "byteBudget", "hasMore", "continuation", "artifact"],
+        properties: [
+            "schema": constString("aishell.change-impact.v2"), "operation": constString("recommend"),
+            "executionPolicy": constString("explicit_run_check_only"), "focusedSetID": type("string"),
+            "focusedSetDigest": sha256Schema, "expiresAt": type("string"), "freshness": changeImpactFreshnessSchema,
+            "coverage": enumType(["complete", "partial"]), "candidateCount": type("integer"),
+            "stepCount": type("integer"), "limitationCount": type("integer"),
+            "items": arrayOf(recommendationItemSchema, maxItems: 4_096), "byteBudget": type("integer"),
+            "hasMore": type("boolean"), "continuation": nullableType("string"), "artifact": artifactSchema
+        ]
+    )
+    private static let changeImpactErrorSchema = closedObject(
+        required: ["schemaVersion", "error"], properties: [
+            "schemaVersion": constString("aishell.error.v1"),
+            "error": closedObject(required: ["code", "message"], properties: [
+                "code": type("string"), "message": type("string"),
+                "requiredMinimumBytes": type("integer"), "continuation": type("string"),
+                "operation": enumType(["analyze", "recommend"]), "ownerTask": type("string"), "nextAction": type("string")
+            ])
+        ]
+    )
+    private static let changeImpactOutputSchema: JSONValue = .object([
+        "oneOf": .array([analyzeOutputSchema, recommendOutputSchema, changeImpactErrorSchema])
+    ])
+
+    private static func closedObject(required: [String], properties: [String: JSONValue]) -> JSONValue {
+        .object([
+            "type": .string("object"), "required": .array(required.map(JSONValue.string)),
+            "properties": .object(properties), "additionalProperties": .bool(false)
+        ])
+    }
+
+    private static func constString(_ value: String) -> JSONValue {
+        .object(["type": .string("string"), "const": .string(value)])
+    }
+
+    private static func boundedString(minLength: Int? = nil, maxLength: Int? = nil) -> JSONValue {
+        var value: [String: JSONValue] = ["type": .string("string")]
+        if let minLength { value["minLength"] = .number(Double(minLength)) }
+        if let maxLength { value["maxLength"] = .number(Double(maxLength)) }
+        return .object(value)
+    }
+
+    private static func boundedStringArray(
+        minItems: Int? = nil, maxItems: Int? = nil, uniqueItems: Bool = false
+    ) -> JSONValue {
+        arrayOf(boundedString(minLength: 1, maxLength: 4_096), minItems: minItems, maxItems: maxItems, uniqueItems: uniqueItems)
+    }
+
+    private static func arrayOf(
+        _ item: JSONValue, minItems: Int? = nil, maxItems: Int? = nil, uniqueItems: Bool = false
+    ) -> JSONValue {
+        var value: [String: JSONValue] = ["type": .string("array"), "items": item]
+        if let minItems { value["minItems"] = .number(Double(minItems)) }
+        if let maxItems { value["maxItems"] = .number(Double(maxItems)) }
+        if uniqueItems { value["uniqueItems"] = .bool(true) }
+        return .object(value)
+    }
+
+    private static func nullableEnumType(_ values: [String]) -> JSONValue {
+        .object(["oneOf": .array([enumType(values), .object(["type": .string("null")])])])
+    }
 
     private static func tool(
         _ name: String,
