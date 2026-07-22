@@ -78,6 +78,40 @@ final class ContextCompilerServiceTests: XCTestCase {
         XCTAssertEqual(result.projectProfileSummary?.totalProfiles, 1)
     }
 
+    func testWorkspaceV2UsesInjectedProjectProfileService() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n".write(
+            to: root.appendingPathComponent("Cargo.toml"), atomically: false, encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let profiles = ProjectProfileService(
+            runtimeStore: store,
+            workspaceRuntime: runtime,
+            providerVersion: "injected"
+        )
+        let service = ContextCompilerService(
+            runtimeStore: store,
+            workspaceRuntime: runtime,
+            projectProfileService: profiles
+        )
+
+        let result = try await service.workspaceSnapshot(
+            path: root.path,
+            projectProfileRequest: ProjectProfileProjectionRequest(mode: .all)
+        )
+        let profile = try XCTUnwrap(result.projectProfiles?.compactMap { item -> ProjectProfile? in
+            guard case let .profile(profile) = item else { return nil }
+            return profile
+        }.first)
+
+        XCTAssertEqual(profile.providerVersion, "injected")
+    }
+
     func testProjectProfileProjectionPagesRetainSnapshotAndAdvanceOpaqueContinuation() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }

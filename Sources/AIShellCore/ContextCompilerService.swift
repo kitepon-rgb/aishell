@@ -96,11 +96,7 @@ public actor ContextCompilerService {
     private let runtimeStore: RuntimeStore
     private let workspaceRuntime: WorkspaceStateRuntime?
     private let evidenceStore: EvidenceStore
-    private lazy var projectProfiles = ProjectProfileService(
-        runtimeStore: runtimeStore,
-        workspaceRuntime: workspaceRuntime,
-        evidenceStore: evidenceStore
-    )
+    private let projectProfiles: ProjectProfileService
     private var providerBinding: String?
     private var gitProvider: GitContextProvider?
     private var searchProvider: SearchContextService?
@@ -120,12 +116,18 @@ public actor ContextCompilerService {
     public init(
         runtimeStore: RuntimeStore = RuntimeStore(),
         workspaceRuntime: WorkspaceStateRuntime? = nil,
-        evidenceStore: EvidenceStore? = nil
+        evidenceStore: EvidenceStore? = nil,
+        projectProfileService: ProjectProfileService? = nil
     ) {
         self.runtimeStore = runtimeStore
         self.workspaceRuntime = workspaceRuntime
         self.evidenceStore = evidenceStore ?? EvidenceStore(
             baseDirectory: runtimeStore.baseDirectory.appendingPathComponent("evidence", isDirectory: true)
+        )
+        projectProfiles = projectProfileService ?? ProjectProfileService(
+            runtimeStore: runtimeStore,
+            workspaceRuntime: workspaceRuntime,
+            evidenceStore: self.evidenceStore
         )
     }
 
