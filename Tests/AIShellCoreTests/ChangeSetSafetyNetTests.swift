@@ -198,6 +198,27 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         XCTAssertEqual(finalScanCount, initialScanCount)
     }
 
+    func testSuccessfulApplyAppendsWorkspaceDeltaWithoutRescan() async throws {
+        let f = try await ChangeSetFixture.make()
+        defer { f.cleanup() }
+        let initialWorkspace = try await f.probe.workspaceSnapshot()
+        let initialScanCount = await f.probe.workspaceScanCount()
+        let request = try await f.mixedRequest()
+
+        let result = try await f.service.apply(request)
+        let delta = try await f.probe.workspaceSnapshot(since: initialWorkspace.cursor)
+
+        XCTAssertEqual(result.status, .committed)
+        XCTAssertEqual(Set(delta.changes.map(\.path)), Set([
+            "created.txt", "write.txt", "delete.txt", "renamed.txt",
+        ]))
+        XCTAssertTrue(delta.changes.contains {
+            $0.kind == .renamed && $0.path == "renamed.txt" && $0.previousPath == "rename.txt"
+        })
+        let finalScanCount = await f.probe.workspaceScanCount()
+        XCTAssertEqual(finalScanCount, initialScanCount)
+    }
+
     func testCheckpointMarkerAndTransactionReceiptCrashOrderingIsIdempotent() async throws {
         for point in ApplyChangeSetFailurePoint.checkpointReceiptOrderingPoints {
             let f = try await ChangeSetFixture.make(label: point.rawValue)

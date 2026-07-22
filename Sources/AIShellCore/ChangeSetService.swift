@@ -1951,10 +1951,14 @@ public actor ApplyChangeSetService {
         }
     }
 
-    public static func production(runtimeStore: RuntimeStore, root: URL, stateDirectory: URL) async throws -> ApplyChangeSetService {
+    public static func production(
+        runtimeStore: RuntimeStore,
+        root: URL,
+        stateDirectory: URL,
+        workspaceRuntime: WorkspaceStateRuntime
+    ) async throws -> ApplyChangeSetService {
         let evidenceStore = EvidenceStore(baseDirectory: stateDirectory.appendingPathComponent("evidence", isDirectory: true))
         let secretStore = try ApplyChangeSetSecretStore(baseDirectory: stateDirectory, stateDirectory: stateDirectory, root: root)
-        let workspaceRuntime = WorkspaceStateRuntime(runtimeStore: runtimeStore, startsFSEvents: true)
         let service = try ApplyChangeSetService(runtimeStore: runtimeStore, stateDirectory: stateDirectory,
             evidenceStore: evidenceStore, secretStore: secretStore, workspaceRuntime: workspaceRuntime,
             failureInjector: ApplyChangeSetFailureInjector(), clock: ApplyChangeSetTestClock())

@@ -956,7 +956,10 @@ final class MCPServer: @unchecked Sendable {
             .appendingPathComponent("apply-change-set", isDirectory: true)
             .appendingPathComponent(digest, isDirectory: true)
         let service = try await ApplyChangeSetService.production(
-            runtimeStore: store, root: root, stateDirectory: stateDirectory
+            runtimeStore: store,
+            root: root,
+            stateDirectory: stateDirectory,
+            workspaceRuntime: development.workspaceRuntime
         )
         changeSetServices[root.path] = service
         return service
