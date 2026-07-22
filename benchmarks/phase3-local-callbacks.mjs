@@ -71,9 +71,12 @@ function armBinary(arm) {
   return value;
 }
 
-async function verifiedArmBinary(attempt, armBinding) {
-  const binary = armBinary(attempt.arm);
+async function verifiedArmBinary(attempt, armBinding, explicitBinary = null) {
+  const binary = explicitBinary ?? armBinary(attempt.arm);
   if (!binary) throw new Error(`AIShell MCP is unavailable for native arm: ${attempt.taskID}`);
+  if (!path.isAbsolute(binary) || path.normalize(binary) !== binary || binary.includes('\0')) {
+    throw new Error(`${attempt.arm} binary must be a normalized absolute path`);
+  }
   if (!plainObject(armBinding) || !SHA256.test(armBinding.aishellBinaryDigest ?? '')) {
     throw new Error(`${attempt.arm} arm binding digest is unavailable`);
   }
@@ -176,11 +179,11 @@ function mcpRequest(calls) {
   return Buffer.concat(messages.map((message) => Buffer.concat([canonicalJSONBytes(message), Buffer.from('\n')])));
 }
 
-async function localMCP({ attempt, armBinding, workspace, stateDirectory, calls }) {
-  const binary = await verifiedArmBinary(attempt, armBinding);
+async function localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls }) {
+  const verifiedBinary = await verifiedArmBinary(attempt, armBinding, binary);
   const profile = attempt.arm === 'candidate' ? 'expanded-v1' : 'development';
   const responseBytes = await exchangeMCP({
-    binary, profile, stateDirectory, workspace, requestBytes: mcpRequest(calls),
+    binary: verifiedBinary, profile, stateDirectory, workspace, requestBytes: mcpRequest(calls),
   });
   const responses = jsonLines(responseBytes, 'AIShell MCP response');
   const initialize = responses.filter(({ id }) => id === 1);
@@ -329,6 +332,15 @@ async function validateStaticImportSetup(result, snapshot, workspace) {
   const candidates = Array.isArray(items) ? items.filter(({ kind }) => kind === 'candidate') : [];
   const evidence = Array.isArray(items) ? items.filter(({ kind }) => kind === 'evidence') : [];
   const edges = Array.isArray(items) ? items.filter(({ kind }) => kind === 'candidate_evidence') : [];
+  const gaps = Array.isArray(items) ? items.filter(({ kind }) => kind === 'coverage_gap') : [];
+  const providerIDs = reportItems.map(({ providerReport }) => providerReport?.descriptor?.providerID);
+  const uniqueProviderIDs = new Set(providerIDs);
+  const optionalGapsAreExplicit = gaps.every(({ coverageGap }) =>
+    typeof coverageGap?.providerID === 'string'
+      && !['static-import', 'aishell.filesystem-impact'].includes(coverageGap.providerID)
+      && typeof coverageGap.reasonCode === 'string' && coverageGap.reasonCode.length > 0
+      && typeof coverageGap.nextAction === 'string' && coverageGap.nextAction.length > 0);
+  const coverageMatchesGaps = gaps.length === 0 ? result.coverage === 'complete' : result.coverage === 'partial';
   const candidateIDs = new Set(candidates.map(({ candidateID }) => candidateID));
   const evidenceIDs = new Set(evidence.map(({ evidenceID }) => evidenceID));
   const linkedCandidates = new Set(edges.map(({ candidateID }) => candidateID));
@@ -375,11 +387,13 @@ async function validateStaticImportSetup(result, snapshot, workspace) {
   });
   const categories = ['references', 'dependencies', 'related_tests', 'build_targets'];
   if (result.schemaVersion !== 'aishell.change-impact.v2' || result.operation !== 'analyze'
-    || result.coverage !== 'complete' || !plainObject(freshness)
+    || !coverageMatchesGaps || !optionalGapsAreExplicit || !plainObject(freshness)
     || freshness.rootIdentity !== liveRoot.identity || freshness.inputCursor !== snapshot.cursor
     || freshness.observedCursor !== snapshot.cursor || !SHA256.test(freshness.bindingDigest ?? '')
     || !Number.isSafeInteger(freshness.bindingCount) || freshness.bindingCount < 1
-    || reportItems.length !== 2 || staticReports.length !== 1 || report?.descriptor?.providerID !== 'static-import'
+    || reportItems.length < 2 || providerIDs.some((providerID) => typeof providerID !== 'string')
+    || uniqueProviderIDs.size !== reportItems.length
+    || staticReports.length !== 1 || report?.descriptor?.providerID !== 'static-import'
     || report.descriptor.kind !== 'lexical_search' || report.descriptor.version !== '1'
     || report.status !== 'fresh' || !SHA256.test(report.inputDigest ?? '')
     || report.observedAtCursor !== snapshot.cursor
@@ -389,7 +403,6 @@ async function validateStaticImportSetup(result, snapshot, workspace) {
     || input.length !== 1 || input[0].changedPath?.path !== 'src/a.mjs'
     || input[0].changedPath?.contentSHA256 !== inputSHA256 || input[0].changedPath?.expectedAbsent !== false
     || !items.some(({ kind, providerID }) => kind === 'required_provider' && providerID === 'static-import')
-    || items.some(({ kind }) => kind === 'coverage_gap')
     || candidates.length !== 2 || candidateIDs.size !== 2 || evidence.length !== 2 || evidenceIDs.size !== 2
     || edges.length !== 2 || !exactImpact
     || edges.some(({ candidateID, evidenceID }) => !candidateIDs.has(candidateID) || !evidenceIDs.has(evidenceID))
@@ -406,7 +419,7 @@ async function validateStaticImportSetup(result, snapshot, workspace) {
 }
 
 /** Execute the two non-mutation frozen setup actions against the same runtime state directory. */
-export async function runSetupStep({ attempt, armBinding, workspace, stateDirectory, step }) {
+export async function runSetupStep({ attempt, armBinding, binary = null, workspace, stateDirectory, step }) {
   if (step === 'execute the check once and retain its freshness inputs') {
     if (attempt.arm === 'native') {
       const result = await collectProcess(process.execPath, ['check.mjs'], {
@@ -416,12 +429,12 @@ export async function runSetupStep({ attempt, armBinding, workspace, stateDirect
       return { schema: 'aishell.phase3-local-setup-step.v1', step, processCount: 1 };
     }
     if (attempt.arm === 'candidate') {
-      const [snapshot] = await localMCP({ attempt, armBinding, workspace, stateDirectory, calls: [snapshotCall(workspace)] });
+      const [snapshot] = await localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls: [snapshotCall(workspace)] });
       const catalog = profiles(snapshot.structured);
       if (catalog.length !== 1) throw new Error('fixture must resolve to exactly one project profile');
       const profile = catalog[0];
       const check = await exactFixtureCheck(profile, workspace);
-      const [warm] = await localMCP({ attempt, armBinding, workspace, stateDirectory, calls: [{ name: 'run_check', arguments: {
+      const [warm] = await localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls: [{ name: 'run_check', arguments: {
         schema: 'aishell.run-check.v2',
         invocation: { mode: 'profile_check', project_id: profile.projectId, profile_digest: profile.profileDigest, check_id: check.checkId },
         dispatch: { mode: 'sync' }, cache: 'prefer',
@@ -431,7 +444,7 @@ export async function runSetupStep({ attempt, armBinding, workspace, stateDirect
       validateCandidateWarm(warm.structured, check.checkId);
       return { schema: 'aishell.phase3-local-setup-step.v1', step, processCount: 1, structuredResult: warm.structured };
     } else if (attempt.arm === 'current-aishell-0.3.3') {
-      const [warm] = await localMCP({ attempt, armBinding, workspace, stateDirectory, calls: [{ name: 'run_check', arguments: {
+      const [warm] = await localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls: [{ name: 'run_check', arguments: {
         executable: process.execPath, arguments: ['check.mjs'], working_directory: workspace,
       } }] });
       validateLegacyWarm(warm.structured);
@@ -445,8 +458,8 @@ export async function runSetupStep({ attempt, armBinding, workspace, stateDirect
     if (attempt.arm !== 'candidate') return { schema: 'aishell.phase3-local-setup-step.v1', step, processCount: 0 };
     const file = path.join(workspace, 'src/a.mjs');
     const contentSHA256 = sha256Hex(await readFile(file));
-    const [snapshot] = await localMCP({ attempt, armBinding, workspace, stateDirectory, calls: [snapshotCall(workspace)] });
-    const [analysis] = await localMCP({ attempt, armBinding, workspace, stateDirectory, calls: [{ name: 'change_impact', arguments: {
+    const [snapshot] = await localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls: [snapshotCall(workspace)] });
+    const [analysis] = await localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls: [{ name: 'change_impact', arguments: {
       operation: 'analyze', root: workspace, workspace_cursor: snapshot.structured.cursor,
       changed_paths: [{ path: 'src/a.mjs', content_sha256: contentSHA256 }],
       required_providers: ['static-import'], byte_budget: 1_048_576,
@@ -464,9 +477,9 @@ async function rootBinding(workspace) {
 }
 
 /** Capture only live FS/MCP identities. Missing profiles are blockers, never synthesized. */
-export async function captureTrustedSetup({ attempt, armBinding, workspace, stateDirectory }) {
+export async function captureTrustedSetup({ attempt, armBinding, binary = null, workspace, stateDirectory }) {
   if (attempt.arm !== 'candidate') return {};
-  const [snapshotResult] = await localMCP({ attempt, armBinding, workspace, stateDirectory, calls: [snapshotCall(workspace)] });
+  const [snapshotResult] = await localMCP({ attempt, armBinding, binary, workspace, stateDirectory, calls: [snapshotCall(workspace)] });
   const snapshot = snapshotResult.structured;
   if (typeof snapshot.cursor !== 'string' || snapshot.cursor.length === 0) throw new Error('workspace cursor is unavailable');
   const taskID = attempt.taskID;

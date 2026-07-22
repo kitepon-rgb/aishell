@@ -73,6 +73,7 @@ const harness = createRepresentativeProductionHarness({
   materializePrompt: local.materializePrompt,
   beforeAgentAttempt: local.beforeAgentAttempt,
   afterAgentAttempt: local.afterAgentAttempt,
+  validateSetupEvidence: local.validateSetupEvidence,
   exchangeMCP: local.exchangeMCP,
   collectAttemptEvidence: local.collectRepresentativeAttemptEvidence,
   observeProviderModel: local.observeProviderModel,

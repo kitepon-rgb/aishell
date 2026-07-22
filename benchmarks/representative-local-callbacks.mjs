@@ -332,11 +332,11 @@ async function terminalRun(client, start) {
   return status;
 }
 
-async function createManagedArtifactRuns(attempt, armBinaries, workspace, stateDirectory) {
+async function createManagedArtifactRuns(attempt, armBinaries, workspace, stateDirectory, files) {
   if (attempt.arm !== 'candidate') return [];
   return withClient(attempt, armBinaries, workspace, stateDirectory, async (client) => {
     const output = [];
-    for (const [index, file] of ['run-a.log', 'run-b.log'].entries()) {
+    for (const [index, file] of files.entries()) {
       const started = await client.call('run_check', {
         schema: 'aishell.run-check.v2',
         invocation: {
@@ -355,11 +355,11 @@ async function createManagedArtifactRuns(attempt, armBinaries, workspace, stateD
   });
 }
 
-async function createBenchmarkArtifactStore(runDirectory, workspace) {
+async function createBenchmarkArtifactStore(runDirectory, workspace, files) {
   const directory = path.join(runDirectory, 'benchmark-artifacts');
   await mkdir(directory);
   const artifacts = [];
-  for (const [index, source] of ['run-a.log', 'run-b.log'].entries()) {
+  for (const [index, source] of files.entries()) {
     const bytes = await readFile(path.join(workspace, source));
     const handle = `art_benchmark_run_${index + 1}`;
     const file = `${handle}.data`;
@@ -386,7 +386,7 @@ async function applySpecialMutation(workspace, mutation) {
   }
 }
 
-async function preparePhase3({ attempt, armBinding, workspace, stateDirectory, frozen, baselineManifest, applyFrozenMutation }) {
+async function preparePhase3({ attempt, armBinding, binary, workspace, stateDirectory, frozen, baselineManifest, applyFrozenMutation }) {
   const stepEvidence = [];
   let mutationApplied = false;
   for (const [index, step] of frozen.contract.setupSteps.entries()) {
@@ -397,13 +397,13 @@ async function preparePhase3({ attempt, armBinding, workspace, stateDirectory, f
       mutationApplied = true;
       stepEvidence.push({ step, status: 'applied' });
     } else {
-      const evidence = await runPhase3SetupStep({ attempt, armBinding, workspace, stateDirectory, step });
+      const evidence = await runPhase3SetupStep({ attempt, armBinding, binary, workspace, stateDirectory, step });
       stepEvidence.push({ step, status: 'completed', evidence });
     }
   }
   if (!mutationApplied) await applyFrozenMutation();
   const trustedProductionSetup = await capturePhase3TrustedSetup({
-    attempt, armBinding, workspace, stateDirectory, frozen, baselineManifest, stepEvidence,
+    attempt, armBinding, binary, workspace, stateDirectory, frozen, baselineManifest, stepEvidence,
   });
   return { fields: {}, trustedProductionSetup, stepEvidence, deferred: [], artifactStore: path.join(stateDirectory, 'evidence') };
 }
@@ -413,7 +413,9 @@ export function createRepresentativeLocalCallbacks({ armBinaries }) {
 
   const prepareSetup = async (input) => {
     const { attempt, workspace, stateDirectory, runDirectory, frozen, applyFrozenMutation } = input;
-    if (PHASE3_TASKS.has(attempt.taskID)) return preparePhase3(input);
+    if (PHASE3_TASKS.has(attempt.taskID)) {
+      return preparePhase3({ ...input, binary: binaryFor(attempt, armBinaries) });
+    }
     const fields = {};
     const trustedProductionSetup = {};
     const stepEvidence = [{ step: frozen.contract.setupSteps[0], status: 'verified' }];
@@ -445,8 +447,9 @@ export function createRepresentativeLocalCallbacks({ armBinaries }) {
     }
 
     if (attempt.taskID.startsWith('artifact-query-')) {
-      const managedRuns = await createManagedArtifactRuns(attempt, armBinaries, workspace, stateDirectory);
-      const benchmarkArtifacts = await createBenchmarkArtifactStore(runDirectory, workspace);
+      const artifactFiles = Object.keys(frozen.fixture.seedFiles).sort();
+      const managedRuns = await createManagedArtifactRuns(attempt, armBinaries, workspace, stateDirectory, artifactFiles);
+      const benchmarkArtifacts = await createBenchmarkArtifactStore(runDirectory, workspace, artifactFiles);
       fields.handles = benchmarkArtifacts.handles;
       artifactStore = benchmarkArtifacts.directory;
       trustedProductionSetup.artifact_read = { managedRuns };
@@ -517,8 +520,22 @@ export function createRepresentativeLocalCallbacks({ armBinaries }) {
     return prompt.replace(REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN, JSON.stringify(bindings));
   };
 
+  const validateSetupEvidence = async ({ attempt, workspace, baselineManifest, preAttemptManifest, setupEvidence }) => {
+    if (PHASE3_TASKS.has(attempt.taskID)) return;
+    materializeRequestContract({
+      taskId: attempt.taskID,
+      workspaceRoot: workspace,
+      preAttemptManifest,
+      baselineManifest,
+      setupEvidence,
+      suite: SUITE,
+      catalog: CATALOG,
+      execution: EXECUTION,
+    });
+  };
+
   return {
-    prepareSetup, beforeAgentAttempt, afterAgentAttempt, materializePrompt,
+    prepareSetup, beforeAgentAttempt, afterAgentAttempt, materializePrompt, validateSetupEvidence,
     exchangeMCP, observeProviderModel, runProcess, collectRepresentativeAttemptEvidence,
   };
 }

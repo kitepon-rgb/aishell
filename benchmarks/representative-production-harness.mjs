@@ -45,6 +45,8 @@ export function createRepresentativeProductionHarness(options) {
   const afterLocalAttempt = requiredFunction(options.afterAgentAttempt, 'afterAgentAttempt');
   const exchangeMCP = requiredFunction(options.exchangeMCP, 'exchangeMCP');
   const collectEvidence = requiredFunction(options.collectAttemptEvidence, 'collectAttemptEvidence');
+  const validateSetupEvidence = options.validateSetupEvidence === undefined
+    ? (async () => {}) : requiredFunction(options.validateSetupEvidence, 'validateSetupEvidence');
   const observeProviderModel = requiredFunction(options.observeProviderModel, 'observeProviderModel');
   const runProcess = requiredFunction(options.runProcess, 'runProcess');
   const setupStates = new Map();
@@ -67,14 +69,12 @@ export function createRepresentativeProductionHarness(options) {
       preStateDigest: preState.digest,
       ...prepared.fields,
     };
-    const frozen = await frozenPromise;
-    materializeRequestContract({
-      taskId: input.attempt.taskID,
-      workspaceRoot: input.workspace,
-      preAttemptManifest: preState,
+    await validateSetupEvidence({
+      attempt: input.attempt,
+      workspace: input.workspace,
       baselineManifest: input.baselineManifest,
+      preAttemptManifest: preState,
       setupEvidence: benchmarkSetupEvidence,
-      ...frozen,
     });
     setupStates.set(input.attempt.attemptID, { prepared: structuredClone(prepared), benchmarkSetupEvidence });
     return benchmarkSetupEvidence;
