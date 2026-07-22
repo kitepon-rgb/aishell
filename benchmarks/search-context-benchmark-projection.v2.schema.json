@@ -1,0 +1,17 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://lattice.kitepon.dev/schemas/aishell/search-context-benchmark-projection.v2.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["schema","taskId","matchedPaths","canonicalIdentities","deduplicated","queryCoverage","returnedBytes","recomputedBytes","budgeted","hasMore","continuationPresent","continuationConsistent","freshnessState"],
+  "properties":{
+    "schema":{"const":"aishell.search-context-benchmark-projection.v2"},
+    "taskId":{"const":"batch-context-multi-query"},
+    "matchedPaths":{"type":"array","items":{"type":"string"}},
+    "canonicalIdentities":{"type":"array","items":{"type":"string","pattern":"^[0-9a-f]{64}$"}},
+    "deduplicated":{"type":"boolean"},
+    "queryCoverage":{"type":"array","uniqueItems":true,"items":{"enum":["fixed-needle","regex-export","glob-src","glob-test"]}},
+    "returnedBytes":{"type":"integer","minimum":0},"recomputedBytes":{"type":"integer","minimum":0},
+    "budgeted":{"type":"boolean"},"hasMore":{"type":"boolean"},"continuationPresent":{"type":"boolean"},
+    "continuationConsistent":{"type":"boolean"},"freshnessState":{"type":"string","minLength":1}
+  }
+}

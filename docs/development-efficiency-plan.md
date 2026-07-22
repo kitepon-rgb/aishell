@@ -1,6 +1,6 @@
 ---
 title: AIShell 汎用開発機能拡張計画
-updated: 2026-07-21
+updated: 2026-07-23
 status: planned-lattice-canonical
 owner: AIShell
 north_star: macOSの生きた状態を直接所有し、成功率を維持して開発課題あたりの総model tokenと所要時間を減らす
@@ -102,6 +102,12 @@ default development profileは最大9 tool、full profileはlegacy 20 toolを加
 
 実装campaign開始時にControlをinitし、最初のTask前にriskとbehavior laneを固定する。契約クリティカルな
 Phase完了時だけ独立反証を行い、受入Decisionは不変ADRへ残す。
+
+統合実装前の横断gateとして、benchmark v2のtask集合、fixture、exact request、observer projection、
+harness-only oracle、集計式、expected digestを独立freezeする。freezeは実装candidateを起動せず、既存v1のbytesを
+変更しない。search context統合とmanaged process／workspace wait統合はこのfreezeをhard predecessorとし、
+変更が必要なら別F revisionと再freezeを要求する。root-scoped retained observationはcontextとwaitで別実装にせず、
+共通`WorkspaceDeltaJournal`を正本にする。工程上のtask IDと現在状態はLattice active revisionだけを参照する。
 
 Phase受入の順序は維持するが、将来PhaseのF契約、安全網、専用fileへ分離したCoreは、ACE-003後から
 先行pipelineしてよい。共有serviceとMCP公開面へ書く統合Taskだけを前Phase受入とCore完了のjoinへ従属させる。

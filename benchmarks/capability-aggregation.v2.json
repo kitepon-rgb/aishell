@@ -1,0 +1,11 @@
+{
+  "schema": "aishell.capability-aggregation.v2",
+  "population": "all attempts including failed attempts",
+  "taskSuccess": "oracle_pass && protocol_pass && no_silent_fallback",
+  "solvedTask": "at least 2 of 3 repetitions succeed",
+  "tokensPerSolvedTask": "sum(provider_reported_input_tokens + provider_reported_output_tokens for every attempt) / count(solved tasks)",
+  "wallTimePerSolvedTask": "sum(measured_wall_milliseconds for every attempt) / count(solved tasks)",
+  "toolRoundTripsPerSolvedTask": "sum(tool_round_trips for every attempt) / count(solved tasks)",
+  "comparison": "report candidate-baseline absolute values and ratios per task family; never merge v1 and v2 populations",
+  "zeroSolvedTasks": "typed BENCHMARK_NO_SOLVED_TASKS error; no ratio"
+}

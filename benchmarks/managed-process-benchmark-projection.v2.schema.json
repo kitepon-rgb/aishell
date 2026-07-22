@@ -1,0 +1,16 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://lattice.kitepon.dev/schemas/aishell/managed-process-benchmark-projection.v2.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["schema","taskId","clientRunKey","runHandlePresent","firstDiagnostic","firstUsefulResultMilliseconds","terminalState","terminalExitCode","cancelAcknowledged","orphanProcesses","stdoutSHA256","stderrSHA256"],
+  "properties":{
+    "schema":{"const":"aishell.managed-process-benchmark-projection.v2"},
+    "taskId":{"enum":["async-process-first-useful-result","async-process-cancel"]},
+    "clientRunKey":{"type":"string","minLength":1},"runHandlePresent":{"type":"boolean"},
+    "firstDiagnostic":{"type":["string","null"]},"firstUsefulResultMilliseconds":{"type":["integer","null"],"minimum":0},
+    "terminalState":{"type":"string","minLength":1},"terminalExitCode":{"type":["integer","null"]},
+    "cancelAcknowledged":{"type":"boolean"},"orphanProcesses":{"type":"integer","minimum":0},
+    "stdoutSHA256":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"},
+    "stderrSHA256":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"}
+  }
+}

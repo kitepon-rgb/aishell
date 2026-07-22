@@ -1,0 +1,12 @@
+{
+  "schema": "aishell.capability-oracles.v2",
+  "visibility": "harness-only",
+  "rules": {
+    "batch-context-multi-query":{"matchedPaths":["src/a.mjs","src/b.mjs","test/a.test.mjs"],"queryIds":["fixed-needle","glob-src","glob-test","regex-export"],"duplicateCanonicalIdentities":0,"workerArgvEvidenceRequired":true},
+    "async-process-first-useful-result":{"firstDiagnostic":"first failure","terminalExitCode":1,"runHandleRequired":true,"artifactSHARequired":true},
+    "async-process-cancel":{"cancelAcknowledged":true,"terminalState":"cancelled","orphanProcesses":0,"runHandleRequired":true},
+    "workspace-wait-external-edit":{"state":"changed","changedPaths":["state.txt"],"pollLoops":0,"cursorMustEqualFullSnapshotCursor":true},
+    "workspace-wait-event-gap":{"errorCode":"RESCAN_REQUIRED","silentFullScans":0,"cursorMustEqualFullSnapshotCursor":true}
+  },
+  "modelVisibleExpectedValues": false
+}

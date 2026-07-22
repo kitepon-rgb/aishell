@@ -1,0 +1,19 @@
+{
+  "schema": "aishell.capability-fixtures.v2",
+  "frozenAt": "2026-07-23",
+  "fixtureRoot": "benchmarks/fixtures/capability-v2",
+  "seedFiles": {
+    "src/a.mjs":"export const needle = 1;\n",
+    "src/b.mjs":"export const other = needle;\n",
+    "test/a.test.mjs":"// needle test\n",
+    "slow.mjs":"console.error('first failure');\nsetTimeout(() => process.exit(1), 10000);\n",
+    "state.txt":"one\n"
+  },
+  "scenarios": {
+    "batch-context-multi-query":{"mutation":[]},
+    "async-process-first-useful-result":{"mutation":[]},
+    "async-process-cancel":{"mutation":[]},
+    "workspace-wait-external-edit":{"mutation":[{"op":"delayed-write","path":"state.txt","content":"two\n","delayMs":100}]},
+    "workspace-wait-event-gap":{"mutation":[{"op":"inject-event-gap"}]}
+  }
+}

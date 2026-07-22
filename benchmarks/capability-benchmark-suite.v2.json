@@ -1,0 +1,17 @@
+{
+  "schema": "aishell.capability-benchmark-suite.v2",
+  "frozenAt": "2026-07-23",
+  "repetitionsPerTask": 3,
+  "isolation": "same model snapshot, reasoning, prompt, fixture bytes, sandbox and host catalog within each task comparison",
+  "arms": [
+    {"id":"polling-baseline","rule":"use only frozen v1-compatible requests and explicit polling"},
+    {"id":"direct-os-candidate","rule":"use the exact v2 request materialized before candidate launch"}
+  ],
+  "tasks": [
+    {"id":"batch-context-multi-query","fixture":"capability-v2","candidateTool":"search_context","baseline":"four independently budgeted v1-compatible observations"},
+    {"id":"async-process-first-useful-result","fixture":"capability-v2","candidateTool":"run_check + run_observe","baseline":"frozen v1 synchronous process observation"},
+    {"id":"async-process-cancel","fixture":"capability-v2","candidateTool":"run_check + run_observe","baseline":"frozen v1 process cancellation characterization"},
+    {"id":"workspace-wait-external-edit","fixture":"capability-v2","candidateTool":"workspace_wait","baseline":"workspace_snapshot polling until delayed edit"},
+    {"id":"workspace-wait-event-gap","fixture":"capability-v2","candidateTool":"workspace_wait","baseline":"workspace_snapshot polling after injected gap"}
+  ]
+}

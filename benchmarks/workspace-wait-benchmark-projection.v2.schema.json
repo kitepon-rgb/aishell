@@ -1,0 +1,15 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://lattice.kitepon.dev/schemas/aishell/workspace-wait-benchmark-projection.v2.schema.json",
+  "type":"object","additionalProperties":false,
+  "required":["schema","taskId","setupCursorSHA256","requestCursorMatched","state","changedPaths","returnedCursorPresent","pollLoops","fullScans","errorCode","wallMilliseconds"],
+  "properties":{
+    "schema":{"const":"aishell.workspace-wait-benchmark-projection.v2"},
+    "taskId":{"enum":["workspace-wait-external-edit","workspace-wait-event-gap"]},
+    "setupCursorSHA256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"requestCursorMatched":{"type":"boolean"},
+    "state":{"enum":["changed","timeout","error"]},"changedPaths":{"type":"array","items":{"type":"string"}},
+    "returnedCursorPresent":{"type":"boolean"},"pollLoops":{"type":"integer","minimum":0},
+    "fullScans":{"type":"integer","minimum":0},"errorCode":{"type":["string","null"]},
+    "wallMilliseconds":{"type":"integer","minimum":0}
+  }
+}

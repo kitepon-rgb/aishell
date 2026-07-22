@@ -1,0 +1,33 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"https://lattice.kitepon.dev/schemas/aishell/capability-request-contract.v2.schema.json",
+  "title":"AIShell capability benchmark v2 materialized request",
+  "oneOf":[
+    {
+      "type":"object","additionalProperties":false,
+      "required":["action","path","queries","ranking","changed_since_cursor","max_results","byte_budget"],
+      "properties":{
+        "action":{"const":"search"},"path":{"type":"string","minLength":1},
+        "queries":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"object"}},
+        "ranking":{"const":["changed","tests"]},"changed_since_cursor":{"type":"string","minLength":1},
+        "max_results":{"const":500},"byte_budget":{"const":65536}
+      }
+    },
+    {
+      "type":"object","additionalProperties":false,
+      "required":["schema","start","observe"],
+      "properties":{
+        "schema":{"const":"aishell.managed-process-benchmark-request.v2"},
+        "start":{"type":"object"},"observe":{"type":"array","minItems":2,"items":{"type":"object"}}
+      }
+    },
+    {
+      "type":"object","additionalProperties":false,
+      "required":["path","cursor","timeout_ms","change_limit"],
+      "properties":{
+        "path":{"type":"string","minLength":1},"cursor":{"type":"string","minLength":1},
+        "timeout_ms":{"const":5000},"change_limit":{"const":1000}
+      }
+    }
+  ]
+}
