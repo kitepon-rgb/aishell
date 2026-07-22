@@ -2,6 +2,14 @@ import AIShellCore
 import CryptoKit
 import Foundation
 
+private struct ManagedChangeSetInput {
+    let root: URL
+    let workspaceCursor: String
+    let changes: [ApplyChangeSetChange]
+    let diffByteBudget: Int
+    let retentionSeconds: Int
+}
+
 final class MCPServer: @unchecked Sendable {
     private let store: RuntimeStore
     private let toolProfile: String
@@ -79,7 +87,7 @@ final class MCPServer: @unchecked Sendable {
                     "name": .string("aishell-macos"),
                     "version": .string("0.3.3")
                 ]),
-                "instructions": .string("macOSの生きたfilesystem・process・artifact状態を直接所有します。tinyなsingle-file taskはhost native toolを使います。反復またはmulti-file観測だけworkspace_snapshotから開始し埋込contextを先に使います。32KiB超の出力が見込まれる検査だけrun_checkを使い、artifact_readは主要診断が不足する時だけ使います。search_context/read_contextはsnapshot不足時のdrilldownです。")
+                "instructions": .string("macOSの生きたfilesystem・process・artifact状態を直接所有します。AIはtaskに応じてtool利用を自分で判断します。tinyなsingle-file taskはhost native toolを使います。反復またはmulti-file観測はworkspace_snapshotから開始し埋込contextを先に使います。SHA付きmulti-file編集はsnapshotのopaque cursorをそのままapply_change_setへ渡します。client IDやsequenceの管理は不要です。32KiB超の出力が見込まれる検査だけrun_checkを使い、artifact_readは主要診断が不足する時だけ使います。search_context/read_contextはsnapshot不足時のdrilldownです。")
             ]))
 
         case "ping":
@@ -469,12 +477,19 @@ final class MCPServer: @unchecked Sendable {
             ))
         case "apply_change_set":
             try validateKeys(arguments, allowed: [
-                "client_id", "client_epoch", "request_sequence", "cursor", "changes",
+                "path", "workspace_cursor", "changes",
                 "diff_byte_budget", "retention_seconds"
             ])
-            let request = try applyChangeSetRequest(arguments)
-            let service = try await changeSetService(rootPath: request.cursor.root)
-            return applyChangeSetJSON(try await service.apply(request))
+            let request = try managedChangeSetInput(arguments)
+            let service = try await changeSetService(rootPath: request.root.path)
+            let result = try await service.applyManaged(
+                root: request.root,
+                workspaceCursor: request.workspaceCursor,
+                changes: request.changes,
+                diffByteBudget: request.diffByteBudget,
+                retentionSeconds: request.retentionSeconds
+            )
+            return applyChangeSetJSON(result)
         case "runtime_status":
             return try await runtimeStatus()
         case "runtime_open_manager":
@@ -805,16 +820,7 @@ final class MCPServer: @unchecked Sendable {
         )
     }
 
-    private func applyChangeSetRequest(_ arguments: [String: JSONValue]) throws -> ApplyChangeSetRequest {
-        let cursorObject = try requiredObject("cursor", in: arguments)
-        try validateKeys(cursorObject, allowed: ["root", "generation", "sequence"])
-        let cursor = ApplyChangeSetCursor(
-            root: try requiredString("root", in: cursorObject),
-            generation: try requiredString("generation", in: cursorObject),
-            sequence: UInt64(try boundedInt(
-                "sequence", in: cursorObject, default: -1, minimum: 0, maximum: Int.max
-            ))
-        )
+    private func managedChangeSetInput(_ arguments: [String: JSONValue]) throws -> ManagedChangeSetInput {
         guard let values = arguments["changes"]?.arrayValue, (1...128).contains(values.count) else {
             throw AIShellError.invalidArgument("changesは1〜128件の配列である必要があります。")
         }
@@ -870,15 +876,9 @@ final class MCPServer: @unchecked Sendable {
                 throw AIShellError.invalidArgument("operationはcreate、write、delete、renameのいずれかです。")
             }
         }
-        return ApplyChangeSetRequest(
-            clientID: try requiredString("client_id", in: arguments),
-            clientEpoch: try boundedInt(
-                "client_epoch", in: arguments, default: 0, minimum: 1, maximum: 9_007_199_254_740_991
-            ),
-            requestSequence: try boundedInt(
-                "request_sequence", in: arguments, default: 0, minimum: 1, maximum: 9_007_199_254_740_991
-            ),
-            cursor: cursor,
+        return ManagedChangeSetInput(
+            root: URL(fileURLWithPath: try requiredString("path", in: arguments), isDirectory: true),
+            workspaceCursor: try requiredString("workspace_cursor", in: arguments),
             changes: changes,
             diffByteBudget: try boundedInt(
                 "diff_byte_budget", in: arguments, default: 65_536, minimum: 1, maximum: 1_048_576
@@ -1029,6 +1029,15 @@ final class MCPServer: @unchecked Sendable {
                 "expires_at": expiresAt
             ])
         ])
+    }
+
+    func applyChangeSetJSON(_ result: ManagedApplyChangeSetResult) -> JSONValue {
+        guard case var .object(object) = applyChangeSetJSON(result.transaction) else {
+            preconditionFailure("apply_change_set projection must be an object")
+        }
+        object["workspace_from_cursor"] = .string(result.workspaceFromCursor)
+        object["workspace_cursor"] = .string(result.workspaceCursor)
+        return .object(object)
     }
 
     private func changeSetCursorJSON(_ cursor: ApplyChangeSetCursor) -> JSONValue {

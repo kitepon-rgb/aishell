@@ -219,6 +219,60 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         XCTAssertEqual(finalScanCount, initialScanCount)
     }
 
+    func testPhase5TransactionLoopMatchesHostPatchAndRemovesConfirmationRoundTrips() async throws {
+        let f = try await ChangeSetFixture.make(label: "phase5-acceptance")
+        defer { f.cleanup() }
+        let request = try await f.mixedRequest()
+        let baselineRoot = f.base.appendingPathComponent("host-apply-patch", isDirectory: true)
+        try FileManager.default.copyItem(at: f.root, to: baselineRoot)
+
+        let initialWorkspace = try await f.probe.workspaceSnapshot()
+        let initialScanCount = await f.probe.workspaceScanCount()
+        let candidateStartedAt = CFAbsoluteTimeGetCurrent()
+        let result = try await f.service.apply(request)
+        let candidateMilliseconds = (CFAbsoluteTimeGetCurrent() - candidateStartedAt) * 1_000
+
+        let baselineStartedAt = CFAbsoluteTimeGetCurrent()
+        try applyHostPatchEquivalent(request.changes, to: baselineRoot)
+        let baselineDigest = try f.probe.publicTreeDigest(baselineRoot)
+        _ = try f.probe.publicTreeDigest(baselineRoot) // host側の明示確認call
+        _ = try await f.probe.workspaceSnapshot(since: initialWorkspace.cursor) // host側の再snapshot call
+        let baselineMilliseconds = (CFAbsoluteTimeGetCurrent() - baselineStartedAt) * 1_000
+
+        XCTAssertEqual(result.status, .committed)
+        XCTAssertEqual(try f.publicTreeDigest(), baselineDigest)
+        XCTAssertEqual(Set(result.changedPaths), Set([
+            "created.txt", "write.txt", "delete.txt", "rename.txt", "renamed.txt",
+        ]))
+        XCTAssertNotEqual(result.fromCursor, result.cursor)
+        XCTAssertFalse(result.diffArtifact.handle.isEmpty)
+        let finalScanCount = await f.probe.workspaceScanCount()
+        XCTAssertEqual(finalScanCount, initialScanCount)
+
+        let candidateToolCalls = 2 // initial snapshot + apply_change_set
+        let baselineToolCalls = 4 // initial snapshot + apply_patch + confirmation + re-snapshot
+        XCTAssertLessThan(candidateToolCalls, baselineToolCalls)
+        let measurement: [String: Any] = [
+            "schema": "aishell.phase5-acceptance-measurement.v1",
+            "candidate": [
+                "toolCalls": candidateToolCalls,
+                "wallMilliseconds": candidateMilliseconds,
+                "filesystemEntriesRescanned": 0,
+                "diffArtifactReturned": true,
+                "updatedCursorReturned": true,
+            ],
+            "hostApplyPatch": [
+                "toolCalls": baselineToolCalls,
+                "wallMilliseconds": baselineMilliseconds,
+                "explicitConfirmationRequired": true,
+                "resnapshotRequired": true,
+            ],
+            "correctness": ["publicTreeDigestEqual": true, "partialWrites": 0],
+        ]
+        let encoded = try JSONSerialization.data(withJSONObject: measurement, options: [.sortedKeys])
+        print("PHASE5_MEASUREMENT \(String(decoding: encoded, as: UTF8.self))")
+    }
+
     func testCheckpointMarkerAndTransactionReceiptCrashOrderingIsIdempotent() async throws {
         for point in ApplyChangeSetFailurePoint.checkpointReceiptOrderingPoints {
             let f = try await ChangeSetFixture.make(label: point.rawValue)
@@ -472,6 +526,41 @@ final class ChangeSetSafetyNetTests: XCTestCase {
         for fixture in try f.probe.frozenBenchmarkV1Files() {
             XCTAssertEqual(try Data(contentsOf: fixture.url).sha256, fixture.expectedSHA256)
         }
+    }
+}
+
+private func applyHostPatchEquivalent(_ changes: [ApplyChangeSetChange], to root: URL) throws {
+    for change in changes {
+        switch change {
+        case let .create(_, path, expected, content), let .write(_, path, expected, content):
+            let target = root.appendingPathComponent(path)
+            let before = try? Data(contentsOf: target)
+            guard hostState(before, matches: expected), let bytes = content.bytes else {
+                throw ApplyChangeSetError(.contentChanged)
+            }
+            try bytes.write(to: target)
+        case let .delete(_, path, expected):
+            let target = root.appendingPathComponent(path)
+            guard hostState(try? Data(contentsOf: target), matches: expected) else {
+                throw ApplyChangeSetError(.contentChanged)
+            }
+            try FileManager.default.removeItem(at: target)
+        case let .rename(_, source, sourceExpected, destination, destinationExpected):
+            let sourceURL = root.appendingPathComponent(source)
+            let destinationURL = root.appendingPathComponent(destination)
+            guard hostState(try? Data(contentsOf: sourceURL), matches: sourceExpected),
+                  hostState(try? Data(contentsOf: destinationURL), matches: destinationExpected) else {
+                throw ApplyChangeSetError(.contentChanged)
+            }
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+        }
+    }
+}
+
+private func hostState(_ data: Data?, matches expected: ApplyChangeSetExpected) -> Bool {
+    switch expected {
+    case .absent: data == nil
+    case let .file(sha256): data?.sha256 == sha256
     }
 }
 

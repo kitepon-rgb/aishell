@@ -1,8 +1,114 @@
-import AIShellCore
+import CryptoKit
 import XCTest
+@testable import AIShellCore
 @testable import AIShellMCP
 
 final class MCPApplyChangeSetWireTests: XCTestCase {
+    func testPublicWorkspaceCursorAppliesManagedTransactionWithoutClientPlumbingOrRescan() async throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aishell-mcp-managed-change-set-\(UUID().uuidString)", isDirectory: true)
+        let root = temporary.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let source = root.appendingPathComponent("one.txt")
+        try Data("before".utf8).write(to: source)
+        let stateBase = temporary.appendingPathComponent("state", isDirectory: true)
+        let store = RuntimeStore(baseDirectory: stateBase)
+        try await store.setAllowedRoot(root)
+        let workspaceRuntime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let development = DevelopmentRuntimeService(runtimeStore: store, workspaceRuntime: workspaceRuntime)
+        let server = MCPServer(
+            runtimeStore: store,
+            capabilitySet: "expanded-v1",
+            developmentRuntime: development
+        )
+        let rootDigest = SHA256.hash(data: Data(root.path.utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let changeSetState = stateBase.appendingPathComponent("apply-change-set", isDirectory: true)
+            .appendingPathComponent(rootDigest, isDirectory: true)
+        defer {
+            ApplyChangeSetSecretStore.removeKeyForTesting(stateDirectory: changeSetState)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+
+        let snapshot = await server.callTool(id: .number(1), params: .object([
+            "name": .string("workspace_snapshot"),
+            "arguments": .object(["path": .string(root.path), "context_budget": .number(0)])
+        ]))
+        let workspaceCursor = try XCTUnwrap(
+            snapshot.result?.objectValue?["structuredContent"]?.objectValue?["cursor"]?.stringValue
+        )
+        let initialScanCount = await workspaceRuntime.scanInvocationCountForTests()
+        let beforeSHA = SHA256.hash(data: Data("before".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+
+        let response = await server.callTool(id: .number(2), params: .object([
+            "name": .string("apply_change_set"),
+            "arguments": .object([
+                "path": .string(root.path),
+                "workspace_cursor": .string(workspaceCursor),
+                "changes": .array([
+                    .object([
+                        "change_id": .string("write-one"), "operation": .string("write"),
+                        "path": .string("one.txt"),
+                        "expected": .object(["state": .string("file"), "sha256": .string(beforeSHA)]),
+                        "content": .object(["encoding": .string("utf8"), "data": .string("after")])
+                    ]),
+                    .object([
+                        "change_id": .string("create-two"), "operation": .string("create"),
+                        "path": .string("two.txt"),
+                        "expected": .object(["state": .string("absent")]),
+                        "content": .object(["encoding": .string("utf8"), "data": .string("two")])
+                    ])
+                ])
+            ])
+        ]))
+        let result = try XCTUnwrap(response.result?.objectValue)
+        let structured = try XCTUnwrap(result["structuredContent"]?.objectValue)
+        XCTAssertEqual(result["isError"], .bool(false), "\(structured)")
+        let updatedWorkspaceCursor = try XCTUnwrap(structured["workspace_cursor"]?.stringValue)
+        XCTAssertEqual(structured["status"], .string("committed"))
+        XCTAssertEqual(structured["workspace_from_cursor"], .string(workspaceCursor))
+        XCTAssertNotEqual(updatedWorkspaceCursor, workspaceCursor)
+        XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "after")
+        XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("two.txt"), encoding: .utf8), "two")
+
+        let delta = await server.callTool(id: .number(3), params: .object([
+            "name": .string("workspace_snapshot"),
+            "arguments": .object([
+                "path": .string(root.path), "since_cursor": .string(workspaceCursor),
+                "context_budget": .number(0)
+            ])
+        ]))
+        let changes = try XCTUnwrap(
+            delta.result?.objectValue?["structuredContent"]?.objectValue?["changes"]?.arrayValue
+        )
+        XCTAssertEqual(Set(changes.compactMap { $0.objectValue?["path"]?.stringValue }), Set(["one.txt", "two.txt"]))
+        let finalScanCount = await workspaceRuntime.scanInvocationCountForTests()
+        XCTAssertEqual(finalScanCount, initialScanCount)
+
+        let stale = await server.callTool(id: .number(4), params: .object([
+            "name": .string("apply_change_set"),
+            "arguments": .object([
+                "path": .string(root.path),
+                "workspace_cursor": .string(workspaceCursor),
+                "changes": .array([.object([
+                    "change_id": .string("stale-create"), "operation": .string("create"),
+                    "path": .string("must-not-exist.txt"),
+                    "expected": .object(["state": .string("absent")]),
+                    "content": .object(["encoding": .string("utf8"), "data": .string("no")])
+                ])])
+            ])
+        ]))
+        XCTAssertEqual(
+            stale.result?.objectValue?["structuredContent"]?.objectValue?["error"]?
+                .objectValue?["code"],
+            .string("WORKSPACE_CHANGED")
+        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: root.appendingPathComponent("must-not-exist.txt").path
+        ))
+    }
+
     func testApplyChangeSetSchemaIsClosedDestructiveAndIdempotent() throws {
         let tools = try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1")
         let tool = try XCTUnwrap(tools.first { $0.name == "apply_change_set" })
@@ -13,6 +119,15 @@ final class MCPApplyChangeSetWireTests: XCTestCase {
         let input = try XCTUnwrap(tool.inputSchema.objectValue)
         XCTAssertEqual(input["additionalProperties"], .bool(false))
         let properties = try XCTUnwrap(input["properties"]?.objectValue)
+        XCTAssertNil(properties["client_id"])
+        XCTAssertNil(properties["client_epoch"])
+        XCTAssertNil(properties["request_sequence"])
+        XCTAssertNotNil(properties["path"])
+        XCTAssertNotNil(properties["workspace_cursor"])
+        XCTAssertEqual(
+            Set(input["required"]?.arrayValue?.compactMap(\.stringValue) ?? []),
+            Set(["path", "workspace_cursor", "changes"])
+        )
         XCTAssertEqual(properties["changes"]?.objectValue?["minItems"], .number(1))
         XCTAssertEqual(properties["changes"]?.objectValue?["maxItems"], .number(128))
         let variants = properties["changes"]?.objectValue?["items"]?.objectValue?["oneOf"]?.arrayValue

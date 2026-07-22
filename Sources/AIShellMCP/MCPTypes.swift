@@ -489,19 +489,8 @@ enum ToolCatalog {
         tool(
             "apply_change_set", "複数fileを原子的に変更", "一つの許可root内のcreate、write、delete、renameをexpected SHAとworkspace cursorで固定し、durable transactionとして適用します。途中失敗を部分成功へ丸めず、完全diff artifactと更新後cursorを返します。",
             properties: [
-                "client_id": string("管理appで割り当てたcanonical lowercase UUID v4"),
-                "client_epoch": integer("owner承認済みclient epoch", minimum: 1, maximum: 9_007_199_254_740_991),
-                "request_sequence": integer("client epoch内の連続sequence", minimum: 1, maximum: 9_007_199_254_740_991),
-                "cursor": .object([
-                    "type": .string("object"),
-                    "required": .array([.string("root"), .string("generation"), .string("sequence")]),
-                    "properties": .object([
-                        "root": string("対象canonical root"),
-                        "generation": string("workspace generation"),
-                        "sequence": integer("workspace journal sequence", minimum: 0)
-                    ]),
-                    "additionalProperties": .bool(false)
-                ]),
+                "path": string("workspace_snapshotと同じ対象canonical root"),
+                "workspace_cursor": string("workspace_snapshotが返したopaque cursor。cursor以後に変更があれば適用しない"),
                 "changes": .object([
                     "type": .string("array"), "minItems": .number(1), "maxItems": .number(128),
                     "items": .object([
@@ -516,17 +505,18 @@ enum ToolCatalog {
                 "diff_byte_budget": integer("通常resultへ含めるitem単位preview budget", minimum: 1, maximum: 1_048_576),
                 "retention_seconds": integer("完全diff artifactの保持秒", minimum: 1, maximum: 604_800)
             ],
-            required: ["client_id", "client_epoch", "request_sequence", "cursor", "changes"],
+            required: ["path", "workspace_cursor", "changes"],
             destructive: true, idempotent: true,
             outputSchema: objectOutput(
                 schemaVersion: "aishell.apply-change-set.v1",
-                required: ["schemaVersion", "transaction_id", "client_id", "client_epoch", "request_sequence", "status", "visibility", "root", "from_cursor", "cursor", "changes", "changed_paths", "transaction_cursor_advanced", "summary", "diff_preview", "returned_diff_bytes", "omitted_diff_bytes", "has_more", "diff_artifact"],
+                required: ["schemaVersion", "transaction_id", "client_id", "client_epoch", "request_sequence", "status", "visibility", "root", "from_cursor", "cursor", "workspace_from_cursor", "workspace_cursor", "changes", "changed_paths", "transaction_cursor_advanced", "summary", "diff_preview", "returned_diff_bytes", "omitted_diff_bytes", "has_more", "diff_artifact"],
                 properties: [
                     "transaction_id": nullableType("string"), "client_id": nullableType("string"),
                     "client_epoch": nullableType("integer"), "request_sequence": type("integer"),
                     "status": enumType(["committed", "aborted_before_side_effect", "recovery_required"]),
                     "visibility": enumType(["aishell_serialized_recoverable"]), "root": nullableType("string"),
                     "from_cursor": type("object"), "cursor": type("object"), "changes": type("array"),
+                    "workspace_from_cursor": type("string"), "workspace_cursor": type("string"),
                     "changed_paths": type("array"), "transaction_cursor_advanced": type("boolean"),
                     "summary": nullableType("object"), "diff_preview": nullableType("string"),
                     "returned_diff_bytes": type("integer"), "omitted_diff_bytes": type("integer"),

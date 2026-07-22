@@ -103,6 +103,18 @@ public struct ApplyChangeSetClient: Codable, Equatable, Sendable {
     public let slot: Int
 }
 
+public struct ManagedApplyChangeSetResult: Sendable {
+    public let transaction: ApplyChangeSetResult
+    public let workspaceFromCursor: String
+    public let workspaceCursor: String
+
+    public init(transaction: ApplyChangeSetResult, workspaceFromCursor: String, workspaceCursor: String) {
+        self.transaction = transaction
+        self.workspaceFromCursor = workspaceFromCursor
+        self.workspaceCursor = workspaceCursor
+    }
+}
+
 public struct ApplyChangeSetTransactionID: Codable, Equatable, Hashable, Sendable, CustomStringConvertible {
     public let rawValue: String
     public init(_ rawValue: String = UUID().uuidString.lowercased()) { self.rawValue = rawValue }
@@ -2540,6 +2552,75 @@ public actor ApplyChangeSetService {
         try await withOperationGate { try await applyUnlocked(request) }
     }
 
+    public func applyManaged(
+        root: URL,
+        workspaceCursor: String,
+        changes: [ApplyChangeSetChange],
+        diffByteBudget: Int,
+        retentionSeconds: Int
+    ) async throws -> ManagedApplyChangeSetResult {
+        try await withOperationGate {
+            let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()
+            guard canonicalRoot.path == state.root.standardizedFileURL.resolvingSymlinksInPath().path else {
+                throw ApplyChangeSetError(.rootMismatch)
+            }
+            let observed = try await workspaceRuntime.snapshot(
+                path: canonicalRoot.path,
+                sinceCursor: workspaceCursor
+            )
+            guard observed.changes.isEmpty else {
+                throw ApplyChangeSetError(.workspaceChanged)
+            }
+            try await ensureDedicatedStoreCutover()
+            var registry = await clientRegistry.snapshot()
+            var slot = registry.slots
+                .filter { $0.allocationState == .active }
+                .min { $0.number < $1.number }
+            if slot == nil {
+                let controlRequestID = UUID().uuidString.lowercased()
+                let now = await clock.now()
+                registryClock.set(now)
+                let proofDigest = Data("managed-mcp-client:\(controlRequestID)".utf8).applySHA256
+                do {
+                    _ = try await clientRegistry.allocate(
+                        controlRequestID: controlRequestID,
+                        proofIDDigest: proofDigest,
+                        proofExpiresAt: now.addingTimeInterval(300),
+                        expectedRegistryGeneration: registry.generation
+                    )
+                } catch let error as ChangeSetClientRegistryError {
+                    throw Self.mapRegistryError(error)
+                }
+                registry = await clientRegistry.snapshot()
+                slot = registry.slots
+                    .filter { $0.allocationState == .active }
+                    .min { $0.number < $1.number }
+            }
+            guard let slot else {
+                throw ApplyChangeSetError(.changeSetClientCapacityExceeded)
+            }
+            let request = ApplyChangeSetRequest(
+                clientID: slot.clientID,
+                clientEpoch: Int(slot.currentEpoch),
+                requestSequence: Int(slot.highWater + 1),
+                cursor: try await currentCursorUnlocked(root: canonicalRoot),
+                changes: changes,
+                diffByteBudget: diffByteBudget,
+                retentionSeconds: retentionSeconds
+            )
+            let result = try await applyUnlocked(request)
+            let after = try await workspaceRuntime.snapshot(
+                path: canonicalRoot.path,
+                sinceCursor: workspaceCursor
+            )
+            return ManagedApplyChangeSetResult(
+                transaction: result,
+                workspaceFromCursor: workspaceCursor,
+                workspaceCursor: after.cursor
+            )
+        }
+    }
+
     private func applyUnlocked(_ request: ApplyChangeSetRequest) async throws -> ApplyChangeSetResult {
         try await ensureDedicatedStoreCutover()
         try await state.repairPendingJournals()
@@ -2873,6 +2954,7 @@ public actor ApplyChangeSetService {
         try await ensureDedicatedStoreCutover()
         try await state.repairPendingJournals()
         let now = await clock.now()
+        registryClock.set(now)
         let proof = try secretStore.verifyOwnerProof(request.ownerProof, request: request, root: state.root, now: now)
         do {
             switch try await legacyControlStore.lookup(controlRequestID: request.controlRequestID,
