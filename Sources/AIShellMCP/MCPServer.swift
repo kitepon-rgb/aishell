@@ -2,7 +2,7 @@ import AIShellCore
 import CryptoKit
 import Foundation
 
-final class MCPServer {
+final class MCPServer: @unchecked Sendable {
     private let store: RuntimeStore
     private let toolProfile: String
     private let capabilitySet: String?
@@ -26,29 +26,32 @@ final class MCPServer {
     }
 
     func run() async {
+        let writer = MCPResponseWriter()
         do {
             try validateStartup()
         } catch {
-            try? write(.failure(id: .null, code: -32000, message: error.localizedDescription))
+            try? await writer.write(.failure(id: .null, code: -32000, message: error.localizedDescription))
             return
+        }
+        let scheduler = MCPRequestScheduler(writer: writer) { [self] request in
+            await handle(request)
         }
         while let line = readLine() {
             guard let data = line.data(using: .utf8) else { continue }
 
             do {
                 let request = try JSONDecoder.aishell.decode(JSONRPCRequest.self, from: data)
-                if let response = await handle(request) {
-                    try write(response)
-                }
+                await scheduler.submit(request)
             } catch {
                 let response = JSONRPCResponse.failure(
                     id: .null,
                     code: -32700,
                     message: "JSON-RPCを解析できません: \(error.localizedDescription)"
                 )
-                try? write(response)
+                try? await writer.write(response)
             }
         }
+        await scheduler.waitUntilIdle()
     }
 
     private func handle(_ request: JSONRPCRequest) async -> JSONRPCResponse? {
@@ -1144,9 +1147,4 @@ final class MCPServer {
         return .object(object)
     }
 
-    private func write(_ response: JSONRPCResponse) throws {
-        let data = try JSONEncoder.aishell.encode(response)
-        FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.write(Data([0x0A]))
-    }
 }
