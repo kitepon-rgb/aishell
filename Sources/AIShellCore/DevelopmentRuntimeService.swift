@@ -696,7 +696,7 @@ public actor DevelopmentRuntimeService {
         let capturedDescriptor = descriptor
         let capturedArguments = arguments
         let capturedProfile = profile
-        let capturedEnvironment = effectiveEnvironment
+        let capturedEnvironmentOverrides = environment
         let capturedCatalogRoot = catalogRoot
         let capturedRelevantInput = relevantInput
         let capturedPolicy = executionPolicy
@@ -713,7 +713,7 @@ public actor DevelopmentRuntimeService {
                     descriptor: capturedDescriptor,
                     arguments: capturedArguments,
                     profile: capturedProfile,
-                    environment: capturedEnvironment,
+                    environment: ProcessInfo.processInfo.environment.merging(capturedEnvironmentOverrides) { _, override in override },
                     catalogRoot: capturedCatalogRoot,
                     relevantInputDigest: try? await capturedRelevantInput?.reobserveDigest(),
                     executionPolicy: capturedPolicy

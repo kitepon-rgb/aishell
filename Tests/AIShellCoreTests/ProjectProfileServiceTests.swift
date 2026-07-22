@@ -565,6 +565,97 @@ final class ProjectProfileServiceTests: XCTestCase {
         XCTAssertTrue(check.inputContract.reason?.contains("effect完全性") == true)
     }
 
+    func testNPMManifestCanDeclareClosedDirectCheckAndRelevantInputs() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "export const value = 1\n".write(
+            to: root.appendingPathComponent("src/value.mjs"), atomically: true, encoding: .utf8
+        )
+        try "import './src/value.mjs'\n".write(
+            to: root.appendingPathComponent("check.mjs"), atomically: true, encoding: .utf8
+        )
+        try writeDeclaredPackage(at: root, includedRoots: ["src/value.mjs", "check.mjs"])
+        let service = try await makeService(root: root, fixture: fixture)
+
+        let result = try await service.catalog(rootPath: root.path, observedCursor: cursor(1))
+        let check = try XCTUnwrap(result.profiles.first?.checks.first)
+        XCTAssertEqual(check.kind, "test")
+        XCTAssertEqual(URL(fileURLWithPath: check.executable).lastPathComponent, "node")
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: check.executable))
+        XCTAssertEqual(check.arguments, ["check.mjs"])
+        XCTAssertEqual(check.environmentKeys, ["MODE"])
+        XCTAssertEqual(check.inputContract.completeness, .complete)
+        XCTAssertEqual(check.inputContract.effectCompleteness, .projectRootClosed)
+        XCTAssertEqual(check.inputContract.provider, "npm-manifest")
+        XCTAssertEqual(check.inputContract.includedRoots, ["check.mjs", "src/value.mjs"])
+        XCTAssertTrue(check.inputContract.trackedPaths.isEmpty)
+        XCTAssertNil(check.inputContract.reason)
+    }
+
+    func testNPMManifestRejectsEscapingClosedInputDeclaration() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try writeDeclaredPackage(at: root, includedRoots: ["../outside"])
+        let service = try await makeService(root: root, fixture: fixture)
+
+        let result = try await service.catalog(rootPath: root.path, observedCursor: cursor(1))
+        let profile = try XCTUnwrap(result.profiles.first)
+        XCTAssertEqual(profile.status, .invalid)
+        XCTAssertTrue(profile.checks.isEmpty)
+        XCTAssertEqual(profile.diagnostics.first?.code, "PROJECT_MANIFEST_INVALID")
+    }
+
+    func testNPMManifestRejectsShellExecutableNULAndInvalidEnvironmentKeys() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try writeDeclaredPackage(
+            at: root.appendingPathComponent("npm"), includedRoots: ["check.mjs"], executable: "npm"
+        )
+        try writeDeclaredPackage(
+            at: root.appendingPathComponent("nul"), includedRoots: ["bad\0path"]
+        )
+        try writeDeclaredPackage(
+            at: root.appendingPathComponent("environment"), includedRoots: ["check.mjs"],
+            environmentKeys: ["BAD=KEY"]
+        )
+        let service = try await makeService(root: root, fixture: fixture)
+
+        let result = try await service.catalog(rootPath: root.path, observedCursor: cursor(1))
+        XCTAssertEqual(result.profiles.count, 3)
+        XCTAssertTrue(result.profiles.allSatisfy { profile in
+            profile.status == .invalid && profile.checks.isEmpty
+                && profile.diagnostics.first?.code == "PROJECT_MANIFEST_INVALID"
+        })
+    }
+
+    func testDeclaredEnvironmentValueInvalidatesProfileBinding() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try writeDeclaredPackage(at: root, includedRoots: ["check.mjs"])
+        let previous = getenv("MODE").map { String(cString: $0) }
+        defer {
+            if let previous { setenv("MODE", previous, 1) }
+            else { unsetenv("MODE") }
+        }
+        setenv("MODE", "first", 1)
+        let service = try await makeService(root: root, fixture: fixture)
+        let first = try await service.catalog(rootPath: root.path, observedCursor: cursor(1))
+        let before = try XCTUnwrap(first.profiles.first)
+
+        setenv("MODE", "second", 1)
+        let second = try await service.catalog(rootPath: root.path, observedCursor: cursor(2))
+        let after = try XCTUnwrap(second.profiles.first)
+
+        XCTAssertEqual(after.freshness, .freshComputed)
+        XCTAssertNotEqual(after.profileDigest, before.profileDigest)
+        XCTAssertTrue(after.invalidationReasons.contains { $0.kind == "provider_or_environment_changed" })
+    }
+
     private func workspace(in fixture: TemporaryFixture) throws -> URL {
         let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -598,6 +689,33 @@ final class ProjectProfileServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         var object: [String: Any] = ["name": name, "scripts": scripts]
         if let workspaces { object["workspaces"] = workspaces }
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: root.appendingPathComponent("package.json"), options: .atomic)
+    }
+
+    private func writeDeclaredPackage(
+        at root: URL,
+        includedRoots: [String],
+        executable: String = "node",
+        environmentKeys: [String] = ["MODE"]
+    ) throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let object: [String: Any] = [
+            "name": "declared-package",
+            "aishell": [
+                "schemaVersion": "aishell.package-profile.v1",
+                "checks": [
+                    "test": [
+                        "executable": executable,
+                        "arguments": ["check.mjs"],
+                        "environmentKeys": environmentKeys,
+                        "includedRoots": includedRoots,
+                        "trackedPaths": [],
+                        "effects": "project_root_closed",
+                    ],
+                ],
+            ],
+        ]
         let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: root.appendingPathComponent("package.json"), options: .atomic)
     }

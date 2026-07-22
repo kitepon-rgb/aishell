@@ -57,7 +57,7 @@ assert.deepEqual(first.tasks, [
 ]);
 assert.deepEqual(first.frozenInputs, {
   suiteSHA256: '201958f03dc3b85ea6bfe9cca3b5edfec88124da8a790539639465fab8f46cf7',
-  fixtureCatalogSHA256: '630680d817d8fbc767072efde5844027534c0de4536fa301ecd0e9165637d5b9',
+  fixtureCatalogSHA256: 'def2454c3e56917812c0cb07c67523a4b90d15c1f24f4834c5ff6fa189b03982',
   taskGoalsSHA256: '810103d0f1358685db035f6f1f711895f411c21e15ba0f8b9de1c3a6761d8e5d',
   executionContractsSHA256: 'aa02c3d604dbad28c182ff9ae1df836b7781d671b199a48f3df3e7a4fe3f6163',
 });

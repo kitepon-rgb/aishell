@@ -58,3 +58,18 @@ fixture oracleは成功だけでなく、silent fallback、false-fresh、partial
 能力固有の禁止結果も固定する。
 
 このfreezeは比較設計の受入であり、288 attemptの実行結果やproduct gate成功は主張しない。
+
+## Phase 3 production profile amendment（2026-07-22）
+
+ACE-035のproduction preflightで、freshness-cache fixtureにはProjectProfileServiceが解釈できるmanifestがなく、
+focused-pipeline fixtureにもproject profile境界がなかったことを実測した。合成profileをharnessへ注入せず、製品側の
+正式な`aishell.package-profile.v1` contractを採用したため、次の範囲だけfixture catalogを改訂した。
+
+- freshness-cache: `package.json`へdirect `node check.mjs`、空のclosed environment集合、exact input 2件、`project_root_closed`を明示
+- focused-pipeline: `package.json`へnpm project境界と既存test scriptを明示
+- task ID、scenario mutation、oracle、model-visible goal、execution contract、suite順序は不変
+- fixture catalog SHA-256: `def2454c3e56917812c0cb07c67523a4b90d15c1f24f4834c5ff6fa189b03982`
+
+旧SHA `630680d817d8fbc767072efde5844027534c0de4536fa301ecd0e9165637d5b9`およびpreflight中間SHA
+`6740caa417ad898736d55cc1d4744986bb986f945ead7e09231366b53fe0f8f9`を新bytesへ流用しない。
+Phase 3 manifestは新SHAへexact bindし、旧fixture catalogで得たattemptと混在させない。

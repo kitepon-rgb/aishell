@@ -127,6 +127,10 @@ The full profile includes file listing and reads, atomic SHA-256-guarded updates
 - AIShell never evaluates a shell command string. It resolves a development program from `PATH` to an executable URL and keeps arguments, environment, and working directory separate.
 - Direct launch of shell and wrapper basenames such as `sh`, `bash`, `zsh`, `env`, and `osascript` is rejected as a product rail, not advertised as a security boundary.
 - `run_check` is an open-world capability: an allowed worker may update files, launch child processes, or access the network. AI hosts may require approval before execution.
+- npm projects may opt a `build`, `test`, or `lint` check into freshness caching with the closed
+  direct-Node `package.json` declaration documented in `docs/adr/0009-project-profile-contract.md`. Ordinary npm
+  scripts remain executable but cache-ineligible; AIShell does not infer arguments, inputs, or effects
+  from shell script text.
 - Text updates may use SHA-256 or expected old text as a precondition. Deletes go to Trash.
 - The manager app can stop normal operations globally. Runtime status and manager activation remain available while stopped.
 

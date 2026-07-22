@@ -2,7 +2,7 @@
 
 ## 結論
 
-Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。初回preflightの3 blockerのうちactual provider modelとMCP original bytesは正規観測面を追加して解消した。ただし、凍結fixtureのproduction profile入力不足は残るため実model runは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
+Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。初回preflightのactual provider model、MCP original bytes、production profile入力の全blockerを正規の製品／観測契約で解消した。release binaryを使うsingle candidate preflightも成功した。ただし54実model attemptとexternal oracle aggregationは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
 
 requested model名、合成profile、canonical再serializationを証拠の代用にしない。
 
@@ -47,14 +47,17 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 ## focused verification
 
 - `Phase3AcceptanceTests`: 6件成功
-- representative runner、Codex executor、acceptance aggregator、production harness、local callbacks: 5 test file成功
+- ProjectProfileServiceTests: 23件成功、DevelopmentRuntimeServiceTests: 3件成功
+- capability materializer/oracle/observer、representative runner、Codex executor、acceptance aggregator、production harness、local callbacks、MCP wire tap: 9 test file成功
 - executor self-test: 63 fake invocation、うち54 attemptの統合経路成功
 - production harness self-test: runner → executor → observer → oracle → aggregatorの54 attempt統合成功
 - static import provider: 13件成功
 - production v2 adapter: 13件成功
 - materializer: 32 task valid
 - Node syntax、JSON schema、`git diff --check`: 成功
-- 最終read-only反証: 確実なP0–P2残存なし
+- release package build: 成功
+- actual release binary＋actual MCP single candidate preflight: exact profile/check解決、`miss_executed`、process 1、publication 1で成功
+- read-only反証のenvironment closure、npm shell迂回、NUL fail-late、profile environment失効を修正し、最終再監査で確実なP0–P2残存なし
 
 fake process/MCPを使うself-testは実model成功を主張しない。
 
@@ -63,11 +66,10 @@ fake process/MCPを使うself-testは実model成功を主張しない。
 1. Codex CLI 0.144.6のstdout JSONLにはactual provider modelがなかったが、provider WebSocket受信frameにactual `response.model`とusageが存在することを実測し、`response.created/completed`だけをbyte抽出した専用provider SSE JSONLへのbinding付きparserを追加した。requested `gpt-5.6-sol`は引き続き代用しない。
 2. Codex JSONLはMCP resultをhost objectへ変換するが、透過stdio tapでAIShellのoriginal JSON-RPC bytesを保持できることを実Codex＋実AIShellで確認した。canonical再serializationは使わない。
 3. 実probeでharnessの`runtime.json.updatedAt`が不正形式だったことも発見し、固定ISO 8601値へ修正した。
+4. `aishell.package-profile.v1`を製品契約として追加し、direct Node argv、closed relevant inputs、environment key集合、`project_root_closed` effectをpackage manifestから明示できるようにした。通常npm scriptは引き続きcache ineligibleであり、`npm` executable、未知field、root escape、NUL、不正environment keyをmanifest parse時に拒否する。
+5. freshness/focused fixtureへproduction manifestを追加し、fixture catalog SHAを正式改訂した。oracle、task、scenario mutation、prompt、execution contractは変えていない。合成catalog/checkは使わない。
+6. production wireでは`lookupEvidence.ineligibilityReason`がnil時にfield自体を省略するため、harness validatorを現行Codable wireへ合わせた。値の意味検証は維持する。
 
-## 残る実行blocker
+## 次の実行gate
 
-凍結freshness-cache/focused-pipeline fixtureはproject manifestを含まず、production ProjectProfileServiceがprofile/checkを生成できない。さらにmanifestを単純追加しても解消しない。production npm providerのcheckは`npm run <kind> --`であり、`exactFixtureCheck`が要求する`node check.mjs`とは一致しない。またcomplete input contractはtest-only injectionがないrelease経路では`ineligible`になる。合成catalog/checkは禁止する。
-
-解消には、cache eligibleなprofile checkとclosed relevant-input contractをproduction manifestから宣言・検証する製品契約を追加するか、production providerの実command／eligibilityに合わせて凍結benchmark契約を正式改訂するowner裁定が必要。fixtureへのmanifest追加だけで通過扱いにしない。
-
-この入力契約を正式に改訂するまでは54 model attemptを開始しない。解消後はcandidate commitを再freezeし、1 attempt preflight、54 attempt、external oracle aggregationの順で実行する。
+candidate commitを再freezeしてbinary/catalog digestを再採取し、54実model attempt、external oracle aggregationの順で実行する。preflight blockerは残っていない。

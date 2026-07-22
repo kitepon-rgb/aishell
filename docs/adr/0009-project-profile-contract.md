@@ -148,6 +148,37 @@ script本文、resolved executable、arguments、environment、toolchain、provi
 変えるが、logical entrypoint descriptorが同じならIDを維持する。script rename、kind／scope変更、profile／target ID変更では
 新IDになる。ID descriptor又はcanonicalizationを変える時はschemaを上げ、旧IDを新規則で黙って再解釈しない。
 
+npm projectがcheckをfreshness cache対象へ明示昇格する時だけ、`package.json`に次のclosed宣言を置ける。
+通常の`scripts`は従来どおり`npm run <kind> --`として実行可能だが、shell scriptのeffectとrelevant input closureを
+証明できないため`ineligible`のままとする。AIShellはscript本文からargvや入力を推測しない。
+
+```json
+{
+  "aishell": {
+    "schemaVersion": "aishell.package-profile.v1",
+    "checks": {
+      "test": {
+        "executable": "node",
+        "arguments": ["check.mjs"],
+        "environmentKeys": [],
+        "includedRoots": ["check.mjs", "src/value.mjs"],
+        "trackedPaths": [],
+        "effects": "project_root_closed"
+      }
+    }
+  }
+}
+```
+
+v1は`build | test | lint`とdirect `node`だけを受理する。`npm`はscript shellとtransitive executableを閉じられないため
+明示宣言でも拒否する。各objectは追加fieldを拒否し、argumentsのNULを拒否する。`environmentKeys`はcheckが結果へ
+影響すると宣言した環境変数名のclosed集合であり、値をprofile bindingとrun cache bindingの両方へ含める。未設定と
+空文字列は別状態として束縛する。input pathはNFCの
+project-relative canonical path、重複なし、`..`／absolute／backslashなしでなければならない。`includedRoots`は
+1件以上を必須とし、`trackedPaths`との重複を拒否する。`effects`は`project_root_closed`だけであり、宣言全体が
+正しく検証できたcheckだけを`complete`へ昇格する。未知schema、未知kind、未解決executable、open effect、不正pathは
+manifest errorとしてfail-closedにし、通常scriptや推測contractへfallbackしない。
+
 SwiftPM providerは`Package.swift`の静的parseだけで完全を主張しない。許可された`swift package dump-package`を
 shellなしで起動し、target graphを取得する。npm providerは`package.json`とlockfile/workspace宣言からprofileを作り、
 依存installやlifecycle scriptを実行しない。probe stdout/stderrの完全bytesは`expires_at`付きartifactとして保持し、

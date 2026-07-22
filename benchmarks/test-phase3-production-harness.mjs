@@ -31,6 +31,8 @@ const runDirectory = path.join(root, 'run');
 const artifactStore = path.join(root, 'artifacts');
 await Promise.all([workspace, stateDirectory, runDirectory, artifactStore].map((directory) => mkdir(directory)));
 await mkdir(path.join(workspace, 'src'));
+const packageManifest = '{"name":"freshness-cache-fixture","aishell":{"schemaVersion":"aishell.package-profile.v1","checks":{"test":{"executable":"node","arguments":["check.mjs"],"environmentKeys":[],"includedRoots":["check.mjs","src/value.mjs"],"trackedPaths":[],"effects":"project_root_closed"}}}}\n';
+await writeFile(path.join(workspace, 'package.json'), packageManifest);
 await writeFile(path.join(workspace, 'check.mjs'), "import { value } from './src/value.mjs';\n");
 await writeFile(path.join(workspace, 'src/value.mjs'), 'export const value = 1;\n');
 const baselineManifest = await captureManifest(workspace);
@@ -48,6 +50,7 @@ const attempt = {
 const frozen = {
   task: { id: attempt.taskID, fixture: 'freshness-cache', scenario: 'input-change' },
   fixture: { id: 'freshness-cache', seedFiles: {
+    'package.json': packageManifest,
     'check.mjs': "import { value } from './src/value.mjs';\n",
     'src/value.mjs': 'export const value = 1;\n',
   } },

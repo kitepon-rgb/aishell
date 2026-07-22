@@ -297,6 +297,13 @@ public actor ProjectProfileService {
         let toolchainIdentity: String?
     }
 
+    private struct DeclaredNPMCheck: Sendable {
+        let executable: URL
+        let arguments: [String]
+        let environmentKeys: [String]
+        let inputContract: ProjectProfileCheckInputContract
+    }
+
     private enum ProviderExecutionError: Error, CustomStringConvertible {
         case memberOutsideAllowedRoot(String)
         case duplicateWorkspaceOwner(String)
@@ -797,9 +804,20 @@ public actor ProjectProfileService {
             }
         }
         let toolchainIdentity = toolchainBindings.isEmpty ? nil : toolchainBindings.joined(separator: "|")
+        var bindingEnvironmentKeys = environmentKeys
+        if candidate.spec.ecosystem == "npm",
+           let data = try? Data(contentsOf: candidate.manifestURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let declared = try? Self.declaredNPMChecks(json: json) {
+            bindingEnvironmentKeys.append(contentsOf: declared.values.flatMap(\.environmentKeys))
+            bindingEnvironmentKeys = Array(Set(bindingEnvironmentKeys)).sorted()
+        }
         var environment: [String: String] = [:]
-        for key in environmentKeys {
-            environment[key] = Self.sha256(Data((ProcessInfo.processInfo.environment[key] ?? "").utf8))
+        let liveEnvironment = ProcessInfo.processInfo.environment
+        for key in bindingEnvironmentKeys {
+            environment[key] = liveEnvironment[key]
+                .map { "set:\(Self.sha256(Data($0.utf8)))" }
+                ?? "absent"
         }
         let object: [String: Any] = [
             "environment": environment,
@@ -982,7 +1000,16 @@ public actor ProjectProfileService {
         guard let node = Self.resolveExecutable("node") else { throw AIShellError.workerUnavailable("node") }
         let toolchain = try await probeToolchain(name: "npm", executable: npm, versionArguments: ["--version"])
         let nodeToolchain = try await probeToolchain(name: "node", executable: node, versionArguments: ["--version"])
+        let declaredChecks = try Self.declaredNPMChecks(json: json)
         let checks = try ["build", "test", "lint"].compactMap { kind -> ProjectProfileCheck? in
+            if let declared = declaredChecks[kind] {
+                return try makeCheck(
+                    candidate: candidate, kind: kind, key: kind,
+                    executable: declared.executable.path, arguments: declared.arguments,
+                    provenance: provenance, environmentKeys: declared.environmentKeys,
+                    inputContract: declared.inputContract
+                )
+            }
             guard scripts[kind] is String else { return nil }
             return try makeCheck(
                 candidate: candidate, kind: kind, key: kind,
@@ -990,6 +1017,79 @@ public actor ProjectProfileService {
             )
         }
         return ([target], checks, [nodeToolchain, toolchain])
+    }
+
+    /// package.jsonの明示宣言だけをcache eligibleなcheckへ昇格する。
+    /// script本文のshell分解や入力推測は行わず、closed argv/input/effectをfail-closedで検証する。
+    private static func declaredNPMChecks(json: [String: Any]) throws -> [String: DeclaredNPMCheck] {
+        guard let rawAIShell = json["aishell"] else { return [:] }
+        guard let aishell = rawAIShell as? [String: Any],
+              Set(aishell.keys) == ["schemaVersion", "checks"],
+              aishell["schemaVersion"] as? String == "aishell.package-profile.v1",
+              let checks = aishell["checks"] as? [String: Any] else {
+            throw AIShellError.invalidArgument("package.json aishell宣言がaishell.package-profile.v1のclosed objectではありません。")
+        }
+        let supportedKinds = Set(["build", "test", "lint"])
+        guard Set(checks.keys).isSubset(of: supportedKinds) else {
+            throw AIShellError.invalidArgument("package.json aishell.checksに未対応kindがあります。")
+        }
+        var result: [String: DeclaredNPMCheck] = [:]
+        for kind in checks.keys.sorted() {
+            guard let check = checks[kind] as? [String: Any],
+                  Set(check.keys) == ["executable", "arguments", "environmentKeys", "includedRoots", "trackedPaths", "effects"],
+                  let executableName = check["executable"] as? String,
+                  executableName == "node",
+                  let executable = resolveExecutable(executableName),
+                  let arguments = check["arguments"] as? [String],
+                  arguments.allSatisfy({ !$0.contains("\0") }),
+                  let environmentKeys = check["environmentKeys"] as? [String],
+                  let includedRoots = check["includedRoots"] as? [String],
+                  let trackedPaths = check["trackedPaths"] as? [String],
+                  check["effects"] as? String == ProjectProfileCheckEffectCompleteness.projectRootClosed.rawValue else {
+                throw AIShellError.invalidArgument("package.json aishell.checks.\(kind)がclosed check宣言ではありません。")
+            }
+            let included = try canonicalContractPaths(includedRoots, field: "includedRoots")
+            let tracked = try canonicalContractPaths(trackedPaths, field: "trackedPaths")
+            let environment = try canonicalEnvironmentKeys(environmentKeys)
+            guard !included.isEmpty, Set(included).isDisjoint(with: Set(tracked)) else {
+                throw AIShellError.invalidArgument("package.json aishell.checks.\(kind)のinput closureが空又は重複しています。")
+            }
+            result[kind] = DeclaredNPMCheck(
+                executable: executable,
+                arguments: arguments,
+                environmentKeys: environment,
+                inputContract: .complete(
+                    provider: "npm-manifest",
+                    providerVersion: "aishell.package-profile.v1",
+                    includedRoots: included,
+                    trackedPaths: tracked
+                )
+            )
+        }
+        return result
+    }
+
+    private static func canonicalContractPaths(_ paths: [String], field: String) throws -> [String] {
+        guard Set(paths).count == paths.count else {
+            throw AIShellError.invalidArgument("package.json aishell checkの\(field)に重複があります。")
+        }
+        for path in paths {
+            let normalized = path.precomposedStringWithCanonicalMapping
+            let components = path.split(separator: "/", omittingEmptySubsequences: false)
+            guard path == normalized, !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"), !path.contains("\0"),
+                  !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }) else {
+                throw AIShellError.invalidArgument("package.json aishell checkの\(field)に非canonical pathがあります: \(path)")
+            }
+        }
+        return paths.sorted()
+    }
+
+    private static func canonicalEnvironmentKeys(_ keys: [String]) throws -> [String] {
+        let valid = /^[A-Za-z_][A-Za-z0-9_]*$/
+        guard Set(keys).count == keys.count, keys.allSatisfy({ $0.wholeMatch(of: valid) != nil }) else {
+            throw AIShellError.invalidArgument("package.json aishell checkのenvironmentKeysが不正です。")
+        }
+        return keys.sorted()
     }
 
     private func parseSwiftPM(
@@ -1057,7 +1157,9 @@ public actor ProjectProfileService {
         key: String,
         executable: String,
         arguments: [String],
-        provenance: ProjectProfileProvenance
+        provenance: ProjectProfileProvenance,
+        environmentKeys declaredEnvironmentKeys: [String]? = nil,
+        inputContract: ProjectProfileCheckInputContract? = nil
     ) throws -> ProjectProfileCheck {
         let id = try Self.stableId([
             "kind": kind, "profile_id": candidate.projectId, "provider_check_key": key,
@@ -1067,9 +1169,10 @@ public actor ProjectProfileService {
             checkId: id, kind: kind, label: key,
             executable: executable, arguments: arguments,
             workingDirectory: candidate.projectRoot.path,
-            environmentKeys: environmentKeys,
+            environmentKeys: declaredEnvironmentKeys ?? environmentKeys,
             provenance: provenance,
-            inputContract: inputContractsForTests["\(candidate.spec.ecosystem)\u{0}\(kind)"]
+            inputContract: inputContract
+                ?? inputContractsForTests["\(candidate.spec.ecosystem)\u{0}\(kind)"]
                 ?? .ineligible(
                     provider: candidate.spec.ecosystem,
                     providerVersion: providerVersion,

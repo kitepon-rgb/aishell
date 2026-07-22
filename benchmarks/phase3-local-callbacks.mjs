@@ -266,7 +266,7 @@ function validateCandidateWarm(result, checkID) {
   const lookup = result.lookupEvidence?.[0];
   exactKeys(step, ['stepID', 'terminalState', 'sourceRunID', 'stdoutArtifactSHA256', 'stderrArtifactSHA256',
     'artifacts', 'skippedBecauseDependencyFailed'], [], 'candidate warm step');
-  exactKeys(lookup, ['stepID', 'status', 'ineligibilityReason'], [], 'candidate warm lookup evidence');
+  exactKeys(lookup, ['stepID', 'status'], ['ineligibilityReason'], 'candidate warm lookup evidence');
   if (result.schemaVersion !== 'aishell.run-check.v2' || !SHA256.test(result.planDigest ?? '')
     || !SHA256.test(result.selectionDigest ?? '') || result.cacheState !== 'miss_executed'
     || result.processesStarted !== 1 || result.publications !== 1
@@ -279,7 +279,7 @@ function validateCandidateWarm(result, checkID) {
     || !step.artifacts.some(({ sha256 }) => sha256 === step.stdoutArtifactSHA256)
     || !step.artifacts.some(({ sha256 }) => sha256 === step.stderrArtifactSHA256)
     || result.lookupEvidence?.length !== 1 || lookup.stepID !== checkID || lookup.status !== 'miss'
-    || lookup.ineligibilityReason !== null) {
+    || lookup.ineligibilityReason != null) {
     throw new Error('candidate warm run did not execute and retain one successful freshness publication');
   }
 }
