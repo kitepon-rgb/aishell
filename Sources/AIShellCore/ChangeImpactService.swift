@@ -201,6 +201,7 @@ public struct ChangeImpactProviderReport: Codable, Equatable, Sendable {
 }
 
 public enum ChangeImpactRelation: String, Codable, Equatable, Sendable {
+    case semanticReference = "semantic_reference"
     case lexicalReference = "lexical_reference"
     case declaredDependency = "declared_dependency"
     case containsSource = "contains_source"
@@ -211,6 +212,7 @@ public enum ChangeImpactRelation: String, Codable, Equatable, Sendable {
 public enum ChangeImpactEvidenceStrength: String, Codable, Equatable, Sendable {
     case heuristic
     case lexicalMatch = "lexical_match"
+    case semanticMatch = "semantic_match"
     case declaredEdge = "declared_edge"
 }
 
@@ -904,7 +906,8 @@ public actor ChangeImpactService {
         beforeFinalFreshnessCheck: (@Sendable () async throws -> Void)? = nil
     ) {
         self.runtimeStore = runtimeStore
-        self.workspaceRuntime = workspaceRuntime ?? WorkspaceStateRuntime(runtimeStore: runtimeStore)
+        let resolvedWorkspaceRuntime = workspaceRuntime ?? WorkspaceStateRuntime(runtimeStore: runtimeStore)
+        self.workspaceRuntime = resolvedWorkspaceRuntime
         self.evidenceStore = evidenceStore ?? EvidenceStore(
             baseDirectory: runtimeStore.baseDirectory.appendingPathComponent("evidence", isDirectory: true)
         )
@@ -1797,8 +1800,9 @@ public actor ChangeImpactService {
         case .declaredDependency: 0
         case .containsSource: 1
         case .containsTest: 2
-        case .lexicalReference: 3
-        case .namingHeuristic: 4
+        case .semanticReference: 3
+        case .lexicalReference: 4
+        case .namingHeuristic: 5
         }
     }
 
@@ -1806,7 +1810,8 @@ public actor ChangeImpactService {
         switch value {
         case .heuristic: 0
         case .lexicalMatch: 1
-        case .declaredEdge: 2
+        case .semanticMatch: 2
+        case .declaredEdge: 3
         }
     }
 

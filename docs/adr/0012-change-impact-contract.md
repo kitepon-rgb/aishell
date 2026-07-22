@@ -162,13 +162,13 @@ symbol locator、manifest由来のtarget/test IDを使い、表示名だけをid
 
 - `evidenceID`と`providerID`
 - 起点input IDと候補subject ID
-- `relation`: `lexical_reference | declared_dependency | contains_source | contains_test | naming_heuristic`
+- `relation`: `semantic_reference | lexical_reference | declared_dependency | contains_source | contains_test | naming_heuristic`
 - 根拠位置の`path`、`contentSHA256`、byte range、またはmanifest edge identity
-- `evidenceStrength`: `heuristic | lexical_match | declared_edge`のclosed ordinal
+- `evidenceStrength`: `heuristic | lexical_match | semantic_match | declared_edge`のclosed ordinal
 - 人が判断できる短い`summary`
 
 異なるproviderの同一subject候補は一件へdeduplicateして全evidenceを保持する。heuristicは宣言edgeと同格に
-昇格させない。`evidenceStrength`の順序は`heuristic < lexical_match < declared_edge`だけであり、数値confidence、
+昇格させない。`evidenceStrength`の順序は`heuristic < lexical_match < semantic_match < declared_edge`だけであり、数値confidence、
 確率、重み付きscoreを生成しない。複数根拠を集約してordinalを加算したり、完全性の保証へ変換したりもしない。
 ACE-033がfocused check候補を順位付けする時も、このclosed ordinalと個別根拠をそのまま使う。
 filesystem providerがtest file名から`naming_heuristic`を生成する場合、変更fileのstemはtest basenameの
@@ -233,8 +233,8 @@ normalizationは行わない。異なるkindのidentity衝突を避けるためt
   `path → symbol → resource → module → package → test → target`。
 - `evidence`: provider ID、起点input canonical identity、候補subject canonical identity、relation順、locator identity、
   `evidenceStrength`順、summary bytes、evidence ID。relation順は
-  `declared_dependency → contains_source → contains_test → lexical_reference → naming_heuristic`、strength順は
-  `heuristic → lexical_match → declared_edge`。
+  `declared_dependency → contains_source → contains_test → semantic_reference → lexical_reference → naming_heuristic`、strength順は
+  `heuristic → lexical_match → semantic_match → declared_edge`。
 - `candidate_evidence`: candidate ID、evidence ID。
 
 candidate IDはcategoryとsubject canonical identity、evidence IDはprovider ID、起点identity、候補identity、relation、

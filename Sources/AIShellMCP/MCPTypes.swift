@@ -1123,8 +1123,8 @@ enum ToolCatalog {
             ]),
             changeImpactItem(kind: "evidence", fields: [
                 "evidenceID": sha256Schema, "providerID": type("string"), "inputIdentity": type("string"),
-                "subject": type("object"), "relation": enumType(["lexical_reference", "declared_dependency", "contains_source", "contains_test", "naming_heuristic"]),
-                "locator": type("object"), "evidenceStrength": enumType(["heuristic", "lexical_match", "declared_edge"]), "summary": type("string")
+                "subject": type("object"), "relation": enumType(["semantic_reference", "lexical_reference", "declared_dependency", "contains_source", "contains_test", "naming_heuristic"]),
+                "locator": type("object"), "evidenceStrength": enumType(["heuristic", "lexical_match", "semantic_match", "declared_edge"]), "summary": type("string")
             ]),
             changeImpactItem(kind: "candidate_evidence", fields: ["candidateID": sha256Schema, "evidenceID": sha256Schema])
         ])
