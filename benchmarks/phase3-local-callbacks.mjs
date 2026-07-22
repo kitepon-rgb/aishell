@@ -24,6 +24,13 @@ function plainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+export function selectCompatibleCandidateRoot(calls, tool, compatible) {
+  if (!Array.isArray(calls) || typeof tool !== 'string' || typeof compatible !== 'function') {
+    throw new TypeError('candidate root selection input is invalid');
+  }
+  return calls.filter((call) => !call.isError && call.tool === tool && compatible(call)).at(-1) ?? null;
+}
+
 function exactKeys(value, required, optional, label) {
   if (!plainObject(value)) throw new Error(`${label} must be an object`);
   const allowed = new Set([...required, ...optional]);
@@ -756,18 +763,15 @@ export async function collectAttemptEvidence(input) {
       setupEvidence: benchmarkSetupEvidence, trustedProductionSetup,
     });
     const preparedCall = prepared.calls[0];
-    const successfulToolCalls = calls.filter((call) => !call.isError && call.tool === preparedCall.tool);
-    const compatibleRoots = successfulToolCalls.filter((call) => {
-      if (call.isError || call.tool !== preparedCall.tool) return false;
+    const call = selectCompatibleCandidateRoot(calls, preparedCall.tool, (candidate) => {
       try {
         validateCandidateProductionRequest({
-          taskID: attempt.taskID, tool: call.tool,
-          trustedSetupEvidence: trustedProductionSetup[call.tool], observedRequest: call.request,
+          taskID: attempt.taskID, tool: candidate.tool,
+          trustedSetupEvidence: trustedProductionSetup[candidate.tool], observedRequest: candidate.request,
         });
         return true;
       } catch { return false; }
     });
-    const call = compatibleRoots.at(-1) ?? successfulToolCalls.at(-1) ?? null;
     for (const observedCall of calls.filter(({ tool }) => tool === preparedCall.tool)) {
       observerEvents.push({
         provider: 'aishell', tool: observedCall.tool, action: preparedCall.action,

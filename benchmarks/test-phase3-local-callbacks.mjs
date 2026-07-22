@@ -12,11 +12,24 @@ import {
   observeProviderModel,
   runProcess,
   runSetupStep,
+  selectCompatibleCandidateRoot,
 } from './phase3-local-callbacks.mjs';
 import { extractProviderUsageFromSSETrace, prepareCandidateRequests } from './phase3-representative-runner.mjs';
 import { canonicalJSONBytes, sha256Hex } from './production-v2-benchmark-adapter.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'aishell-phase3-local-callbacks-'));
+
+const incompatibleAnalyze = { tool: 'change_impact', isError: false, request: { operation: 'analyze' } };
+const failedRecommend = { tool: 'change_impact', isError: true, request: { operation: 'recommend' } };
+assert.equal(selectCompatibleCandidateRoot(
+  [failedRecommend, incompatibleAnalyze], 'change_impact',
+  ({ request }) => request.operation === 'recommend',
+), null);
+const compatibleRecommend = { tool: 'change_impact', isError: false, request: { operation: 'recommend' } };
+assert.equal(selectCompatibleCandidateRoot(
+  [incompatibleAnalyze, compatibleRecommend], 'change_impact',
+  ({ request }) => request.operation === 'recommend',
+), compatibleRecommend);
 const workspace = path.join(root, 'workspace');
 const stateDirectory = path.join(root, 'state');
 await mkdir(workspace);
