@@ -82,6 +82,62 @@ final class Phase3AcceptanceTests: XCTestCase {
         XCTAssertEqual(providerEvidence.count, 4, "2 inputs x direct/transitive evidenceを保持する")
         XCTAssertTrue(providerEvidence.allSatisfy { $0.evidenceStrength == .declaredEdge })
     }
+
+    func testUnresolvedDynamicEdgeReportsUnknownGapWithoutSilentComplete() async throws {
+        let fixture = try Phase3ImpactFixture()
+        defer { fixture.cleanup() }
+        let dynamicSHA = try fixture.write(
+            "src/dynamic.mjs",
+            "await import(process.env.TARGET);\n"
+        )
+        let runtime = try await fixture.runtime()
+
+        let result = try await ChangeImpactService(
+            runtimeStore: runtime.store,
+            workspaceRuntime: runtime.workspace,
+            evidenceStore: fixture.evidenceStore()
+        ).analyze(.init(
+            root: fixture.root.path,
+            workspaceCursor: runtime.cursor,
+            changedPaths: [.init(path: "src/dynamic.mjs", contentSHA256: dynamicSHA)],
+            requiredProviders: ["static-import"],
+            byteBudget: 1_048_576
+        ))
+
+        XCTAssertEqual(result.coverage, "partial")
+        let gaps = result.items.compactMap { $0.kind == .coverageGap ? $0.coverageGap : nil }
+        XCTAssertEqual(gaps.map(\.reasonCode), ["dynamic_import_non_literal"])
+        XCTAssertEqual(gaps.map(\.providerID), ["static-import"])
+    }
+
+    func testFocusedRecommendOnlyReturnsCandidateWithoutStartingProcess() async throws {
+        let fixture = try await Phase3FocusedFixture()
+        defer { fixture.cleanup() }
+
+        let recommendation = try await fixture.recommend()
+
+        XCTAssertEqual(recommendation.executionPolicy, "explicit_run_check_only")
+        XCTAssertEqual(recommendation.candidateCount, 1)
+        XCTAssertEqual(fixture.recommendedTestPaths(recommendation), ["test/a.test.mjs"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.executionMarker.path))
+    }
+
+    func testFocusedExplicitRunStartsOnlyAfterCallerSelectsCandidate() async throws {
+        let fixture = try await Phase3FocusedFixture()
+        defer { fixture.cleanup() }
+        let recommendation = try await fixture.recommend()
+        let candidateID = try XCTUnwrap(
+            recommendation.items.first(where: { $0.kind == .focusedCandidate })?.focusedCheckID
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.executionMarker.path))
+        let executed = try await fixture.run(recommendation: recommendation, requestedIDs: [candidateID])
+
+        XCTAssertEqual(executed.requestedCheckIDs, [candidateID])
+        XCTAssertEqual(executed.plannedCheckIDs, [candidateID])
+        XCTAssertEqual(executed.processesStarted, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.executionMarker.path))
+    }
 }
 
 private final class Phase3RunCheckFixture: @unchecked Sendable {
@@ -265,4 +321,212 @@ private final class Phase3ImpactFixture: @unchecked Sendable {
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: base) }
+}
+
+private final class Phase3FocusedFixture: @unchecked Sendable {
+    let base: URL
+    let root: URL
+    let executionMarker: URL
+    let focused: FocusedCheckService
+    let impactService: ChangeImpactService
+    let runtimeService: DevelopmentRuntimeService
+    let catalog: ProjectProfileCatalogResult
+    let check: ProjectProfileCheck
+    let changedSHA: String
+    let cursor: String
+    let manifestIdentity: String
+
+    init() async throws {
+        base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AIShellPhase3Focused-\(UUID().uuidString)", isDirectory: true)
+        root = base.appendingPathComponent("workspace", isDirectory: true)
+        executionMarker = base.appendingPathComponent("focused-check-executed")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let manifestURL = root.appendingPathComponent("package.json")
+        try Data("{}\n".utf8).write(to: manifestURL, options: .atomic)
+        let sourceURL = root.appendingPathComponent("src/a.mjs")
+        try FileManager.default.createDirectory(at: sourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let sourceData = Data("export const a = 2;\n".utf8)
+        try sourceData.write(to: sourceURL, options: .atomic)
+        changedSHA = Self.sha256(sourceData)
+        let testURL = root.appendingPathComponent("test/a.test.mjs")
+        try FileManager.default.createDirectory(at: testURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("import '../src/a.mjs';\n".utf8).write(to: testURL, options: .atomic)
+
+        let runtime = RuntimeStore(baseDirectory: base.appendingPathComponent("runtime", isDirectory: true))
+        try await runtime.setAllowedRoot(root)
+        let workspace = WorkspaceStateRuntime(runtimeStore: runtime, startsFSEvents: false)
+        cursor = try await workspace.snapshot(path: root.path, contextBudget: 0).cursor
+        let evidence = EvidenceStore(baseDirectory: base.appendingPathComponent("evidence", isDirectory: true))
+        focused = FocusedCheckService()
+        impactService = ChangeImpactService(
+            runtimeStore: runtime,
+            workspaceRuntime: workspace,
+            evidenceStore: evidence,
+            focusedCheckService: focused
+        )
+        runtimeService = DevelopmentRuntimeService(
+            runtimeStore: runtime,
+            evidenceStore: evidence,
+            focusedChecks: focused,
+            freshnessCache: CheckFreshnessCache.inMemory()
+        )
+
+        let manifestData = try Data(contentsOf: manifestURL)
+        manifestIdentity = try Self.fileIdentity(manifestURL)
+        let executable = URL(fileURLWithPath: "/usr/bin/touch").resolvingSymlinksInPath()
+        check = ProjectProfileCheck(
+            checkId: Self.hash("phase3-focused-check"),
+            kind: "test",
+            label: "phase3 focused fixture check",
+            executable: executable.path,
+            arguments: [executionMarker.path],
+            workingDirectory: root.path,
+            environmentKeys: [],
+            provenance: .init(
+                kind: "manifest",
+                path: "package.json",
+                contentSHA256: Self.sha256(manifestData),
+                producerVersion: "phase3-acceptance",
+                confidence: "declared"
+            )
+        )
+        let profileDigest = Self.hash("phase3-focused-profile")
+        let profile = ProjectProfile(
+            schemaVersion: "aishell.project-profile.v1",
+            projectId: "phase3-focused-project",
+            projectRoot: "",
+            projectRootIdentity: try Self.fileIdentity(root),
+            displayName: "phase3 focused fixture",
+            ecosystem: "npm",
+            classification: "root",
+            status: .complete,
+            provider: "phase3-acceptance",
+            providerVersion: "1",
+            manifests: [.init(
+                path: "package.json",
+                role: "primary",
+                identity: manifestIdentity,
+                sha256: Self.sha256(manifestData),
+                parseStatus: "parsed"
+            )],
+            memberProjectIds: [],
+            targets: [.init(
+                targetId: "phase3-tests",
+                name: "phase3 tests",
+                kind: "test",
+                dependencies: [],
+                sourceRoots: ["test"],
+                resourceRoots: [],
+                testRelation: "package-tests",
+                provenance: check.provenance
+            )],
+            checks: [check],
+            toolchains: [.init(
+                name: "touch",
+                executable: executable.path,
+                identity: try Self.fileIdentity(executable),
+                sha256: Self.sha256(try Data(contentsOf: executable, options: .mappedIfSafe)),
+                versionArguments: [],
+                version: "system",
+                exitStatus: 0,
+                evidenceSHA256: Self.hash("phase3-focused-toolchain-evidence"),
+                evidenceHandle: "phase3-focused-toolchain",
+                evidenceExpiresAt: "future"
+            )],
+            providerEvidence: nil,
+            missingCapabilities: [],
+            diagnostics: [],
+            binding: Self.hash("phase3-focused-binding"),
+            freshness: .freshComputed,
+            observedCursor: cursor,
+            profileDigest: profileDigest,
+            invalidationReasons: []
+        )
+        catalog = .init(
+            schemaVersion: "aishell.project-profile-catalog.v1",
+            root: root.path,
+            observedCursor: cursor,
+            profiles: [profile],
+            computedProfiles: 1,
+            cachedProfiles: 0
+        )
+    }
+
+    func recommend() async throws -> ChangeImpactRecommendationResult {
+        let profile = catalog.profiles[0]
+        return try await impactService.recommend(.init(
+            impactRequest: .init(
+                operation: .analyze,
+                root: root.path,
+                workspaceCursor: cursor,
+                changedPaths: [.init(path: "src/a.mjs", contentSHA256: changedSHA)],
+                requiredProviders: ["static-import"],
+                byteBudget: 1_048_576
+            ),
+            projectID: profile.projectId,
+            profileDigest: profile.profileDigest,
+            catalog: catalog,
+            byteBudget: 1_048_576
+        ))
+    }
+
+    func recommendedTestPaths(_ result: ChangeImpactRecommendationResult) -> [String] {
+        result.items.compactMap { item in
+            guard item.kind == .focusedCandidate,
+                  case let .testPath(path) = item.selector else { return nil }
+            return path
+        }
+    }
+
+    func run(
+        recommendation: ChangeImpactRecommendationResult,
+        requestedIDs: [String]
+    ) async throws -> RunCheckPipelineResult {
+        let impactDigest = try XCTUnwrap(
+            recommendation.items.first(where: { $0.kind == .impactEvidence })?.evidence?.provenance.artifactDigest
+        )
+        let profile = catalog.profiles[0]
+        let admission = FocusedCheckService.Admission(
+            rootIdentity: recommendation.freshness.rootIdentity,
+            generation: recommendation.freshness.workspaceGeneration,
+            cursor: recommendation.freshness.observedCursor,
+            profileDigest: profile.profileDigest,
+            manifestIdentity: manifestIdentity,
+            impactArtifactDigest: impactDigest
+        )
+        let selection = try await focused.resolve(
+            focusedSetID: recommendation.focusedSetID,
+            focusedSetDigest: recommendation.focusedSetDigest,
+            requestedCheckIDs: requestedIDs,
+            admission: admission
+        )
+        let plan = try RunCheckInvocationPlan.compile(.v2(.init(
+            invocation: .focusedSet(.init(
+                setID: recommendation.focusedSetID,
+                orderedCheckIDs: requestedIDs
+            )),
+            dispatch: .sync,
+            cachePolicy: .off,
+            executionPolicy: .init(timeoutMilliseconds: 5_000, retentionSeconds: 3_600),
+            selectionDigest: selection.selectionDigest
+        )))
+        return try await runtimeService.runCheck(
+            plan: plan,
+            resolution: .init(profileCatalog: catalog, focusedAdmission: admission)
+        )
+    }
+
+    func cleanup() { try? FileManager.default.removeItem(at: base) }
+
+    private static func fileIdentity(_ url: URL) throws -> String {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return "\(attributes[.systemNumber] ?? ""):\(attributes[.systemFileNumber] ?? "")"
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func hash(_ value: String) -> String { sha256(Data(value.utf8)) }
 }

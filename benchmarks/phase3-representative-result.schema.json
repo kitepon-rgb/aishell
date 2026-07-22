@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quolu.dev/aishell/phase3-representative-result.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "manifestSHA256", "status", "invalidReasons", "attempts"],
+  "properties": {
+    "schema": {"const": "aishell.phase3-representative-result.v1"},
+    "manifestSHA256": {"$ref": "#/$defs/sha256"},
+    "status": {"enum": ["valid", "invalid"]},
+    "invalidReasons": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "attempts": {
+      "type": "array",
+      "minItems": 54,
+      "maxItems": 54,
+      "items": {"$ref": "#/$defs/attempt"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "exactBytes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["encoding", "base64", "byteLength", "sha256"],
+      "properties": {
+        "encoding": {"const": "base64"},
+        "base64": {"type": "string"},
+        "byteLength": {"type": "integer", "minimum": 0},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "inputTokens", "cachedInputTokens", "outputTokens", "reasoningOutputTokens", "totalModelTokens"],
+      "properties": {
+        "source": {"const": "provider"},
+        "inputTokens": {"type": "integer", "minimum": 0},
+        "cachedInputTokens": {"type": "integer", "minimum": 0},
+        "outputTokens": {"type": "integer", "minimum": 0},
+        "reasoningOutputTokens": {"type": "integer", "minimum": 0},
+        "totalModelTokens": {"type": "integer", "minimum": 0}
+      }
+    },
+    "attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attemptID", "sequence", "taskID", "arm", "repetition", "usage", "providerTrace", "providerUsageFormat", "agentResult", "adapterTrace", "agentExitCode", "timedOut", "wallMilliseconds"],
+      "properties": {
+        "attemptID": {"type": "string", "minLength": 1},
+        "sequence": {"type": "integer", "minimum": 1, "maximum": 54},
+        "taskID": {"enum": ["freshness-cache-repeat-check", "freshness-cache-input-change", "change-impact-direct-dependent", "change-impact-unresolved-edge", "focused-pipeline-recommend-only", "focused-pipeline-explicit-run"]},
+        "arm": {"enum": ["native", "current-aishell-0.3.3", "candidate"]},
+        "repetition": {"type": "integer", "minimum": 1, "maximum": 3},
+        "usage": {"oneOf": [{"$ref": "#/$defs/usage"}, {"type": "null"}]},
+        "providerTrace": {"$ref": "#/$defs/exactBytes"},
+        "providerUsageFormat": {"enum": ["codex-exec-jsonl.v1", "openai-responses-jsonl.v1"]},
+        "agentResult": {"$ref": "#/$defs/exactBytes"},
+        "adapterTrace": {"oneOf": [{"$ref": "#/$defs/exactBytes"}, {"type": "null"}]},
+        "agentExitCode": {"type": "integer"},
+        "timedOut": {"type": "boolean"},
+        "wallMilliseconds": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

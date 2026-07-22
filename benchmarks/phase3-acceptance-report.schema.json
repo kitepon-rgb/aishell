@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quolu.dev/aishell/phase3-acceptance-report.v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "invalidReasons", "replacementPolicy", "overallArms", "perTaskArms", "correctnessGate"],
+  "properties": {
+    "schema": {"const": "aishell.phase3-acceptance-report.v1"},
+    "status": {"enum": ["valid", "invalid"]},
+    "invalidReasons": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "replacementPolicy": {"const": "forbidden"},
+    "overallArms": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "#/$defs/overallArm"}}
+      ]
+    },
+    "perTaskArms": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "array", "minItems": 18, "maxItems": 18, "items": {"$ref": "#/$defs/taskArm"}}
+      ]
+    },
+    "correctnessGate": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/correctnessGate"}]}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "valid"}}},
+      "then": {
+        "properties": {
+          "invalidReasons": {"maxItems": 0},
+          "overallArms": {"type": "array"},
+          "perTaskArms": {"type": "array"},
+          "correctnessGate": {"$ref": "#/$defs/correctnessGate"}
+        }
+      },
+      "else": {
+        "properties": {
+          "invalidReasons": {"minItems": 1},
+          "overallArms": {"type": "null"},
+          "perTaskArms": {"type": "null"},
+          "correctnessGate": {"type": "null"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "arm": {"enum": ["native", "current-aishell-0.3.3", "candidate"]},
+    "taskID": {"enum": [
+      "freshness-cache-repeat-check", "freshness-cache-input-change",
+      "change-impact-direct-dependent", "change-impact-unresolved-edge",
+      "focused-pipeline-recommend-only", "focused-pipeline-explicit-run"
+    ]},
+    "nullableNumber": {"type": ["number", "null"], "minimum": 0},
+    "percentiles": {
+      "type": "object", "additionalProperties": false, "required": ["p50", "p95"],
+      "properties": {"p50": {"type": "number", "minimum": 0}, "p95": {"type": "number", "minimum": 0}}
+    },
+    "firstUsefulPercentiles": {
+      "type": "object", "additionalProperties": false, "required": ["samples", "p50", "p95"],
+      "properties": {
+        "samples": {"type": "integer", "minimum": 0},
+        "p50": {"$ref": "#/$defs/nullableNumber"},
+        "p95": {"$ref": "#/$defs/nullableNumber"}
+      }
+    },
+    "tokensPerSolvedAttempt": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["state", "value"],
+          "properties": {"state": {"const": "finite"}, "value": {"type": "number", "minimum": 0}}
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["state", "value"],
+          "properties": {"state": {"const": "positive_infinity"}, "value": {"type": "null"}}
+        }
+      ]
+    },
+    "totals": {
+      "type": "object", "additionalProperties": false,
+      "required": ["toolCalls", "modelTurns", "retries", "artifactRereads", "filesystemEntriesRescanned", "bytesReread", "processReexecutions", "cacheHits", "changeJournalHits"],
+      "properties": {
+        "toolCalls": {"type": "integer", "minimum": 0},
+        "modelTurns": {"type": "integer", "minimum": 0},
+        "retries": {"type": "integer", "minimum": 0},
+        "artifactRereads": {"type": "integer", "minimum": 0},
+        "filesystemEntriesRescanned": {"type": "integer", "minimum": 0},
+        "bytesReread": {"type": "integer", "minimum": 0},
+        "processReexecutions": {"type": "integer", "minimum": 0},
+        "cacheHits": {"type": "integer", "minimum": 0},
+        "changeJournalHits": {"type": "integer", "minimum": 0}
+      }
+    },
+    "toolAdoption": {
+      "type": "object", "additionalProperties": false, "required": ["attempts", "rate"],
+      "properties": {
+        "attempts": {"type": "integer", "minimum": 0},
+        "rate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "aggregate": {
+      "type": "object",
+      "required": ["attempts", "solvedAttempts", "successRate", "totalModelTokens", "tokensPerSolvedAttempt", "wallMilliseconds", "firstUsefulResultMilliseconds", "totals", "toolAdoption"],
+      "properties": {
+        "attempts": {"type": "integer", "minimum": 1},
+        "solvedAttempts": {"type": "integer", "minimum": 0},
+        "successRate": {"type": "number", "minimum": 0, "maximum": 1},
+        "totalModelTokens": {"type": "integer", "minimum": 0},
+        "tokensPerSolvedAttempt": {"$ref": "#/$defs/tokensPerSolvedAttempt"},
+        "wallMilliseconds": {"$ref": "#/$defs/percentiles"},
+        "firstUsefulResultMilliseconds": {"$ref": "#/$defs/firstUsefulPercentiles"},
+        "totals": {"$ref": "#/$defs/totals"},
+        "toolAdoption": {"$ref": "#/$defs/toolAdoption"}
+      }
+    },
+    "overallArm": {
+      "unevaluatedProperties": false,
+      "allOf": [
+        {"$ref": "#/$defs/aggregate"},
+        {
+          "type": "object", "required": ["arm", "solvedTasks", "taskSuccessRate"],
+          "properties": {
+            "arm": {"$ref": "#/$defs/arm"},
+            "solvedTasks": {"type": "integer", "minimum": 0, "maximum": 6},
+            "taskSuccessRate": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        }
+      ]
+    },
+    "taskArm": {
+      "unevaluatedProperties": false,
+      "allOf": [
+        {"$ref": "#/$defs/aggregate"},
+        {
+          "type": "object", "required": ["taskID", "arm", "taskSolved"],
+          "properties": {
+            "taskID": {"$ref": "#/$defs/taskID"},
+            "arm": {"$ref": "#/$defs/arm"},
+            "taskSolved": {"type": "boolean"}
+          }
+        }
+      ]
+    },
+    "correctnessGate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["passed", "nativeSolvedTasks", "currentSolvedTasks", "candidateSolvedTasks", "currentRegressionsFromNative", "candidateRegressionsFromNative", "candidateRegressionsFromCurrent"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "nativeSolvedTasks": {"type": "array", "items": {"$ref": "#/$defs/taskID"}, "uniqueItems": true},
+        "currentSolvedTasks": {"type": "array", "items": {"$ref": "#/$defs/taskID"}, "uniqueItems": true},
+        "candidateSolvedTasks": {"type": "array", "items": {"$ref": "#/$defs/taskID"}, "uniqueItems": true},
+        "currentRegressionsFromNative": {"type": "array", "items": {"$ref": "#/$defs/taskID"}, "uniqueItems": true},
+        "candidateRegressionsFromNative": {"type": "array", "items": {"$ref": "#/$defs/taskID"}, "uniqueItems": true},
+        "candidateRegressionsFromCurrent": {"type": "array", "items": {"$ref": "#/$defs/taskID"}, "uniqueItems": true}
+      }
+    }
+  }
+}
