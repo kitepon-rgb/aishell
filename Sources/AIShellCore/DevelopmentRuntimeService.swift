@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public actor DevelopmentRuntimeService {
@@ -5,11 +6,15 @@ public actor DevelopmentRuntimeService {
     public nonisolated let evidenceStore: EvidenceStore
     public nonisolated let workspaceRuntime: WorkspaceStateRuntime
     private let contextCompiler: ContextCompilerService
+    private let focusedChecks: FocusedCheckService
+    private let freshnessCache: CheckFreshnessCache
 
     public init(
         runtimeStore: RuntimeStore = RuntimeStore(),
         evidenceStore: EvidenceStore? = nil,
-        workspaceRuntime: WorkspaceStateRuntime? = nil
+        workspaceRuntime: WorkspaceStateRuntime? = nil,
+        focusedChecks: FocusedCheckService? = nil,
+        freshnessCache: CheckFreshnessCache? = nil
     ) {
         processes = NativeProcessService(store: runtimeStore)
         self.evidenceStore = evidenceStore ?? EvidenceStore(
@@ -22,6 +27,10 @@ public actor DevelopmentRuntimeService {
             workspaceRuntime: workspace,
             evidenceStore: self.evidenceStore
         )
+        self.focusedChecks = focusedChecks ?? FocusedCheckService()
+        self.freshnessCache = freshnessCache ?? CheckFreshnessCache(
+            storeDirectory: runtimeStore.baseDirectory.appendingPathComponent("check-freshness-cache", isDirectory: true)
+        )
     }
 
     public func runCheck(
@@ -31,6 +40,126 @@ public actor DevelopmentRuntimeService {
         environment: [String: String] = [:],
         timeoutSeconds: Double = 120,
         retentionSeconds: TimeInterval = EvidenceStore.defaultRetentionSeconds
+    ) async throws -> RunCheckResult {
+        _ = try RunCheckInvocationPlan.compile(.legacyDirect(.init(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            effectiveEnvironment: environment,
+            executionPolicy: .init(
+                timeoutMilliseconds: UInt64(max(1, timeoutSeconds * 1_000)),
+                retentionSeconds: UInt64(max(1, retentionSeconds))
+            )
+        )))
+        return try await executeDirect(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            environment: environment,
+            timeoutSeconds: timeoutSeconds,
+            retentionSeconds: retentionSeconds
+        )
+    }
+
+    /// ADR 0018-0020 のimmutable planを、exact profile/focused selection、cache、sync executionへ接続する。
+    public func runCheck(
+        plan: RunCheckInvocationPlan,
+        resolution: RunCheckResolutionContext
+    ) async throws -> RunCheckPipelineResult {
+        guard case .sync = plan.dispatch else {
+            throw RunCheckPipelineError.dispatchNotReady(processesStarted: 0)
+        }
+
+        let resolved = try await resolve(plan: plan, context: resolution)
+        let cacheRequest = CheckFreshnessCache.Request(
+            policy: cachePolicy(plan.cachePolicy),
+            plan: .init(
+                invocationID: plan.digest,
+                orderedStepIDs: resolved.steps.map(\.stepID),
+                selectionDigest: resolved.selectionDigest
+            ),
+            orderedSteps: resolved.steps.map { .init(id: $0.stepID, binding: $0.binding) }
+        )
+        let evidenceStore = self.evidenceStore
+        let processCounter = RunCheckProcessCounter()
+        do {
+            let outcome = try await freshnessCache.execute(
+                cacheRequest,
+                executeUncached: { [processes, evidenceStore] cacheSteps in
+                    var results: [CheckFreshnessCache.Result] = []
+                    var nonPassingStepIDs = Set<String>()
+                    var processesStarted = 0
+                    for cacheStep in cacheSteps {
+                        guard let step = resolved.steps.first(where: { $0.stepID == cacheStep.id }) else {
+                            throw RunCheckPipelineError.invocationInvalid(processesStarted: processesStarted)
+                        }
+                        if step.dependsOn.contains(where: { nonPassingStepIDs.contains($0) }) {
+                            results.append(Self.skippedCacheResult(stepID: step.stepID))
+                            nonPassingStepIDs.insert(step.stepID)
+                            continue
+                        }
+                        let execution = try await processes.runRetained(
+                            executable: step.executable,
+                            arguments: step.arguments,
+                            workingDirectory: step.workingDirectory,
+                            environment: step.environment,
+                            timeoutSeconds: Double(plan.executionPolicy.timeoutMilliseconds) / 1_000,
+                            evidenceStore: evidenceStore,
+                            retentionSeconds: TimeInterval(plan.executionPolicy.retentionSeconds)
+                        )
+                        let result = Self.cacheResult(stepID: step.stepID, execution: execution)
+                        results.append(result)
+                        processesStarted += 1
+                        processCounter.increment()
+                        if result.terminalState != .passed { nonPassingStepIDs.insert(step.stepID) }
+                    }
+                    return .init(results: results, processesStarted: processesStarted)
+                },
+                validateBindingAfterExecution: { steps in
+                    guard steps.count == resolved.steps.count else { return false }
+                    return zip(steps, resolved.steps).allSatisfy {
+                        $0.id == $1.stepID && $0.binding == $1.binding && $1.reobserveBinding() == $0.binding
+                    }
+                },
+                verifyArtifact: { artifact in
+                    if artifact.expiresAt <= Date() { return .expired }
+                    do {
+                        _ = try await evidenceStore.verifyCompleteArtifact(
+                            handle: artifact.handle,
+                            kind: artifact.kind,
+                            producer: artifact.producer,
+                            sha256: artifact.sha256
+                        )
+                        return .valid
+                    } catch {
+                        return .corrupt
+                    }
+                }
+            )
+            return RunCheckPipelineResult(
+                schemaVersion: "aishell.run-check-pipeline.v1",
+                planDigest: plan.digest,
+                selectionDigest: resolved.selectionDigest,
+                requestedCheckIDs: resolved.requestedCheckIDs,
+                plannedCheckIDs: resolved.plannedCheckIDs,
+                cacheState: outcome.state,
+                processesStarted: outcome.processesStarted,
+                publications: outcome.publications,
+                steps: outcome.results.map(RunCheckPipelineStepResult.init),
+                lookupEvidence: outcome.lookupEvidence
+            )
+        } catch let error as CheckFreshnessCache.Error {
+            throw Self.pipelineError(error, processesStarted: processCounter.value)
+        }
+    }
+
+    private func executeDirect(
+        executable: String,
+        arguments: [String],
+        workingDirectory: String?,
+        environment: [String: String],
+        timeoutSeconds: Double,
+        retentionSeconds: TimeInterval
     ) async throws -> RunCheckResult {
         let requestID = "req_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
         let execution = try await processes.runRetained(
@@ -74,6 +203,374 @@ public actor DevelopmentRuntimeService {
             stdoutArtifact: execution.stdoutArtifact,
             stderrArtifact: execution.stderrArtifact
         )
+    }
+
+    private struct ResolvedExecutionStep: Sendable {
+        let stepID: String
+        let dependsOn: [String]
+        let executable: String
+        let arguments: [String]
+        let workingDirectory: String?
+        let environment: [String: String]
+        let binding: CheckFreshnessCache.Binding
+        let reobserveBinding: @Sendable () -> CheckFreshnessCache.Binding
+    }
+
+    private struct ResolvedInvocation: Sendable {
+        let requestedCheckIDs: [String]
+        let plannedCheckIDs: [String]
+        let selectionDigest: String
+        let steps: [ResolvedExecutionStep]
+    }
+
+    private func resolve(
+        plan: RunCheckInvocationPlan,
+        context: RunCheckResolutionContext
+    ) async throws -> ResolvedInvocation {
+        switch plan.invocation {
+        case .direct(let direct):
+            guard plan.cachePolicy == .off else {
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+            return ResolvedInvocation(
+                requestedCheckIDs: [],
+                plannedCheckIDs: [],
+                selectionDigest: plan.selectionDigest,
+                steps: [.init(
+                    stepID: "direct",
+                    dependsOn: [],
+                    executable: direct.executable,
+                    arguments: direct.arguments,
+                    workingDirectory: direct.workingDirectory,
+                    environment: direct.effectiveEnvironment,
+                    binding: .ineligible(reason: .unsupported),
+                    reobserveBinding: { .ineligible(reason: .unsupported) }
+                )]
+            )
+
+        case .profileCheck(let requested):
+            guard let profile = exactProfile(
+                projectID: requested.projectID,
+                profileDigest: requested.profileDigest,
+                in: context.profileCatalog
+            ), let descriptor = exactCheck(requested.checkID, in: profile) else {
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+            let step = try resolvedStep(
+                stepID: descriptor.checkId,
+                dependsOn: [],
+                descriptor: descriptor,
+                selector: .profileCheck(id: descriptor.checkId),
+                profile: profile,
+                environment: context.environment,
+                catalogRoot: context.profileCatalog.root,
+                relevantInput: context.relevantInputsByCheckID[descriptor.checkId],
+                executionPolicy: plan.executionPolicy
+            )
+            return ResolvedInvocation(
+                requestedCheckIDs: [requested.checkID],
+                plannedCheckIDs: [requested.checkID],
+                selectionDigest: plan.selectionDigest,
+                steps: [step]
+            )
+
+        case .focusedSet(let requested):
+            guard let admission = context.focusedAdmission else {
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+            let selection: FocusedCheckService.Selection
+            do {
+                selection = try await focusedChecks.resolve(
+                    focusedSetID: requested.setID,
+                    requestedCheckIDs: requested.orderedCheckIDs,
+                    expectedSelectionDigest: plan.selectionDigest,
+                    admission: admission
+                )
+            } catch let error as FocusedCheckService.Error {
+                switch error {
+                case .invocationInvalid:
+                    throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+                case .selectionStale:
+                    throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+                }
+            }
+            guard selection.requestedCheckIDs == requested.orderedCheckIDs,
+                  selection.plannedCheckIDs == requested.orderedCheckIDs,
+                  context.profileCatalog.observedCursor == admission.cursor,
+                  selection.steps.map(\.id) == selection.resolvedCandidates.flatMap({ $0.steps.map(\.id) }) else {
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+            var steps: [ResolvedExecutionStep] = []
+            for candidate in selection.resolvedCandidates {
+                let matchingProfiles = context.profileCatalog.profiles.filter {
+                    $0.profileDigest == admission.profileDigest
+                        && $0.projectRootIdentity == admission.rootIdentity
+                        && $0.observedCursor == admission.cursor
+                        && $0.manifests.contains(where: { $0.identity == admission.manifestIdentity })
+                        && exactCheck(candidate.profileCheckID, in: $0) != nil
+                }
+                guard matchingProfiles.count == 1,
+                      let profile = matchingProfiles.first,
+                      let descriptor = exactCheck(candidate.profileCheckID, in: profile) else {
+                    throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+                }
+                for publishedStep in candidate.steps {
+                    steps.append(try resolvedStep(
+                        stepID: publishedStep.id,
+                        dependsOn: publishedStep.dependsOn,
+                        descriptor: descriptor,
+                        selector: candidate.selector,
+                        profile: profile,
+                        environment: context.environment,
+                        catalogRoot: context.profileCatalog.root,
+                        relevantInput: context.relevantInputsByCheckID[descriptor.checkId],
+                        executionPolicy: plan.executionPolicy
+                    ))
+                }
+            }
+            guard steps.map(\.stepID) == selection.steps.map(\.id) else {
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+            return ResolvedInvocation(
+                requestedCheckIDs: selection.requestedCheckIDs,
+                plannedCheckIDs: selection.plannedCheckIDs,
+                selectionDigest: selection.selectionDigest,
+                steps: steps
+            )
+        }
+    }
+
+    private func exactProfile(
+        projectID: String,
+        profileDigest: String,
+        in catalog: ProjectProfileCatalogResult
+    ) -> ProjectProfile? {
+        let matches = catalog.profiles.filter {
+            $0.projectId == projectID && $0.profileDigest == profileDigest
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private func exactCheck(_ checkID: String, in profile: ProjectProfile) -> ProjectProfileCheck? {
+        let matches = profile.checks.filter { $0.checkId == checkID }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private func resolvedStep(
+        stepID: String,
+        dependsOn: [String],
+        descriptor: ProjectProfileCheck,
+        selector: FocusedCheckService.Selector,
+        profile: ProjectProfile,
+        environment: [String: String],
+        catalogRoot: String,
+        relevantInput: RunCheckRelevantInputBinding?,
+        executionPolicy: RunCheckInvocationPlan.ExecutionPolicy
+    ) throws -> ResolvedExecutionStep {
+        let arguments: [String]
+        switch selector {
+        case .profileCheck(let id):
+            guard id == descriptor.checkId else {
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+            arguments = descriptor.arguments
+        case .testPath(let path):
+            guard descriptor.kind == "test" else {
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+            switch profile.ecosystem {
+            case "npm": arguments = descriptor.arguments + [path]
+            case "swiftpm": arguments = descriptor.arguments + ["--filter", path]
+            default: throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+        case .target:
+            // target selectorを全testへ拡張しない。対応するexact adapterは別契約で追加する。
+            throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+        }
+
+        let effectiveEnvironment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
+        for key in descriptor.environmentKeys where effectiveEnvironment[key] == nil {
+            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+        }
+        let binding = try Self.freshnessBinding(
+            descriptor: descriptor,
+            arguments: arguments,
+            profile: profile,
+            environment: effectiveEnvironment,
+            catalogRoot: catalogRoot,
+            relevantInputDigest: relevantInput?.digest,
+            executionPolicy: executionPolicy
+        )
+        let capturedDescriptor = descriptor
+        let capturedArguments = arguments
+        let capturedProfile = profile
+        let capturedEnvironment = effectiveEnvironment
+        let capturedCatalogRoot = catalogRoot
+        let capturedRelevantInput = relevantInput
+        let capturedPolicy = executionPolicy
+        return .init(
+            stepID: stepID,
+            dependsOn: dependsOn,
+            executable: descriptor.executable,
+            arguments: arguments,
+            workingDirectory: descriptor.workingDirectory,
+            environment: effectiveEnvironment,
+            binding: binding,
+            reobserveBinding: {
+                (try? Self.freshnessBinding(
+                    descriptor: capturedDescriptor,
+                    arguments: capturedArguments,
+                    profile: capturedProfile,
+                    environment: capturedEnvironment,
+                    catalogRoot: capturedCatalogRoot,
+                    relevantInputDigest: capturedRelevantInput?.reobserveDigest(),
+                    executionPolicy: capturedPolicy
+                )) ?? .ineligible(reason: .bindingUnavailable)
+            }
+        )
+    }
+
+    private nonisolated static func freshnessBinding(
+        descriptor: ProjectProfileCheck,
+        arguments: [String],
+        profile: ProjectProfile,
+        environment: [String: String],
+        catalogRoot: String,
+        relevantInputDigest: String?,
+        executionPolicy: RunCheckInvocationPlan.ExecutionPolicy
+    ) throws -> CheckFreshnessCache.Binding {
+        let executable = URL(fileURLWithPath: descriptor.executable).resolvingSymlinksInPath()
+        guard FileManager.default.isExecutableFile(atPath: executable.path),
+              !profile.binding.isEmpty, !profile.manifests.isEmpty, !profile.toolchains.isEmpty,
+              let relevantInputDigest, Self.isSHA256(relevantInputDigest) else {
+            return .ineligible(reason: .bindingIncomplete)
+        }
+        let bytes = try Data(contentsOf: executable, options: .mappedIfSafe)
+        let attributes = try FileManager.default.attributesOfItem(atPath: executable.path)
+        let executableIdentity = [
+            executable.path,
+            String(describing: attributes[.systemNumber] ?? ""),
+            String(describing: attributes[.systemFileNumber] ?? ""),
+            String(describing: attributes[.posixPermissions] ?? ""),
+            sha256(bytes),
+        ]
+        var fields = [
+            "schema", "aishell.run-check-binding.v1",
+            "check", descriptor.checkId,
+            "profile", profile.profileDigest,
+            "profile_binding", profile.binding,
+            "project_root_identity", profile.projectRootIdentity,
+            "relevant_input_closure", relevantInputDigest,
+            "cwd", descriptor.workingDirectory,
+            "timeout_ms", String(executionPolicy.timeoutMilliseconds),
+            "retention_s", String(executionPolicy.retentionSeconds),
+        ] + executableIdentity
+        fields += ["arguments", String(arguments.count)] + arguments
+        for manifest in profile.manifests.sorted(by: { $0.path < $1.path }) {
+            let url = URL(fileURLWithPath: catalogRoot, isDirectory: true).appendingPathComponent(manifest.path)
+            guard let liveBytes = try? Data(contentsOf: url, options: .mappedIfSafe),
+                  sha256(liveBytes) == manifest.sha256,
+                  let liveAttributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  "\(liveAttributes[.systemNumber] ?? ""):\(liveAttributes[.systemFileNumber] ?? "")" == manifest.identity else {
+                return .ineligible(reason: .bindingIncomplete)
+            }
+            fields += ["manifest", manifest.path, manifest.identity, manifest.sha256]
+        }
+        for toolchain in profile.toolchains.sorted(by: { $0.identity < $1.identity }) {
+            let toolURL = URL(fileURLWithPath: toolchain.executable).resolvingSymlinksInPath()
+            guard let toolBytes = try? Data(contentsOf: toolURL, options: .mappedIfSafe),
+                  sha256(toolBytes) == toolchain.sha256,
+                  let liveAttributes = try? FileManager.default.attributesOfItem(atPath: toolURL.path),
+                  "\(liveAttributes[.systemNumber] ?? ""):\(liveAttributes[.systemFileNumber] ?? "")" == toolchain.identity else {
+                return .ineligible(reason: .bindingIncomplete)
+            }
+            fields += ["toolchain", toolchain.identity, toolchain.sha256, toolchain.evidenceSHA256, toolchain.version]
+        }
+        for key in environment.keys.sorted() {
+            fields += ["environment", key, "set:\(environment[key]!)"]
+        }
+        return .eligible(digest: digest(fields))
+    }
+
+    private static func cacheResult(
+        stepID: String,
+        execution: RetainedProcessExecution
+    ) -> CheckFreshnessCache.Result {
+        let terminal: CheckFreshnessCache.TerminalState = execution.timedOut
+            ? .timedOut : (execution.exitCode == 0 ? .passed : .failed)
+        let payload = digest([
+            stepID, terminal.rawValue, String(execution.exitCode),
+            execution.stdoutArtifact.sha256, execution.stderrArtifact.sha256,
+        ])
+        return .init(
+            stepID: stepID,
+            terminalState: terminal,
+            sourceRunID: "run_\(execution.processIdentifier)",
+            stdoutArtifactSHA256: execution.stdoutArtifact.sha256,
+            stderrArtifactSHA256: execution.stderrArtifact.sha256,
+            payloadDigest: payload,
+            artifacts: [execution.stdoutArtifact, execution.stderrArtifact]
+        )
+    }
+
+    private static func skippedCacheResult(stepID: String) -> CheckFreshnessCache.Result {
+        let empty = sha256(Data())
+        return .init(
+            stepID: stepID,
+            terminalState: .cancelled,
+            sourceRunID: "skipped_dependency:\(stepID)",
+            stdoutArtifactSHA256: empty,
+            stderrArtifactSHA256: empty,
+            payloadDigest: digest([stepID, "skipped_dependency"]),
+            artifacts: []
+        )
+    }
+
+    private func cachePolicy(_ policy: RunCheckInvocationPlan.CachePolicy) -> CheckFreshnessCache.Policy {
+        switch policy {
+        case .off: .off
+        case .prefer: .prefer
+        case .only: .only
+        case .refresh: .refresh
+        }
+    }
+
+    private static func pipelineError(
+        _ error: CheckFreshnessCache.Error,
+        processesStarted: Int
+    ) -> RunCheckPipelineError {
+        switch error {
+        case .cacheMissWithEvidence(let evidence), .cacheExpiredWithEvidence(let evidence):
+            .cacheMiss(processesStarted: processesStarted, evidence: evidence)
+        case .cacheMiss, .cacheExpired:
+            .cacheMiss(processesStarted: processesStarted, evidence: [])
+        case .cacheCorrupt:
+            .cacheCorrupt(processesStarted: processesStarted)
+        case .contentChanged:
+            .contentChanged(processesStarted: processesStarted)
+        default:
+            .cacheFailure(processesStarted: processesStarted, reason: String(describing: error))
+        }
+    }
+
+    private static func digest(_ fields: [String]) -> String {
+        var data = Data()
+        for field in fields {
+            var length = UInt64(field.utf8.count).bigEndian
+            withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
+            data.append(contentsOf: field.utf8)
+        }
+        return sha256(data)
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private nonisolated static func isSHA256(_ value: String) -> Bool {
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            (48 ... 57).contains($0) || (97 ... 102).contains($0)
+        }
     }
 
     public func readArtifact(
@@ -189,4 +686,107 @@ public actor DevelopmentRuntimeService {
                 || $0.localizedCaseInsensitiveContains("syntaxerror")
         })
     }
+}
+
+public struct RunCheckRelevantInputBinding: Sendable {
+    public let digest: String
+    public let reobserveDigest: @Sendable () -> String?
+
+    public init(digest: String, reobserveDigest: @escaping @Sendable () -> String?) {
+        self.digest = digest
+        self.reobserveDigest = reobserveDigest
+    }
+}
+
+public struct RunCheckResolutionContext: Sendable {
+    /// ProjectProfileServiceが同じworkspace observationから発行したcatalog。
+    public let profileCatalog: ProjectProfileCatalogResult
+    public let focusedAdmission: FocusedCheckService.Admission?
+    /// callerが明示するoverride。profile descriptorが要求する未指定keyは現在process環境からexactに束縛する。
+    public let environment: [String: String]
+    /// checkごとにcallerが証明したcomplete relevant-input closure。欠損時はcache eligibleにしない。
+    public let relevantInputsByCheckID: [String: RunCheckRelevantInputBinding]
+
+    public init(
+        profileCatalog: ProjectProfileCatalogResult,
+        focusedAdmission: FocusedCheckService.Admission? = nil,
+        environment: [String: String] = [:],
+        relevantInputsByCheckID: [String: RunCheckRelevantInputBinding] = [:]
+    ) {
+        self.profileCatalog = profileCatalog
+        self.focusedAdmission = focusedAdmission
+        self.environment = environment
+        self.relevantInputsByCheckID = relevantInputsByCheckID
+    }
+}
+
+public struct RunCheckPipelineStepResult: Sendable {
+    public let stepID: String
+    public let terminalState: CheckFreshnessCache.TerminalState
+    public let sourceRunID: String
+    public let stdoutArtifactSHA256: String
+    public let stderrArtifactSHA256: String
+    public let artifacts: [ArtifactMetadata]
+    public let skippedBecauseDependencyFailed: Bool
+
+    init(_ result: CheckFreshnessCache.Result) {
+        stepID = result.stepID
+        terminalState = result.terminalState
+        sourceRunID = result.sourceRunID
+        stdoutArtifactSHA256 = result.stdoutArtifactSHA256
+        stderrArtifactSHA256 = result.stderrArtifactSHA256
+        artifacts = result.artifacts
+        skippedBecauseDependencyFailed = result.sourceRunID.hasPrefix("skipped_dependency:")
+    }
+}
+
+public struct RunCheckPipelineResult: Sendable {
+    public let schemaVersion: String
+    public let planDigest: String
+    public let selectionDigest: String
+    public let requestedCheckIDs: [String]
+    public let plannedCheckIDs: [String]
+    public let cacheState: CheckFreshnessCache.State
+    public let processesStarted: Int
+    public let publications: Int
+    public let steps: [RunCheckPipelineStepResult]
+    public let lookupEvidence: [CheckFreshnessCache.LookupEvidence]
+}
+
+public enum RunCheckPipelineError: Swift.Error, Equatable, Sendable {
+    case invocationInvalid(processesStarted: Int)
+    case selectionStale(processesStarted: Int)
+    case cacheMiss(processesStarted: Int, evidence: [CheckFreshnessCache.LookupEvidence])
+    case cacheCorrupt(processesStarted: Int)
+    case contentChanged(processesStarted: Int)
+    case cacheFailure(processesStarted: Int, reason: String)
+    case dispatchNotReady(processesStarted: Int)
+
+    public var code: String {
+        switch self {
+        case .invocationInvalid: "RUN_CHECK_INVOCATION_INVALID"
+        case .selectionStale: "RUN_CHECK_SELECTION_STALE"
+        case .cacheMiss: "RUN_CHECK_CACHE_MISS"
+        case .cacheCorrupt: "CACHE_CORRUPT"
+        case .contentChanged: "CONTENT_CHANGED"
+        case .cacheFailure: "RUN_CHECK_CACHE_FAILED"
+        case .dispatchNotReady: "RUN_CHECK_START_NOT_READY"
+        }
+    }
+
+    public var processesStarted: Int {
+        switch self {
+        case .invocationInvalid(let count), .selectionStale(let count),
+             .cacheCorrupt(let count), .contentChanged(let count), .dispatchNotReady(let count): count
+        case .cacheMiss(let count, _), .cacheFailure(let count, _): count
+        }
+    }
+}
+
+private final class RunCheckProcessCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    func increment() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
 }

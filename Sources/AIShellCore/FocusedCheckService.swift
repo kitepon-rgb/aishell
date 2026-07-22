@@ -132,11 +132,27 @@ public actor FocusedCheckService {
     }
 
     public struct Selection: Codable, Equatable, Sendable {
+        public struct ResolvedCandidate: Codable, Equatable, Sendable {
+            public let focusedCheckID: String
+            public let profileCheckID: String
+            public let selector: Selector
+            public let steps: [Step]
+
+            public init(focusedCheckID: String, profileCheckID: String, selector: Selector, steps: [Step]) {
+                self.focusedCheckID = focusedCheckID
+                self.profileCheckID = profileCheckID
+                self.selector = selector
+                self.steps = steps
+            }
+        }
+
         public let focusedSetID: String
         public let focusedSetDigest: String
         public let requestedCheckIDs: [String]
         public let plannedCheckIDs: [String]
         public let steps: [Step]
+        /// 実行側が公開済みDAGの各stepを元candidateとexactに対応付けるための加法的情報。
+        public let resolvedCandidates: [ResolvedCandidate]
         public let selectionDigest: String
     }
 
@@ -202,13 +218,48 @@ public actor FocusedCheckService {
         let candidateByID = Dictionary(uniqueKeysWithValues: set.candidates.map { ($0.focusedCheckID, $0) })
         guard requestedCheckIDs.allSatisfy({ candidateByID[$0] != nil }) else { throw Error.invocationInvalid }
         var selectedSteps: [Step] = []
+        var resolvedCandidates: [Selection.ResolvedCandidate] = []
         for id in requestedCheckIDs {
             guard let candidate = candidateByID[id] else { throw Error.invocationInvalid }
-            selectedSteps.append(contentsOf: try topological(candidate.source.steps))
+            let ordered = try topological(candidate.source.steps)
+            selectedSteps.append(contentsOf: ordered)
+            resolvedCandidates.append(.init(
+                focusedCheckID: id,
+                profileCheckID: candidate.source.profileCheckID,
+                selector: candidate.source.selector,
+                steps: ordered
+            ))
         }
         guard Set(selectedSteps.map(\.id)).count == selectedSteps.count else { throw Error.invocationInvalid }
         let selectionDigest = digest(parts: [set.digest] + requestedCheckIDs + requestedCheckIDs.flatMap { [candidateByID[$0]!.dagDigest] })
-        return Selection(focusedSetID: set.id, focusedSetDigest: set.digest, requestedCheckIDs: requestedCheckIDs, plannedCheckIDs: requestedCheckIDs, steps: selectedSteps, selectionDigest: selectionDigest)
+        return Selection(
+            focusedSetID: set.id,
+            focusedSetDigest: set.digest,
+            requestedCheckIDs: requestedCheckIDs,
+            plannedCheckIDs: requestedCheckIDs,
+            steps: selectedSteps,
+            resolvedCandidates: resolvedCandidates,
+            selectionDigest: selectionDigest
+        )
+    }
+
+    /// planがset digestを運ばない場合も、service内のimmutable receiptを正本として解決し、
+    /// callerが束縛したselection digestとexactに照合する。
+    public func resolve(
+        focusedSetID: String,
+        requestedCheckIDs: [String],
+        expectedSelectionDigest: String,
+        admission: Admission
+    ) throws -> Selection {
+        guard let set = sets[focusedSetID] else { throw Error.selectionStale }
+        let selection = try resolve(
+            focusedSetID: focusedSetID,
+            focusedSetDigest: set.digest,
+            requestedCheckIDs: requestedCheckIDs,
+            admission: admission
+        )
+        guard selection.selectionDigest == expectedSelectionDigest else { throw Error.selectionStale }
+        return selection
     }
 
     private func normalized(_ candidate: Candidate) throws -> Candidate {

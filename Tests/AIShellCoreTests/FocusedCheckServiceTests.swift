@@ -114,6 +114,27 @@ final class FocusedCheckServiceTests: XCTestCase {
         }, { XCTAssertEqual($0 as? FocusedCheckService.Error, .invocationInvalid) })
     }
 
+    func testPlanFacingResolverUsesStoredSetDigestAndRejectsSelectionDigestMismatch() async throws {
+        let service = FocusedCheckService()
+        let set = try await service.compile(request(candidates: [candidate()]))
+        let id = set.candidates[0].focusedCheckID
+        let baseline = try await service.resolve(
+            focusedSetID: set.id, focusedSetDigest: set.digest,
+            requestedCheckIDs: [id], admission: admission()
+        )
+        let exact = try await service.resolve(
+            focusedSetID: set.id, requestedCheckIDs: [id],
+            expectedSelectionDigest: baseline.selectionDigest, admission: admission()
+        )
+        XCTAssertEqual(exact, baseline)
+        await XCTAssertThrowsErrorAsync({
+            try await service.resolve(
+                focusedSetID: set.id, requestedCheckIDs: [id],
+                expectedSelectionDigest: self.hash("wrong"), admission: self.admission()
+            )
+        }, { XCTAssertEqual($0 as? FocusedCheckService.Error, .selectionStale) })
+    }
+
     private func request(candidates: [FocusedCheckService.Candidate], coverage: [String] = ["covered"], limitations: [String] = ["none"], expiry: Date = Date.distantFuture) -> FocusedCheckService.CompileRequest { .init(rootIdentity: "root", generation: "g", cursor: "cursor", profileDigest: hash("profile"), manifestIdentity: "manifest", impactArtifactDigest: hash("impact"), coverage: coverage, limitations: limitations, candidates: candidates, expiresAt: expiry) }
     private func admission(cursor: String = "cursor") -> FocusedCheckService.Admission { .init(rootIdentity: "root", generation: "g", cursor: cursor, profileDigest: hash("profile"), manifestIdentity: "manifest", impactArtifactDigest: hash("impact")) }
     private func candidate(check: String = "check", steps: [FocusedCheckService.Step]? = nil, evidence: [FocusedCheckService.Evidence]? = nil) -> FocusedCheckService.Candidate { .init(profileCheckID: check, profileDigest: hash("profile"), selector: .testPath(path: "Tests/\(check).swift"), steps: steps ?? [step("\(check)-step")], evidence: evidence ?? [self.evidence("one")]) }
