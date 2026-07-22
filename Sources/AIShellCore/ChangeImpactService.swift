@@ -1230,7 +1230,7 @@ public actor ChangeImpactService {
               let projectRoot = catalogRelative(profile.projectRoot, catalogRoot: catalogRoot) else { return false }
         guard projectRoot.isEmpty || normalizedPath == projectRoot || normalizedPath.hasPrefix(projectRoot + "/") else { return false }
         return profile.targets.contains { target in
-            target.kind == "test" && target.sourceRoots.contains { root in
+            target.sourceRoots.contains { root in
                 guard let normalizedRoot = rootRelative(root) else { return false }
                 return normalizedPath == normalizedRoot || normalizedPath.hasPrefix(normalizedRoot + "/")
             }

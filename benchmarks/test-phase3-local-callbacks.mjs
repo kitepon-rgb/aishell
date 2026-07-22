@@ -5,6 +5,9 @@ import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { captureManifest } from './capture-workspace-manifest.mjs';
+import { evaluateAttempt } from './evaluate-capability-oracle.mjs';
+import { materializeRequestContract } from './materialize-capability-request.mjs';
+import { observeAttempt } from './observe-capability-attempt.mjs';
 import {
   captureTrustedSetup,
   collectAttemptEvidence,
@@ -22,14 +25,26 @@ const root = await mkdtemp(path.join(tmpdir(), 'aishell-phase3-local-callbacks-'
 const incompatibleAnalyze = { tool: 'change_impact', isError: false, request: { operation: 'analyze' } };
 const failedRecommend = { tool: 'change_impact', isError: true, request: { operation: 'recommend' } };
 assert.equal(selectCompatibleCandidateRoot(
-  [failedRecommend, incompatibleAnalyze], 'change_impact',
+  [failedRecommend, incompatibleAnalyze], { tool: 'change_impact', action: 'recommend' },
   ({ request }) => request.operation === 'recommend',
 ), null);
-const compatibleRecommend = { tool: 'change_impact', isError: false, request: { operation: 'recommend' } };
+const compatibleRecommend = { tool: 'change_impact', isError: false,
+  request: { operation: 'recommend' }, result: { operation: 'recommend' } };
 assert.equal(selectCompatibleCandidateRoot(
-  [incompatibleAnalyze, compatibleRecommend], 'change_impact',
+  [incompatibleAnalyze, compatibleRecommend], { tool: 'change_impact', action: 'recommend' },
   ({ request }) => request.operation === 'recommend',
 ), compatibleRecommend);
+const semanticallyMatchingRecommend = { tool: 'change_impact', isError: false,
+  request: { operation: 'recommend', extra: true }, result: { operation: 'recommend' } };
+assert.equal(selectCompatibleCandidateRoot(
+  [incompatibleAnalyze, semanticallyMatchingRecommend], { tool: 'change_impact', action: 'recommend' },
+  () => false,
+), semanticallyMatchingRecommend);
+const successfulRunCheck = { tool: 'run_check', isError: false,
+  request: { cache: 'only' }, result: { schemaVersion: 'aishell.run-check.v2' } };
+assert.equal(selectCompatibleCandidateRoot(
+  [successfulRunCheck], { tool: 'run_check', action: 'execute' }, () => false,
+), successfulRunCheck);
 const workspace = path.join(root, 'workspace');
 const stateDirectory = path.join(root, 'state');
 await mkdir(workspace);
@@ -251,9 +266,49 @@ const collected = await collectAttemptEvidence({
   finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
 });
 assert.deepEqual(collected.result, { secondExecutionCount: 0, cacheHit: true, falseFresh: 0 });
+assert.deepEqual(collected.telemetry, { secondExecutionCount: 0, cacheHit: true, falseFresh: 0 });
 assert.equal(Buffer.isBuffer(collected.adapterTraceBytes), true);
 assert.equal(collected.toolTrace.events[0].action, 'execute');
+assert.deepEqual(collected.toolTrace.events.at(-1), {
+  provider: 'aishell', tool: 'run_check', action: 'execute', request: prepared.calls[0].frozenRequest,
+  metadata: { preStateDigest: preAttemptManifest.digest }, result: productionResult,
+  resultDigest: sha256Hex(productionResultBytes), status: 'succeeded', isError: false,
+});
 assert.equal(collected.metrics.toolCalls, 1);
+const acceptanceDirectory = path.join(root, 'projected-acceptance');
+await mkdir(acceptanceDirectory);
+const acceptanceFiles = Object.fromEntries(['baseline', 'preAttempt', 'setup', 'request', 'result', 'process',
+  'telemetry', 'trace', 'toolTrace', 'agentReport'].map((name) => [name, path.join(acceptanceDirectory, `${name}.json`)]));
+const [suite, catalog, executionContracts] = await Promise.all([
+  readFile(new URL('representative-suite.v1.json', import.meta.url), 'utf8').then(JSON.parse),
+  readFile(new URL('capability-fixtures.v1.json', import.meta.url), 'utf8').then(JSON.parse),
+  readFile(new URL('representative-execution-contracts.v1.json', import.meta.url), 'utf8').then(JSON.parse),
+]);
+const requestContract = materializeRequestContract({
+  taskId: candidateAttempt.taskID, workspaceRoot: workspace, preAttemptManifest, baselineManifest,
+  setupEvidence: benchmarkSetupEvidence, suite, catalog, execution: executionContracts,
+});
+const agentReport = { schema: 'aishell.agent-benchmark-report.v1', taskId: candidateAttempt.taskID, assertions: {} };
+for (const [file, value] of [
+  [acceptanceFiles.baseline, baselineManifest], [acceptanceFiles.preAttempt, preAttemptManifest],
+  [acceptanceFiles.setup, benchmarkSetupEvidence], [acceptanceFiles.request, requestContract],
+  [acceptanceFiles.result, collected.result],
+  [acceptanceFiles.process, { agentExitCode: 0, agentTimedOut: false }],
+  [acceptanceFiles.telemetry, collected.telemetry], [acceptanceFiles.trace, collected.trace],
+  [acceptanceFiles.toolTrace, collected.toolTrace], [acceptanceFiles.agentReport, agentReport],
+]) await writeFile(file, `${JSON.stringify(value)}\n`);
+const projectedObservation = await observeAttempt({
+  taskId: candidateAttempt.taskID, armId: candidateAttempt.arm, workspace,
+  baselineFile: acceptanceFiles.baseline, preAttemptFile: acceptanceFiles.preAttempt,
+  setupEvidenceFile: acceptanceFiles.setup, requestContractFile: acceptanceFiles.request,
+  resultFile: acceptanceFiles.result, processFile: acceptanceFiles.process,
+  artifactStore: collected.artifactStore, telemetryFile: acceptanceFiles.telemetry,
+  traceFile: acceptanceFiles.trace, toolTraceFile: acceptanceFiles.toolTrace,
+  agentReportFile: acceptanceFiles.agentReport,
+});
+assert.deepEqual(projectedObservation.capabilityEvidence.acceptedInvocations, ['run_check:execute']);
+assert.equal((await evaluateAttempt({ taskId: candidateAttempt.taskID, armId: candidateAttempt.arm,
+  actual: projectedObservation })).solved, true);
 const exploratoryResult = { schemaVersion: 'aishell.workspace-snapshot.v2', entries: [] };
 const expectedMiss = {
   schemaVersion: 'aishell.run-check.v2',

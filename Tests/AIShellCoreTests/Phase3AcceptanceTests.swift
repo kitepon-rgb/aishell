@@ -413,12 +413,12 @@ private final class Phase3FocusedFixture: @unchecked Sendable {
             memberProjectIds: [],
             targets: [.init(
                 targetId: "phase3-tests",
-                name: "phase3 tests",
-                kind: "test",
+                name: "phase3 npm package",
+                kind: "library",
                 dependencies: [],
-                sourceRoots: ["test"],
+                sourceRoots: ["src", "test"],
                 resourceRoots: [],
-                testRelation: "package-tests",
+                testRelation: nil,
                 provenance: check.provenance
             )],
             checks: [check],

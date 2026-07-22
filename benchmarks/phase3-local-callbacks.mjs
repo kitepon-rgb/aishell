@@ -24,11 +24,17 @@ function plainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function selectCompatibleCandidateRoot(calls, tool, compatible) {
-  if (!Array.isArray(calls) || typeof tool !== 'string' || typeof compatible !== 'function') {
+export function selectCompatibleCandidateRoot(calls, { tool, action }, compatible) {
+  if (!Array.isArray(calls) || typeof tool !== 'string' || typeof action !== 'string'
+    || typeof compatible !== 'function') {
     throw new TypeError('candidate root selection input is invalid');
   }
-  return calls.filter((call) => !call.isError && call.tool === tool && compatible(call)).at(-1) ?? null;
+  const successful = calls.filter((call) => !call.isError && call.tool === tool);
+  const exact = successful.filter(compatible).at(-1);
+  if (exact !== undefined) return exact;
+  return successful.filter((call) => tool === 'run_check'
+    ? action === 'execute'
+    : call.result?.operation === action).at(-1) ?? null;
 }
 
 function exactKeys(value, required, optional, label) {
@@ -763,7 +769,7 @@ export async function collectAttemptEvidence(input) {
       setupEvidence: benchmarkSetupEvidence, trustedProductionSetup,
     });
     const preparedCall = prepared.calls[0];
-    const call = selectCompatibleCandidateRoot(calls, preparedCall.tool, (candidate) => {
+    const call = selectCompatibleCandidateRoot(calls, preparedCall, (candidate) => {
       try {
         validateCandidateProductionRequest({
           taskID: attempt.taskID, tool: candidate.tool,
@@ -850,6 +856,13 @@ export async function collectAttemptEvidence(input) {
         productionResultBytes: recorded.productionResultBytes, trace: recorded.trace,
         completeArtifactBytes: artifact, projectedResultBytes: recorded.projectedBytes,
       });
+      const observerResult = call.tool === 'run_check' ? call.result : recorded.projected;
+      observerEvents.push({
+        provider: 'aishell', tool: preparedCall.tool, action: preparedCall.action,
+        request: preparedCall.frozenRequest, metadata: { preStateDigest: preAttemptManifest.digest },
+        result: observerResult, resultDigest: sha256Hex(canonicalJSONBytes(observerResult)),
+        status: 'succeeded', isError: false,
+      });
     }
   } else {
     for (const call of calls) {
@@ -863,11 +876,17 @@ export async function collectAttemptEvidence(input) {
     projectedResult = Object.assign({}, ...calls.filter(({ isError }) => !isError).map(({ result }) => result));
   }
   if (!plainObject(finalAgent?.assertions)) throw new Error('final agent assertions are unavailable');
-  const telemetry = {
+  const observedTelemetry = {
     secondExecutionCount: calls.reduce((sum, { result }) => sum + (Number.isInteger(result.processesStarted) ? result.processesStarted : 0), 0),
     cacheHit: calls.some(({ result }) => result.cacheState === 'hit' || result.cacheHit === true),
     falseFresh: calls.reduce((sum, { result }) => sum + (Number.isInteger(result.falseFresh) ? result.falseFresh : 0), 0),
   };
+  const telemetry = attempt.arm === 'candidate' ? {
+    secondExecutionCount: Number.isInteger(projectedResult.secondExecutionCount)
+      ? projectedResult.secondExecutionCount : observedTelemetry.secondExecutionCount,
+    cacheHit: typeof projectedResult.cacheHit === 'boolean' ? projectedResult.cacheHit : observedTelemetry.cacheHit,
+    falseFresh: Number.isInteger(projectedResult.falseFresh) ? projectedResult.falseFresh : observedTelemetry.falseFresh,
+  } : observedTelemetry;
   return {
     result: Object.keys(projectedResult).length === 0 ? structuredClone(finalAgent.assertions) : projectedResult,
     process: { agentExitCode: execution.exitCode, agentTimedOut: execution.timedOut },

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { generatedTreeDigest } from './materialize-generated-seed.mjs';
-import { renderRepresentativePrompt } from './render-representative-prompt.mjs';
+import { renderRepresentativePrompt, representativeJSONType } from './render-representative-prompt.mjs';
 
 const suite = JSON.parse(await readFile(new URL('./representative-suite.v1.json', import.meta.url)));
 const catalog = JSON.parse(await readFile(new URL('./capability-fixtures.v1.json', import.meta.url)));
@@ -77,6 +77,8 @@ for (const task of suite.tasks) {
   assert.equal(renderedPrompt.includes('"oracle"'), false, `oracle values must remain hidden: ${task.id}`);
   for (const key of Object.keys(scenario.oracle).filter((key) => !suite.metrics.internalTelemetryKeys.includes(key))) {
     assert.ok(renderedPrompt.includes(`<observed ${key}>`), `report key must be model-visible: ${task.id}/${key}`);
+    assert.ok(renderedPrompt.includes(`${key}=${representativeJSONType(scenario.oracle[key])}`),
+      `report JSON type must be model-visible: ${task.id}/${key}`);
   }
   assert.equal(renderedPrompt, await renderRepresentativePrompt(task.id), `samePrompt bytes must be arm-independent: ${task.id}`);
 }
