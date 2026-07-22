@@ -69,6 +69,11 @@ final class MCPTypesTests: XCTestCase {
         XCTAssertEqual(expandedFull.filter { $0.name == "apply_change_set" }.count, 1)
         XCTAssertEqual(expandedFull.filter { $0.name == "run_observe" }.count, 1)
         XCTAssertEqual(expandedFull.filter { $0.name == "workspace_wait" }.count, 1)
+        let baselineArtifact = try XCTUnwrap(baselineDefault.first { $0.name == "artifact_read" })
+        let expandedArtifact = try XCTUnwrap(expandedDefault.first { $0.name == "artifact_read" })
+        XCTAssertEqual(expandedArtifact.inputSchema.objectValue?["oneOf"]?.arrayValue?.count, 4)
+        XCTAssertEqual(expandedArtifact.outputSchema?.objectValue?["oneOf"]?.arrayValue?.count, 4)
+        XCTAssertNotEqual(expandedArtifact.inputSchema, baselineArtifact.inputSchema)
 
         let first = try JSONEncoder.aishell.encode(expandedFull)
         let second = try JSONEncoder.aishell.encode(

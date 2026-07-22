@@ -95,6 +95,7 @@ public actor ManagedRunService {
     private let supervisor: ExternalProcessSupervisor
     private let registry: ManagedProcessRegistry
     private let artifacts: ManagedRunArtifactStore
+    private let artifactQueries: ManagedArtifactQueryService
     private let cursorKey: SymmetricKey
 
     public init(
@@ -108,7 +109,9 @@ public actor ManagedRunService {
         )
         self.supervisor = supervisor
         registry = try ManagedProcessRegistry(store: runtimeStore, supervisor: supervisor)
-        artifacts = try ManagedRunArtifactStore(runtimeStore: runtimeStore)
+        let artifacts = try ManagedRunArtifactStore(runtimeStore: runtimeStore)
+        self.artifacts = artifacts
+        artifactQueries = ManagedArtifactQueryService(store: artifacts)
         cursorKey = SymmetricKey(data: try Self.loadOrCreateCursorKey(runtimeStore: runtimeStore))
     }
 
@@ -281,6 +284,44 @@ public actor ManagedRunService {
         return try await status(runHandle: runHandle)
     }
 
+    public func searchArtifacts(
+        projectPath: String,
+        sources: [ManagedArtifactQuerySource],
+        pattern: ArtifactQueryService.Pattern,
+        pageByteLimit: Int
+    ) async throws -> ManagedArtifactQueryPage {
+        try await artifactQueries.search(
+            projectPath: projectPath,
+            sources: sources,
+            pattern: pattern,
+            pageByteLimit: pageByteLimit
+        )
+    }
+
+    public func continueArtifactSearch(
+        streamHandle: String,
+        cursor: String,
+        pageByteLimit: Int
+    ) async throws -> ManagedArtifactQueryPage {
+        try await artifactQueries.next(
+            streamHandle: streamHandle, cursor: cursor, pageByteLimit: pageByteLimit
+        )
+    }
+
+    public func compareArtifacts(
+        projectPath: String,
+        baselineRunID: UUID,
+        candidateRunID: UUID,
+        channels: Set<String>
+    ) async throws -> ManagedArtifactCompareResult {
+        try await artifactQueries.compare(
+            projectPath: projectPath,
+            baselineRunID: baselineRunID,
+            candidateRunID: candidateRunID,
+            channels: channels
+        )
+    }
+
     private func refresh(runHandle: String) async throws -> ManagedRunSnapshot {
         var snapshot = try await registry.observe(runHandle: runHandle)
         let paths = supervisor.paths(runID: snapshot.runID)
@@ -326,6 +367,12 @@ public actor ManagedRunService {
             await artifacts.prepare(
                 runID: snapshot.runID,
                 requestDigest: wire.requestDigest,
+                projectID: try ManagedArtifactQueryService.projectID(path: wire.workingDirectoryPath),
+                executablePath: wire.executablePath,
+                arguments: wire.arguments,
+                workingDirectoryPath: wire.workingDirectoryPath,
+                environmentDigest: try Self.environmentDigest(wire.environment),
+                expiresAt: snapshot.expiresAt,
                 stdoutURL: paths.stdout,
                 stderrURL: paths.stderr,
                 diagnosticURL: paths.diagnostics

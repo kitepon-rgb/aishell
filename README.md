@@ -40,9 +40,11 @@ The default profile exposes five high-density development tools plus two always-
 | `read_context` | Budgeted multi-file reads with SHA-256 identity and continuation |
 | `search_context` | Budgeted search context produced by a directly launched `rg` worker |
 | `run_check` | Direct process execution, primary diagnostics, and complete stdout/stderr artifacts |
-| `artifact_read` | Range, tail, and pattern-centered reads from retained artifacts |
+| `artifact_read` | Range, tail, and pattern-centered reads from retained artifacts; the expanded capability also searches and compares finalized managed-run artifacts |
 | `runtime_status` | Allowed-root, pause, worktree, and next-action state, including while paused or unconfigured |
 | `runtime_open_manager` | Open the manager app to add roots or resume AI operations |
+
+Set `AISHELL_CAPABILITY_SET=expanded-v1` on the MCP server process to opt in to the candidate surface. In that mode, `run_check` can start a managed run, `run_observe` can read or wait for it independently of the originating MCP request, and `artifact_read` adds closed `search`, `next`, and `compare` actions. Cross-run artifact operations require an explicit project path and reject live, expired, legacy-unbound, or different-project evidence instead of silently falling back to partial logs.
 
 ## Why AIShell
 

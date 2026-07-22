@@ -61,7 +61,7 @@ final class MCPRunCheckV2WireTests: XCTestCase {
                 executable: "/usr/bin/python3",
                 workingDirectory: fixture.root.path,
                 dispatch: ["mode": .string("start"), "client_run_key": .string("wire-start")],
-                arguments: ["-c", "import time; print('wire',flush=True); time.sleep(.2)"]
+                arguments: ["-c", "import time; print('wire one',flush=True); print('wire two',flush=True); time.sleep(.2)"]
             ))
         ]))
         let result = try XCTUnwrap(response.result?.objectValue)
@@ -103,6 +103,72 @@ final class MCPRunCheckV2WireTests: XCTestCase {
         XCTAssertTrue(evidenceResult["chunks"]?.arrayValue?.contains {
             $0.objectValue?["text"]?.stringValue?.contains("wire") == true
         } == true)
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while clock.now < deadline {
+            let status = try await managed.status(runHandle: handle)
+            if ["passed", "failed", "timed_out", "cancelled", "interrupted"].contains(status.state) {
+                break
+            }
+            try await clock.sleep(for: .milliseconds(20))
+        }
+        let terminal = try await managed.status(runHandle: handle)
+        XCTAssertEqual(terminal.state, "passed")
+
+        let search = await server.callTool(id: .number(4), params: .object([
+            "name": .string("artifact_read"),
+            "arguments": .object([
+                "action": .string("search"),
+                "project_path": .string(fixture.root.path),
+                "sources": .array([.object([
+                    "type": .string("run"),
+                    "run_id": .string(terminal.runID.uuidString),
+                    "channels": .array([.string("stdout")])
+                ])]),
+                "pattern_kind": .string("literal"),
+                "pattern": .string("wire"),
+                "case": .string("sensitive"),
+                "page_byte_limit": .number(1)
+            ])
+        ]))
+        let searchResult = try XCTUnwrap(search.result?.objectValue)
+        let searchStructured = try XCTUnwrap(searchResult["structuredContent"]?.objectValue)
+        XCTAssertEqual(searchResult["isError"], .bool(false))
+        XCTAssertEqual(searchStructured["schema"], .string("aishell.artifact-read.v2"))
+        XCTAssertEqual(searchStructured["action"], .string("search"))
+        XCTAssertEqual(searchStructured["items"]?.arrayValue?.count, 1)
+        XCTAssertEqual(searchStructured["hasMore"], .bool(true))
+        let next = await server.callTool(id: .number(5), params: .object([
+            "name": .string("artifact_read"),
+            "arguments": .object([
+                "action": .string("next"),
+                "stream_handle": searchStructured["streamHandle"]!,
+                "cursor": searchStructured["nextCursor"]!,
+                "page_byte_limit": .number(1)
+            ])
+        ]))
+        let nextStructured = try XCTUnwrap(next.result?.objectValue?["structuredContent"]?.objectValue)
+        XCTAssertEqual(next.result?.objectValue?["isError"], .bool(false))
+        XCTAssertEqual(nextStructured["items"]?.arrayValue?.count, 1)
+        XCTAssertEqual(nextStructured["hasMore"], .bool(false))
+
+        let compare = await server.callTool(id: .number(6), params: .object([
+            "name": .string("artifact_read"),
+            "arguments": .object([
+                "action": .string("compare"),
+                "project_path": .string(fixture.root.path),
+                "baseline_run_id": .string(terminal.runID.uuidString),
+                "candidate_run_id": .string(terminal.runID.uuidString),
+                "channels": .array([.string("stdout"), .string("stderr")])
+            ])
+        ]))
+        let compareStructured = try XCTUnwrap(
+            compare.result?.objectValue?["structuredContent"]?.objectValue
+        )
+        XCTAssertEqual(compare.result?.objectValue?["isError"], .bool(false))
+        XCTAssertEqual(compareStructured["action"], .string("compare"))
+        XCTAssertEqual(compareStructured["comparisons"]?.arrayValue?.count, 2)
     }
 
     func testChangeImpactAnalyzeRunsThroughExpandedPublicWire() async throws {

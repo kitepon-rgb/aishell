@@ -689,6 +689,16 @@ enum ToolCatalog {
     /// baselineのv1 schemaを一切変更せず、capability opt-in時だけv2 closed unionへ置換する。
     private static var expandedTools: [MCPTool] {
         tools.map { tool in
+            if tool.name == "artifact_read" {
+                return MCPTool(
+                    name: tool.name,
+                    title: tool.title,
+                    description: "v1単一readを維持し、terminal managed runだけをproject/store binding照合後に横断search・compareします。live spoolへfallbackしません。",
+                    inputSchema: artifactReadExpandedInputSchema(legacy: tool.inputSchema),
+                    outputSchema: artifactReadExpandedOutputSchema(legacy: tool.outputSchema!),
+                    annotations: tool.annotations
+                )
+            }
             guard tool.name == "run_check" else { return tool }
             return MCPTool(
                 name: tool.name,
@@ -699,6 +709,83 @@ enum ToolCatalog {
                 annotations: tool.annotations
             )
         }
+    }
+
+    private static let artifactQuerySourceSchema: JSONValue = .object([
+        "oneOf": .array([
+            closedObject(required: ["type", "handle"], properties: [
+                "type": constString("artifact"),
+                "handle": boundedString(minLength: 1, maxLength: 16_384)
+            ]),
+            closedObject(required: ["type", "run_id", "channels"], properties: [
+                "type": constString("run"),
+                "run_id": boundedString(minLength: 1, maxLength: 64),
+                "channels": .object([
+                    "type": .string("array"), "minItems": .number(1), "maxItems": .number(3),
+                    "uniqueItems": .bool(true),
+                    "items": enumType(["stdout", "stderr", "diagnostics"])
+                ])
+            ])
+        ])
+    ])
+
+    private static func artifactReadExpandedInputSchema(legacy: JSONValue) -> JSONValue {
+        .object(["oneOf": .array([
+            legacy,
+            closedObject(required: ["action", "project_path", "sources", "pattern"], properties: [
+                "action": constString("search"),
+                "project_path": boundedString(minLength: 1, maxLength: 4_096),
+                "sources": .object([
+                    "type": .string("array"), "minItems": .number(1), "maxItems": .number(64),
+                    "items": artifactQuerySourceSchema
+                ]),
+                "pattern_kind": enumType(["literal", "regex"]),
+                "pattern": boundedString(minLength: 1, maxLength: 65_536),
+                "case": enumType(["sensitive", "insensitive"]),
+                "regex_flags": boundedString(minLength: 0, maxLength: 8),
+                "page_byte_limit": integer("result page上限", minimum: 1, maximum: 1_048_576)
+            ]),
+            closedObject(required: ["action", "stream_handle", "cursor"], properties: [
+                "action": constString("next"),
+                "stream_handle": boundedString(minLength: 1, maxLength: 16_384),
+                "cursor": boundedString(minLength: 1, maxLength: 65_536),
+                "page_byte_limit": integer("result page上限", minimum: 1, maximum: 1_048_576)
+            ]),
+            closedObject(required: ["action", "project_path", "baseline_run_id", "candidate_run_id", "channels"], properties: [
+                "action": constString("compare"),
+                "project_path": boundedString(minLength: 1, maxLength: 4_096),
+                "baseline_run_id": boundedString(minLength: 1, maxLength: 64),
+                "candidate_run_id": boundedString(minLength: 1, maxLength: 64),
+                "channels": .object([
+                    "type": .string("array"), "minItems": .number(1), "maxItems": .number(3),
+                    "uniqueItems": .bool(true),
+                    "items": enumType(["stdout", "stderr", "diagnostics"])
+                ])
+            ])
+        ])])
+    }
+
+    private static let artifactSearchOutputSchema = closedObject(
+        required: ["schema", "action", "projectID", "streamHandle", "items", "hasMore"],
+        properties: [
+            "schema": constString("aishell.artifact-read.v2"), "action": constString("search"),
+            "projectID": sha256Schema, "streamHandle": type("string"), "items": type("array"),
+            "nextCursor": type("string"), "hasMore": type("boolean")
+        ]
+    )
+
+    private static let artifactCompareOutputSchema = closedObject(
+        required: ["schema", "action", "projectID", "baselineRunID", "candidateRunID", "comparisons"],
+        properties: [
+            "schema": constString("aishell.artifact-read.v2"), "action": constString("compare"),
+            "projectID": sha256Schema, "baselineRunID": type("string"),
+            "candidateRunID": type("string"), "comparisons": type("array")
+        ]
+    )
+
+    private static func artifactReadExpandedOutputSchema(legacy: JSONValue) -> JSONValue {
+        let legacyVariants = legacy.objectValue?["oneOf"]?.arrayValue ?? []
+        return .object(["oneOf": .array(legacyVariants + [artifactSearchOutputSchema, artifactCompareOutputSchema])])
     }
 
     private static let changeImpactTool = MCPTool(

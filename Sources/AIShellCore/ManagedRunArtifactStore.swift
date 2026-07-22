@@ -6,6 +6,9 @@ public enum ManagedRunArtifactStoreError: Error, Equatable, Sendable {
     case bindingMismatch
     case runNotFinalized
     case artifactNotFound
+    case runExpired
+    case scopeMismatch
+    case legacyArtifactUnbound
     case storeCorrupt(String)
 }
 
@@ -13,26 +16,53 @@ public struct ManagedRunArtifactRecord: Codable, Equatable, Sendable {
     public let schema: String
     public let runID: UUID
     public let requestDigest: String
+    public let projectID: String?
+    public let storeIdentityDigest: String?
+    public let executablePath: String?
+    public let arguments: [String]?
+    public let workingDirectoryPath: String?
+    public let environmentDigest: String?
+    public let toolchainBinding: String?
+    public let inputBinding: String?
     public let stdout: ManagedArtifactIdentity
     public let stderr: ManagedArtifactIdentity
     public let diagnostics: ManagedArtifactIdentity
     public let finalizedAt: Date
+    public let expiresAt: Date?
 
     public init(
         runID: UUID,
         requestDigest: String,
+        projectID: String? = nil,
+        storeIdentityDigest: String? = nil,
+        executablePath: String? = nil,
+        arguments: [String]? = nil,
+        workingDirectoryPath: String? = nil,
+        environmentDigest: String? = nil,
+        toolchainBinding: String? = nil,
+        inputBinding: String? = nil,
         stdout: ManagedArtifactIdentity,
         stderr: ManagedArtifactIdentity,
         diagnostics: ManagedArtifactIdentity,
-        finalizedAt: Date
+        finalizedAt: Date,
+        expiresAt: Date? = nil
     ) {
         schema = "aishell.managed-run-index.v1"
         self.runID = runID
         self.requestDigest = requestDigest
+        self.projectID = projectID
+        self.storeIdentityDigest = storeIdentityDigest
+        self.executablePath = executablePath
+        self.arguments = arguments
+        self.workingDirectoryPath = workingDirectoryPath
+        self.environmentDigest = environmentDigest
+        self.toolchainBinding = toolchainBinding
+        self.inputBinding = inputBinding
         self.stdout = stdout
         self.stderr = stderr
         self.diagnostics = diagnostics
         self.finalizedAt = finalizedAt
+        self.expiresAt = expiresAt
     }
 }
 
@@ -43,14 +73,17 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
 
     private let publicRootURL: URL
     private let stagingRootURL: URL
+    public nonisolated let storeIdentityDigest: String
     private var pending: PendingPublication?
 
     public init(runtimeStore: RuntimeStore = RuntimeStore()) throws {
         let root = runtimeStore.baseDirectory
             .appendingPathComponent("managed-runs", isDirectory: true)
             .appendingPathComponent("artifacts", isDirectory: true)
+        try Self.ensurePrivateDirectory(root)
         publicRootURL = root.appendingPathComponent("published", isDirectory: true)
         stagingRootURL = root.appendingPathComponent("staging", isDirectory: true)
+        storeIdentityDigest = try Self.loadOrCreateStoreIdentity(root: root)
         try Self.ensurePrivateDirectory(publicRootURL)
         try Self.ensurePrivateDirectory(stagingRootURL)
     }
@@ -58,6 +91,14 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
     public func prepare(
         runID: UUID,
         requestDigest: String,
+        projectID: String? = nil,
+        executablePath: String? = nil,
+        arguments: [String]? = nil,
+        workingDirectoryPath: String? = nil,
+        environmentDigest: String? = nil,
+        toolchainBinding: String? = nil,
+        inputBinding: String? = nil,
+        expiresAt: Date? = nil,
         stdoutURL: URL,
         stderrURL: URL,
         diagnosticURL: URL
@@ -65,6 +106,14 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
         pending = PendingPublication(
             runID: runID,
             requestDigest: requestDigest,
+            projectID: projectID,
+            executablePath: executablePath,
+            arguments: arguments,
+            workingDirectoryPath: workingDirectoryPath,
+            environmentDigest: environmentDigest,
+            toolchainBinding: toolchainBinding,
+            inputBinding: inputBinding,
+            expiresAt: expiresAt,
             stdoutURL: stdoutURL,
             stderrURL: stderrURL,
             diagnosticURL: diagnosticURL
@@ -97,10 +146,19 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
         let record = ManagedRunArtifactRecord(
             runID: pending.runID,
             requestDigest: pending.requestDigest,
+            projectID: pending.projectID,
+            storeIdentityDigest: pending.projectID == nil ? nil : storeIdentityDigest,
+            executablePath: pending.executablePath,
+            arguments: pending.arguments,
+            workingDirectoryPath: pending.workingDirectoryPath,
+            environmentDigest: pending.environmentDigest,
+            toolchainBinding: pending.toolchainBinding,
+            inputBinding: pending.inputBinding,
             stdout: inspection.stdout,
             stderr: inspection.stderr,
             diagnostics: diagnostics,
-            finalizedAt: finalizedAt
+            finalizedAt: finalizedAt,
+            expiresAt: pending.expiresAt
         )
         if FileManager.default.fileExists(atPath: publishedURL.path) {
             let existing = try loadRecord(runID: pending.runID)
@@ -180,6 +238,39 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
         throw ManagedRunArtifactStoreError.artifactNotFound
     }
 
+    public func queryArtifact(handle: String, projectID: String) throws -> ArtifactQueryService.Artifact {
+        let (record, artifact) = try boundArtifact(handle: handle)
+        if let expiresAt = record.expiresAt, expiresAt <= Date() {
+            throw ManagedRunArtifactStoreError.artifactNotFound
+        }
+        try requireScope(record, projectID: projectID)
+        return artifact
+    }
+
+    public func queryArtifacts(
+        runID: UUID,
+        channels: Set<String> = ["stdout", "stderr"],
+        projectID: String
+    ) throws -> [ArtifactQueryService.Artifact] {
+        let record = try loadRecord(runID: runID)
+        if let expiresAt = record.expiresAt, expiresAt <= Date() {
+            throw ManagedRunArtifactStoreError.runExpired
+        }
+        try requireScope(record, projectID: projectID)
+        return try artifacts(runID: runID, channels: channels).map { artifact in
+            ArtifactQueryService.Artifact(
+                id: artifact.id,
+                kind: artifact.kind,
+                data: artifact.data,
+                historyBinding: .init(
+                    request: record.requestDigest,
+                    toolchain: record.toolchainBinding,
+                    input: record.inputBinding
+                )
+            )
+        }
+    }
+
     public func artifacts(runID: UUID, channels: Set<String> = ["stdout", "stderr"]) throws -> [ArtifactQueryService.Artifact] {
         let record = try loadRecord(runID: runID)
         let directory = publicRunURL(runID)
@@ -205,9 +296,54 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
     private struct PendingPublication {
         let runID: UUID
         let requestDigest: String
+        let projectID: String?
+        let executablePath: String?
+        let arguments: [String]?
+        let workingDirectoryPath: String?
+        let environmentDigest: String?
+        let toolchainBinding: String?
+        let inputBinding: String?
+        let expiresAt: Date?
         let stdoutURL: URL
         let stderrURL: URL
         let diagnosticURL: URL
+    }
+
+    private func boundArtifact(handle: String) throws -> (ManagedRunArtifactRecord, ArtifactQueryService.Artifact) {
+        let directories = try FileManager.default.contentsOfDirectory(
+            at: publicRootURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]
+        ).sorted { $0.lastPathComponent < $1.lastPathComponent }
+        for directory in directories {
+            guard let runID = UUID(uuidString: directory.lastPathComponent) else { continue }
+            let record = try loadRecord(runID: runID)
+            for (identity, name, kind) in [
+                (record.stdout, "stdout.artifact", "stdout"),
+                (record.stderr, "stderr.artifact", "stderr"),
+                (record.diagnostics, "diagnostic.artifact", "diagnostic")
+            ] where identity.handle == handle {
+                let artifact = ArtifactQueryService.Artifact(
+                    id: handle,
+                    kind: kind,
+                    data: try Data(contentsOf: directory.appendingPathComponent(name), options: .mappedIfSafe),
+                    historyBinding: .init(
+                        request: record.requestDigest,
+                        toolchain: record.toolchainBinding,
+                        input: record.inputBinding
+                    )
+                )
+                return (record, artifact)
+            }
+        }
+        throw ManagedRunArtifactStoreError.artifactNotFound
+    }
+
+    private func requireScope(_ record: ManagedRunArtifactRecord, projectID: String) throws {
+        guard let boundProject = record.projectID, let boundStore = record.storeIdentityDigest else {
+            throw ManagedRunArtifactStoreError.legacyArtifactUnbound
+        }
+        guard boundProject == projectID, boundStore == storeIdentityDigest else {
+            throw ManagedRunArtifactStoreError.scopeMismatch
+        }
     }
 
     private func publicRunURL(_ runID: UUID) -> URL {
@@ -289,6 +425,24 @@ public actor ManagedRunArtifactStore: ManagedSpoolFinalizationSeam {
             )
         }
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    }
+
+    private static func loadOrCreateStoreIdentity(root: URL) throws -> String {
+        let url = root.appendingPathComponent("store-identity")
+        let identity: String
+        if FileManager.default.fileExists(atPath: url.path) {
+            identity = String(decoding: try Data(contentsOf: url), as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard UUID(uuidString: identity) != nil else {
+                throw ManagedRunArtifactStoreError.storeCorrupt("store identity")
+            }
+        } else {
+            identity = UUID().uuidString.lowercased()
+            try Data((identity + "\n").utf8).write(to: url, options: [.atomic])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try fsyncDirectory(root)
+        }
+        return digest(Data(identity.utf8))
     }
 
     private static func digest(_ data: Data) -> String {

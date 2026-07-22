@@ -279,6 +279,96 @@ final class MCPServer: @unchecked Sendable {
                 }
             }
         case "artifact_read":
+            if capabilitySet == "expanded-v1", let action = try strictOptionalString("action", in: arguments) {
+                switch action {
+                case "search":
+                    try validateKeys(arguments, allowed: [
+                        "action", "project_path", "sources", "pattern_kind", "pattern",
+                        "case", "regex_flags", "page_byte_limit"
+                    ])
+                    guard let values = arguments["sources"]?.arrayValue,
+                          (1 ... 64).contains(values.count) else {
+                        throw AIShellError.invalidArgument("sourcesは1〜64件の配列である必要があります。")
+                    }
+                    let sources = try values.map { value -> ManagedArtifactQuerySource in
+                        guard let source = value.objectValue else {
+                            throw AIShellError.invalidArgument("sourceはobjectである必要があります。")
+                        }
+                        switch try requiredString("type", in: source) {
+                        case "artifact":
+                            try validateKeys(source, allowed: ["type", "handle"])
+                            return .artifact(handle: try requiredString("handle", in: source))
+                        case "run":
+                            try validateKeys(source, allowed: ["type", "run_id", "channels"])
+                            guard let runID = UUID(uuidString: try requiredString("run_id", in: source)) else {
+                                throw AIShellError.invalidArgument("run_idはUUIDである必要があります。")
+                            }
+                            return .run(id: runID, channels: Set(try stringArray("channels", in: source)))
+                        default:
+                            throw AIShellError.invalidArgument("source.typeはartifactまたはrunです。")
+                        }
+                    }
+                    let patternText = try requiredString("pattern", in: arguments)
+                    let caseMode = try strictOptionalString("case", in: arguments) ?? "sensitive"
+                    let pattern: ArtifactQueryService.Pattern
+                    switch try strictOptionalString("pattern_kind", in: arguments) ?? "literal" {
+                    case "literal":
+                        guard caseMode == "sensitive" || caseMode == "insensitive" else {
+                            throw AIShellError.invalidArgument("caseはsensitiveまたはinsensitiveです。")
+                        }
+                        pattern = .literal(
+                            patternText,
+                            mode: caseMode == "insensitive" ? .insensitive : .sensitive
+                        )
+                    case "regex":
+                        var flags = try strictOptionalString("regex_flags", in: arguments) ?? ""
+                        if caseMode == "insensitive", !flags.contains("i") { flags.append("i") }
+                        guard caseMode == "sensitive" || caseMode == "insensitive" else {
+                            throw AIShellError.invalidArgument("caseはsensitiveまたはinsensitiveです。")
+                        }
+                        pattern = .regex(patternText, flags: flags)
+                    default:
+                        throw AIShellError.invalidArgument("pattern_kindはliteralまたはregexです。")
+                    }
+                    return try await .from(managedRunService().searchArtifacts(
+                        projectPath: requiredString("project_path", in: arguments),
+                        sources: sources,
+                        pattern: pattern,
+                        pageByteLimit: try boundedInt(
+                            "page_byte_limit", in: arguments, default: 65_536,
+                            minimum: 1, maximum: 1_048_576
+                        )
+                    ))
+                case "next":
+                    try validateKeys(arguments, allowed: [
+                        "action", "stream_handle", "cursor", "page_byte_limit"
+                    ])
+                    return try await .from(managedRunService().continueArtifactSearch(
+                        streamHandle: requiredString("stream_handle", in: arguments),
+                        cursor: requiredString("cursor", in: arguments),
+                        pageByteLimit: try boundedInt(
+                            "page_byte_limit", in: arguments, default: 65_536,
+                            minimum: 1, maximum: 1_048_576
+                        )
+                    ))
+                case "compare":
+                    try validateKeys(arguments, allowed: [
+                        "action", "project_path", "baseline_run_id", "candidate_run_id", "channels"
+                    ])
+                    guard let baseline = UUID(uuidString: try requiredString("baseline_run_id", in: arguments)),
+                          let candidate = UUID(uuidString: try requiredString("candidate_run_id", in: arguments)) else {
+                        throw AIShellError.invalidArgument("baseline_run_idとcandidate_run_idはUUIDである必要があります。")
+                    }
+                    return try await .from(managedRunService().compareArtifacts(
+                        projectPath: requiredString("project_path", in: arguments),
+                        baselineRunID: baseline,
+                        candidateRunID: candidate,
+                        channels: Set(try stringArray("channels", in: arguments))
+                    ))
+                default:
+                    throw AIShellError.invalidArgument("artifact_read actionはsearch、next、compareのいずれかです。")
+                }
+            }
             try validateKeys(arguments, allowed: [
                 "handle", "mode", "offset", "length", "tail_lines", "pattern",
                 "context_lines", "byte_budget"
@@ -1047,6 +1137,27 @@ final class MCPServer: @unchecked Sendable {
             case .artifactStoreFailed: return ("ARTIFACT_STORE_FAILED", String(describing: error))
             case .resultEncodingFailed: return ("RESULT_ENCODING_FAILED", String(describing: error))
             }
+        }
+        if let error = error as? ManagedArtifactQueryError {
+            switch error {
+            case .invalidProjectPath: return ("INVALID_PROJECT_PATH", String(describing: error))
+            case .invalidSource: return ("INVALID_ARGUMENT", String(describing: error))
+            case .invalidChannel: return ("INVALID_ARGUMENT", String(describing: error))
+            }
+        }
+        if let error = error as? ManagedRunArtifactStoreError {
+            switch error {
+            case .bindingMismatch: return ("ARTIFACT_BINDING_MISMATCH", String(describing: error))
+            case .runNotFinalized: return ("RUN_NOT_FINALIZED", String(describing: error))
+            case .artifactNotFound: return ("ARTIFACT_NOT_FOUND", String(describing: error))
+            case .runExpired: return ("RUN_EXPIRED", String(describing: error))
+            case .scopeMismatch: return ("ARTIFACT_SCOPE_MISMATCH", String(describing: error))
+            case .legacyArtifactUnbound: return ("ARTIFACT_SCOPE_MISMATCH", String(describing: error))
+            case .storeCorrupt: return ("EVIDENCE_CORRUPT", String(describing: error))
+            }
+        }
+        if let error = error as? ArtifactQueryService.Error {
+            return (error.localizedDescription.components(separatedBy: ":").first ?? "ARTIFACT_QUERY_FAILED", error.localizedDescription)
         }
         if let error = error as? GitContextError {
             switch error {

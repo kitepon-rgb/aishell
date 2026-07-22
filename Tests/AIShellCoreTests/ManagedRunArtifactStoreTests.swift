@@ -46,6 +46,69 @@ final class ManagedRunArtifactStoreTests: XCTestCase {
         )
         XCTAssertEqual(artifacts.map(\.kind), ["stdout", "stderr", "diagnostic"])
         XCTAssertEqual(artifacts.map(\.data), [stdout, stderr, Data()])
+        await assertManagedArtifactThrows(
+            try await store.queryArtifacts(runID: runID, projectID: "legacy-project")
+        ) {
+            XCTAssertEqual($0 as? ManagedRunArtifactStoreError, .legacyArtifactUnbound)
+        }
+    }
+
+    func testBoundQueryRejectsWrongProjectAndExpiredRun() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let runID = UUID()
+        let store = try ManagedRunArtifactStore(runtimeStore: fixture.runtimeStore)
+        try Data("bound\n".utf8).write(to: fixture.stdout)
+        try Data().write(to: fixture.stderr)
+        try Data().write(to: fixture.diagnostics)
+        await store.prepare(
+            runID: runID,
+            requestDigest: "request-digest",
+            projectID: "project-a",
+            expiresAt: Date().addingTimeInterval(60),
+            stdoutURL: fixture.stdout,
+            stderrURL: fixture.stderr,
+            diagnosticURL: fixture.diagnostics
+        )
+        let inspection = try await store.fsyncAndInspect(
+            stdoutURL: fixture.stdout, stderrURL: fixture.stderr
+        )
+        _ = try await store.publishAtomically(
+            inspection: inspection,
+            diagnostics: .init(handle: "diagnostics", sizeBytes: 0, sha256: Self.digest(Data())),
+            finalizedAt: Date()
+        )
+        let boundArtifacts = try await store.queryArtifacts(runID: runID, projectID: "project-a")
+        XCTAssertEqual(boundArtifacts.first?.data, Data("bound\n".utf8))
+        await assertManagedArtifactThrows(
+            try await store.queryArtifacts(runID: runID, projectID: "project-b")
+        ) {
+            XCTAssertEqual($0 as? ManagedRunArtifactStoreError, .scopeMismatch)
+        }
+
+        let expiredID = UUID()
+        await store.prepare(
+            runID: expiredID,
+            requestDigest: "expired",
+            projectID: "project-a",
+            expiresAt: Date().addingTimeInterval(-1),
+            stdoutURL: fixture.stdout,
+            stderrURL: fixture.stderr,
+            diagnosticURL: fixture.diagnostics
+        )
+        let expiredInspection = try await store.fsyncAndInspect(
+            stdoutURL: fixture.stdout, stderrURL: fixture.stderr
+        )
+        _ = try await store.publishAtomically(
+            inspection: expiredInspection,
+            diagnostics: .init(handle: "expired-diagnostics", sizeBytes: 0, sha256: Self.digest(Data())),
+            finalizedAt: Date()
+        )
+        await assertManagedArtifactThrows(
+            try await store.queryArtifacts(runID: expiredID, projectID: "project-a")
+        ) {
+            XCTAssertEqual($0 as? ManagedRunArtifactStoreError, .runExpired)
+        }
     }
 
     func testReplayAndReadRejectTamperedPublishedArtifact() async throws {
