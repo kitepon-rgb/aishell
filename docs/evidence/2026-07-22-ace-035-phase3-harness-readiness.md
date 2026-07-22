@@ -12,6 +12,7 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 - `d08fcef`: 54 attempt runner、Codex executor、oracle aggregator
 - `a6d9bdf`: production harnessとobserver/oracle接続
 - `53fb6bd`: local Codex/AIShell callbacks
+- `7e4f4d3`: auto-reviewer込みprovider evidence v3、timeout失敗記録、実試行observer閉包
 
 ## production受入網
 
