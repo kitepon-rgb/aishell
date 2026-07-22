@@ -13,6 +13,7 @@ import {
 import {
   candidateAdapterTraceBytes,
   buildPhase3AttemptManifest,
+  extractProviderModelsFromSSETrace,
   prepareCandidateRequests,
   recordCandidateProjection,
 } from './phase3-representative-runner.mjs';
@@ -115,13 +116,11 @@ const callbacks = {
       adapterTraceBytes: null,
     };
   },
-  observeProviderModel: async ({ providerTraceBytes, providerSSEBytes }) => {
-    const events = providerTraceBytes.toString('utf8').split('\n').filter(Boolean).map(JSON.parse);
-    const metadata = events.filter((event) => event.type === 'provider.metadata');
-    if (metadata.length !== 1) throw new Error('fixture provider metadata unavailable');
+  observeProviderModel: async ({ providerTraceBytes, providerSSEBytes, mainModelSnapshot, approvalReviewer }) => {
     return canonicalJSONBytes({
-      schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
-      modelSnapshot: metadata[0].model_snapshot, providerTraceSHA256: sha256Hex(providerTraceBytes),
+      schema: 'aishell.provider-model-evidence.v3', source: 'codex-provider-sse',
+      models: extractProviderModelsFromSSETrace(providerSSEBytes),
+      providerTraceSHA256: sha256Hex(providerTraceBytes),
       providerSSETraceSHA256: sha256Hex(providerSSEBytes),
     });
   },
@@ -192,11 +191,22 @@ const providerTrace = Buffer.from([
   JSON.stringify({ type: 'provider.metadata', model_snapshot: 'fixture-model' }),
   JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } }),
 ].join('\n') + '\n');
-const providerSSE = Buffer.from('fixture SSE');
-const modelEvidenceBytes = await harness.callbacks.observeProviderModel({ providerTraceBytes: providerTrace, providerSSEBytes: providerSSE });
+const approvalReviewer = { mode: 'auto_review', modelSnapshots: ['fixture-reviewer'] };
+const providerSSE = Buffer.from([
+  '{"type":"response.created","response":{"id":"main","model":"fixture-model"}}',
+  '{"type":"response.completed","response":{"id":"main","model":"fixture-model","usage":{"input_tokens":1,"output_tokens":1}}}',
+  '{"type":"response.created","response":{"id":"review","model":"fixture-reviewer"}}',
+  '{"type":"response.completed","response":{"id":"review","model":"fixture-reviewer","usage":{"input_tokens":1,"output_tokens":0}}}',
+  '',
+].join('\n'));
+const modelEvidenceBytes = await harness.callbacks.observeProviderModel({
+  providerTraceBytes: providerTrace, providerSSEBytes: providerSSE,
+  mainModelSnapshot: 'fixture-model', approvalReviewer,
+});
 assert.deepEqual(JSON.parse(modelEvidenceBytes), {
-  schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
-  modelSnapshot: 'fixture-model', providerTraceSHA256: sha256Hex(providerTrace),
+  schema: 'aishell.provider-model-evidence.v3', source: 'codex-provider-sse',
+  models: [{ modelSnapshot: 'fixture-model', responseCount: 1 }, { modelSnapshot: 'fixture-reviewer', responseCount: 1 }],
+  providerTraceSHA256: sha256Hex(providerTrace),
   providerSSETraceSHA256: sha256Hex(providerSSE),
 });
 
@@ -227,6 +237,7 @@ const integrationConfiguration = {
   reasoningEffort: 'high',
   sandbox: { approvalPolicy: 'never', filesystem: 'workspace-write', network: false },
   commonHostCatalogDigest: sha256Hex('fixture-host-catalog'),
+  approvalReviewer: { mode: 'auto_review', modelSnapshots: ['fixture-reviewer-model'] },
   armBindings: {
     native: { binding: 'native fixture', aishellBinaryDigest: null, aishellToolCatalogDigest: null },
     'current-aishell-0.3.3': {
@@ -316,6 +327,7 @@ const integrationHarness = createPhase3ProductionHarness({
     outputDirectory: integrationOutput,
     armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: candidateBinary },
     sandboxConfiguration: integrationConfiguration.sandbox,
+    approvalReviewer: integrationConfiguration.approvalReviewer,
     commonHostCatalogDigest: integrationConfiguration.commonHostCatalogDigest,
     commonCodexArguments: [],
     timeoutMilliseconds: 30_000,
@@ -335,7 +347,15 @@ const integrationHarness = createPhase3ProductionHarness({
       { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(report) } },
       { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5, reasoning_output_tokens: 1 } },
     ];
-    return { stdout: Buffer.from(`${events.map(JSON.stringify).join('\n')}\n`), stderr: Buffer.alloc(0), exitCode: 0, timedOut: false };
+    const reviewer = integrationConfiguration.approvalReviewer.modelSnapshots[0];
+    const wireEvents = [
+      { type: 'response.created', response: { id: `${attemptID}-main`, model: integrationConfiguration.modelSnapshot } },
+      { type: 'response.completed', response: { id: `${attemptID}-main`, model: integrationConfiguration.modelSnapshot, usage: { input_tokens: 10, input_tokens_details: { cached_tokens: 2 }, output_tokens: 5, output_tokens_details: { reasoning_tokens: 1 } } } },
+      { type: 'response.created', response: { id: `${attemptID}-review`, model: reviewer } },
+      { type: 'response.completed', response: { id: `${attemptID}-review`, model: reviewer, usage: { input_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens: 0, output_tokens_details: { reasoning_tokens: 0 } } } },
+    ];
+    const stderr = Buffer.from(`${wireEvents.map((event) => `TRACE tungstenite::protocol: Received message ${JSON.stringify(event)}`).join('\n')}\n`);
+    return { stdout: Buffer.from(`${events.map(JSON.stringify).join('\n')}\n`), stderr, exitCode: 0, timedOut: false };
   },
   collectAttemptEvidence: async (input) => {
     let adapterTraceBytes = null;
@@ -405,12 +425,12 @@ const integrationHarness = createPhase3ProductionHarness({
 });
 const integrationOutcome = await integrationHarness.run({ manifest: integrationManifest });
 assert.equal(integrationProcesses, 54);
-assert.equal(integrationOutcome.result.status, 'valid');
+assert.equal(integrationOutcome.result.status, 'valid', JSON.stringify(integrationOutcome.result.invalidReasons));
 assert.equal(integrationOutcome.result.attempts.length, 54);
 assert.equal(integrationOutcome.oracleRecords.length, 54);
 assert.equal(integrationOutcome.observerMetricRecords.length, 54);
 assert.equal(integrationOutcome.executorEvidenceRecords.length, 54);
-assert.equal(integrationOutcome.report.status, 'valid');
+assert.equal(integrationOutcome.report.status, 'valid', JSON.stringify(integrationOutcome.report.invalidReasons));
 assert.equal(integrationOutcome.report.overallArms.length, 3);
 assert.equal(Object.hasOwn(integrationOutcome, 'evaluations'), false);
 

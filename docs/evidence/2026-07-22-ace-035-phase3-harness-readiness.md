@@ -2,7 +2,7 @@
 
 ## 結論
 
-Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。release binaryを使うsingle candidate product preflightは成功した。実Codex attempt preflightではexpanded capability配線とMCP承認経路を修正した一方、auto-reviewerのprovider event/tokenをmain modelから分離して総tokenへ加算する証拠契約が未実装と判明した。54実model attemptとexternal oracle aggregationは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
+Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。release binaryを使うsingle candidate product preflightは成功した。実Codex attempt preflightで発見したexpanded capability配線、MCP承認経路、auto-reviewer込みprovider event/token会計を修正し、独立反証で見つかったmodel役割の過剰主張、timeout失敗記録、公開result schemaの閉包も修正した。54実model attemptとexternal oracle aggregationは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
 
 requested model名、合成profile、canonical再serializationを証拠の代用にしない。
 
@@ -49,7 +49,7 @@ current armは隔離worktreeから、candidate armは上記commitの製品source
 - `Phase3AcceptanceTests`: 6件成功
 - ProjectProfileServiceTests: 23件成功、DevelopmentRuntimeServiceTests: 3件成功
 - capability materializer/oracle/observer、representative runner、Codex executor、acceptance aggregator、production harness、local callbacks、MCP wire tap: 9 test file成功
-- executor self-test: 63 fake invocation、うち54 attemptの統合経路成功
+- executor self-test: 64 fake invocation、うち54 attemptの統合経路成功
 - production harness self-test: runner → executor → observer → oracle → aggregatorの54 attempt統合成功
 - static import provider: 13件成功
 - production v2 adapter: 13件成功
@@ -59,9 +59,19 @@ current armは隔離worktreeから、candidate armは上記commitの製品source
 - actual release binary＋actual MCP single candidate preflight: exact profile/check解決、`miss_executed`、process 1、publication 1で成功
 - candidate capabilityは`AISHELL_TOOL_PROFILE=development`と`AISHELL_CAPABILITY_SET=expanded-v1`を分離して注入する。`expanded-v1`をtool profileへ誤投入して7-toolへ縮退する配線をfreeze採取時に検出し、正規の9-tool catalogへ修正した。
 - destructive annotation付きMCPを`approval_policy=never`で黙ってcancelしていた実Codex preflightを受け、全arm共通の`workspace-write`・network offを維持したまま、公式の非対話経路である`on-request`＋`approvals_reviewer=auto_review`をrun isolationへ固定した。dangerous bypassは使わない。
+- provider model evidence v3はSSEの`response.created` / `response.completed`をresponse IDで一対一照合し、providerが実際に返した順序なしmodel集合だけを保持する。SSEだけではmain/reviewerの役割相関を証明できないため、requested値をactual roleへ写さない。attempt resultにも実測model集合をexact bindingし、runnerとaggregatorがmanifestの凍結集合およびSSE bytesと再照合する。usageはstdoutのmain turnだけでなく、全completed responseをmodel別に集計してから合算するため、reviewer tokenも主KPIの分子へ含む。欠損usage、重複ID、不完全pair、model差異は0補完せずrun invalidにする。
+- mid-response timeoutはprovider model parserやobserverの例外でharness全体を失わず、stdoutと不完全SSEをexact bytesで保存した`timedOut` attemptとして返す。usage/model集合を推測せずnullにし、54 attempt結果をinvalidとして閉じる。公開representative-result schemaも`providerSSE`、`providerModels`、現行usage形式とnull失敗表現へ同期した。
+- modelの探索callとtyped errorは隠さず全件をwire evidenceとmetricsへ残す。凍結requestと異なる探索をharness failureへせず、task別closed互換規則に合うcallだけをadapter候補にする。tool非採用や互換外requestはvalidなunsolved attemptとして外部oracleへ渡し、candidate adapter traceの欠如だけではrun invalidにしない。
+- candidate observerは最後のcallでtelemetryを上書きせず、timed phase中の全callの`processesStarted`と`falseFresh`を合算する。agent reportはfunctional必須keyの欠落を拒否する一方、追加の自己申告値はcorrectness根拠へ昇格させず保持する。raw production v2 resultだけをcapability evidenceへ渡し、v1 projectionはadapter traceへ分離する。
 - read-only反証のenvironment closure、npm shell迂回、NUL fail-late、profile environment失効を修正し、最終再監査で確実なP0–P2残存なし
 
 fake process/MCPを使うself-testは実model成功を主張しない。
+
+## actual single-attempt preflight
+
+provider evidence v3修正後、candidateの`freshness-cache-repeat-check`を実Codexで5回preflightし、各失敗成果物を別directoryへ保持した。順に、typed MCP errorの過剰拒否、`prefer`だけを許す過剰exact制約、agent assertionsの過剰exact制約、task failureとharness failureの混同を発見・修正した。
+
+最終preflightはharness exit 0でattempt recordを閉じた。実測はmain `gpt-5.6-sol` 23 response、auto-reviewer `gpt-5.4` 4 response、provider-reported total model token 1,073,598、wall 162,282ms。ただしexternal oracleは`secondExecutionCount=1`と凍結required outcome欠落により`solved=false`と判定した。これは期待どおり失敗試行を成功へ偽装せず、token分子へ残せた証拠であり、candidate correctness成功の主張ではない。
 
 ## 解消したpreflight blocker
 
@@ -74,4 +84,4 @@ fake process/MCPを使うself-testは実model成功を主張しない。
 
 ## 次の実行gate
 
-auto-reviewer（実測`gpt-5.4`）とmain agent（実測`gpt-5.6-sol`）のprovider eventを相関し、reviewer tokenを総model tokenへ含めるclosed evidence contractを追加する。そのfocused testとsingle attempt preflightを通した後、candidate commit／sandbox digestを再freezeし、54実model attempt、external oracle aggregationの順で実行する。
+provider model evidence v3とsingle attempt record経路をcommitし、candidate commit／sandbox・reviewer digestを再freezeした後、54実model attempt、external oracle aggregationの順で実行する。

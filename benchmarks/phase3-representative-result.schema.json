@@ -45,7 +45,7 @@
     "attempt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["attemptID", "sequence", "taskID", "arm", "repetition", "usage", "providerTrace", "providerUsageFormat", "agentResult", "adapterTrace", "agentExitCode", "timedOut", "wallMilliseconds"],
+      "required": ["attemptID", "sequence", "taskID", "arm", "repetition", "usage", "providerTrace", "providerSSE", "providerModels", "providerUsageFormat", "agentResult", "adapterTrace", "agentExitCode", "timedOut", "wallMilliseconds"],
       "properties": {
         "attemptID": {"type": "string", "minLength": 1},
         "sequence": {"type": "integer", "minimum": 1, "maximum": 54},
@@ -54,7 +54,26 @@
         "repetition": {"type": "integer", "minimum": 1, "maximum": 3},
         "usage": {"oneOf": [{"$ref": "#/$defs/usage"}, {"type": "null"}]},
         "providerTrace": {"$ref": "#/$defs/exactBytes"},
-        "providerUsageFormat": {"enum": ["codex-exec-jsonl.v1", "openai-responses-jsonl.v1"]},
+        "providerSSE": {"$ref": "#/$defs/exactBytes"},
+        "providerModels": {
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["modelSnapshot", "responseCount"],
+                "properties": {
+                  "modelSnapshot": {"type": "string", "minLength": 1},
+                  "responseCount": {"type": "integer", "minimum": 1}
+                }
+              }
+            },
+            {"type": "null"}
+          ]
+        },
+        "providerUsageFormat": {"enum": ["codex-provider-sse-jsonl.v1", null]},
         "agentResult": {"$ref": "#/$defs/exactBytes"},
         "adapterTrace": {"oneOf": [{"$ref": "#/$defs/exactBytes"}, {"type": "null"}]},
         "agentExitCode": {"type": "integer"},

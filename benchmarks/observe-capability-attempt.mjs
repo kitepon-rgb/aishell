@@ -160,9 +160,11 @@ export async function observeAttempt({ taskId, armId, workspace, baselineFile, p
   const agentReport = await optionalJSON(agentReportFile);
   const internalKeys = new Set(suite.metrics.internalTelemetryKeys);
   const functionalKeys = Object.keys(expected).filter((key) => !internalKeys.has(key)).sort();
+  const reportedKeys = agentReport?.assertions && typeof agentReport.assertions === 'object' && !Array.isArray(agentReport.assertions)
+    ? Object.keys(agentReport.assertions) : [];
   if (agentReport.schema !== 'aishell.agent-benchmark-report.v1' || agentReport.taskId !== taskId
     || !agentReport.assertions || typeof agentReport.assertions !== 'object' || Array.isArray(agentReport.assertions)
-    || JSON.stringify(Object.keys(agentReport.assertions).sort()) !== JSON.stringify(functionalKeys)) {
+    || functionalKeys.some((key) => !reportedKeys.includes(key))) {
     throw new Error(`invalid agent report: ${taskId}`);
   }
   if (!Array.isArray(toolTrace.events)) throw new Error('invalid tool trace');

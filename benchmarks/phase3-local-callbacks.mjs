@@ -5,8 +5,10 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import {
   candidateAdapterTraceBytes,
+  extractProviderModelsFromSSETrace,
   prepareCandidateRequests,
   recordCandidateProjection,
+  validateCandidateProductionRequest,
 } from './phase3-representative-runner.mjs';
 import {
   buildBenchmarkTrace,
@@ -605,7 +607,9 @@ async function exactWireToolCalls(directory) {
     const response = responseByID.get(JSON.stringify(request.value.id));
     if (!response || response.value.error || !plainObject(response.value.result)) throw new Error(`MCP wire call ${index} failed`);
     const wrapper = response.value.result;
-    if (wrapper.isError !== false || !plainObject(wrapper.structuredContent)) throw new Error(`MCP wire call ${index} returned an error`);
+    if (typeof wrapper.isError !== 'boolean' || !plainObject(wrapper.structuredContent)) {
+      throw new Error(`MCP wire call ${index} has an invalid result wrapper`);
+    }
     const resultObjectBytes = exactObjectMember(response.bytes, 'result', `MCP response ${index}`);
     const resultBytes = exactObjectMember(resultObjectBytes, 'structuredContent', `MCP response ${index} result`);
     parseExactJSON(wrapper.structuredContent, resultBytes, `MCP wire call ${index} structured result`);
@@ -613,7 +617,14 @@ async function exactWireToolCalls(directory) {
     if (!plainObject(params) || typeof params.name !== 'string' || !plainObject(params.arguments)) {
       throw new Error(`MCP wire call ${index} request is invalid`);
     }
-    return { tool: params.name, request: params.arguments, result: wrapper.structuredContent, resultBytes, wrapper };
+    const paramsBytes = exactObjectMember(request.bytes, 'params', `MCP request ${index}`);
+    const requestArgumentBytes = exactObjectMember(paramsBytes, 'arguments', `MCP request ${index} params`);
+    parseExactJSON(params.arguments, requestArgumentBytes, `MCP wire call ${index} request arguments`);
+    return {
+      tool: params.name, request: params.arguments, result: wrapper.structuredContent, resultBytes, wrapper,
+      requestBytes: requestArgumentBytes,
+      isError: wrapper.isError, status: wrapper.isError ? 'failed' : 'succeeded',
+    };
   });
 }
 
@@ -628,12 +639,17 @@ async function observedToolCalls(events, mcpWireDirectory) {
       const item = event.item;
       exactKeys(item, ['type', 'server', 'tool', 'arguments', 'result', 'result_bytes_base64', 'status'],
         ['raw_pages', 'complete_artifact_base64'], `Codex MCP call ${index}`);
-      if (item.server !== 'aishell' || item.status !== 'completed' || !plainObject(item.arguments) || !plainObject(item.result)) {
+      if (item.server !== 'aishell' || !['completed', 'failed'].includes(item.status)
+        || !plainObject(item.arguments) || !plainObject(item.result)) {
         throw new Error(`Codex MCP call ${index} is unsupported`);
       }
       const resultBytes = exactBase64(item.result_bytes_base64, `Codex MCP call ${index} result`);
       parseExactJSON(item.result, resultBytes, `Codex MCP call ${index} result`);
-      return { tool: item.tool, request: item.arguments, result: item.result, resultBytes, item };
+      return {
+        tool: item.tool, request: item.arguments, result: item.result, resultBytes, item,
+        requestBytes: canonicalJSONBytes(item.arguments),
+        isError: item.status === 'failed', status: item.status === 'failed' ? 'failed' : 'succeeded',
+      };
     });
   }
   const wireCalls = await exactWireToolCalls(mcpWireDirectory);
@@ -641,7 +657,8 @@ async function observedToolCalls(events, mcpWireDirectory) {
   hostCalls.forEach((event, index) => {
     const item = event.item;
     const call = wireCalls[index];
-    if (item.server !== 'aishell' || item.status !== 'completed' || item.tool !== call.tool
+    const expectedStatus = call.isError ? 'failed' : 'completed';
+    if (item.server !== 'aishell' || item.status !== expectedStatus || item.tool !== call.tool
       || !canonicalJSONBytes(item.arguments).equals(canonicalJSONBytes(call.request))) {
       throw new Error(`Codex MCP event/wire call ${index} differs`);
     }
@@ -656,7 +673,7 @@ function observerMetrics(events, calls, attempt) {
     firstUsefulResultMilliseconds: null,
     toolCalls: calls.length,
     modelTurns: turns,
-    retries: events.filter(({ type }) => type === 'turn.failed').length,
+    retries: events.filter(({ type }) => type === 'turn.failed').length + calls.filter(({ isError }) => isError).length,
     artifactRereads: calls.filter(({ tool }) => tool === 'artifact_read').length,
     filesystemEntriesRescanned: results.reduce((sum, result) => sum + (result.fullRescans ?? 0), 0),
     bytesReread: results.reduce((sum, result) => sum + (result.returnedBytes ?? 0), 0),
@@ -682,23 +699,40 @@ export async function collectAttemptEvidence(input) {
       setupEvidence: benchmarkSetupEvidence, trustedProductionSetup,
     });
     const preparedCall = prepared.calls[0];
-    const primaryCalls = calls.filter(({ tool }) => tool === preparedCall.tool);
-    if (primaryCalls.length === 0 || primaryCalls.length !== calls.length) {
-      throw new Error('candidate attempt contains missing or unrelated AIShell wire calls');
-    }
-    const call = primaryCalls[0];
-    if (call.tool !== preparedCall.tool || !canonicalJSONBytes(call.request).equals(preparedCall.productionRequestBytes)) {
-      throw new Error('candidate tool call differs from the production adapter request');
-    }
-    let recorded;
-    let artifact = Buffer.alloc(0);
-    if (call.tool === 'run_check') {
-      if (primaryCalls.length !== 1) throw new Error('candidate run_check attempt must contain exactly one result');
-      recorded = recordCandidateProjection({
-        preparedCall, trustedSetupEvidence: trustedProductionSetup[call.tool],
-        productionResult: call.result, productionResultBytes: call.resultBytes,
+    const successfulToolCalls = calls.filter((call) => !call.isError && call.tool === preparedCall.tool);
+    const compatibleRoots = successfulToolCalls.filter((call) => {
+      if (call.isError || call.tool !== preparedCall.tool) return false;
+      try {
+        validateCandidateProductionRequest({
+          taskID: attempt.taskID, tool: call.tool,
+          trustedSetupEvidence: trustedProductionSetup[call.tool], observedRequest: call.request,
+        });
+        return true;
+      } catch { return false; }
+    });
+    const call = compatibleRoots.at(-1) ?? successfulToolCalls.at(-1) ?? null;
+    for (const observedCall of calls.filter(({ tool }) => tool === preparedCall.tool)) {
+      observerEvents.push({
+        provider: 'aishell', tool: observedCall.tool, action: preparedCall.action,
+        request: observedCall.request, metadata: { preStateDigest: preAttemptManifest.digest },
+        result: observedCall.result, resultDigest: sha256Hex(canonicalJSONBytes(observedCall.result)),
+        status: observedCall.status, isError: observedCall.isError,
       });
+    }
+    if (call === null) {
+      projectedResult = {};
     } else {
+      const observedPreparedCall = {
+        ...preparedCall, productionRequest: call.request, productionRequestBytes: call.requestBytes,
+      };
+      let recorded;
+      let artifact = Buffer.alloc(0);
+      if (call.tool === 'run_check') {
+        recorded = recordCandidateProjection({
+          preparedCall: observedPreparedCall, trustedSetupEvidence: trustedProductionSetup[call.tool],
+          productionResult: call.result, productionResultBytes: call.resultBytes,
+        });
+      } else {
       let pages;
       if (mcpWireDirectory === undefined) {
         if (!Array.isArray(call.item.raw_pages) || call.item.raw_pages.length === 0) throw new Error('change_impact exact raw pages are missing');
@@ -710,16 +744,19 @@ export async function collectAttemptEvidence(input) {
         });
         artifact = exactBase64(call.item.complete_artifact_base64, 'complete change_impact artifact');
       } else {
-        pages = primaryCalls.map((page, index) => {
-          if (index > 0) {
-            const expectedToken = primaryCalls[index - 1].result.continuation;
-            if (typeof expectedToken !== 'string' || page.request.continuation !== expectedToken
-              || Object.keys(page.request).some((key) => !['continuation', 'byte_budget'].includes(key))) {
-              throw new Error(`change_impact wire page ${index} has an invalid continuation request`);
-            }
-          }
-          return { ...(index > 0 ? { requestToken: page.request.continuation } : {}), result: page.result, resultBytes: page.resultBytes };
-        });
+        const rootIndex = calls.indexOf(call);
+        const chain = [call];
+        while (typeof chain.at(-1).result.continuation === 'string') {
+          const expectedToken = chain.at(-1).result.continuation;
+          const matches = calls.slice(rootIndex + 1).filter((page) => !page.isError && page.tool === call.tool
+            && page.request.continuation === expectedToken
+            && Object.keys(page.request).every((key) => ['continuation', 'byte_budget'].includes(key)));
+          if (matches.length !== 1) throw new Error('change_impact wire continuation is missing or ambiguous');
+          chain.push(matches[0]);
+        }
+        pages = chain.map((page, index) => ({
+          ...(index > 0 ? { requestToken: page.request.continuation } : {}), result: page.result, resultBytes: page.resultBytes,
+        }));
         const descriptor = call.result.artifact;
         if (!validArtifact(descriptor)) throw new Error('change_impact wire artifact descriptor is invalid');
         artifact = await readFile(path.join(stateDirectory, 'evidence', `${descriptor.handle}.data`));
@@ -740,25 +777,19 @@ export async function collectAttemptEvidence(input) {
         trace: buildBenchmarkTrace({
           v1RequestBytes: preparedCall.frozenRequestBytes,
           trustedSetupEvidence: trustedProductionSetup[call.tool],
-          v2RequestBytes: preparedCall.productionRequestBytes,
+          v2RequestBytes: observedPreparedCall.productionRequestBytes,
           rawV2Pages: pages, completeArtifactBytes: artifact, projectedV1Bytes: projectedBytes,
         }),
       };
     }
-    projectedResult = recorded.projected;
-    adapterTraceBytes = candidateAdapterTraceBytes({
-      attemptID: attempt.attemptID, taskID: attempt.taskID, preparedCall,
-      benchmarkSetupEvidence, trustedSetupEvidence: trustedProductionSetup[call.tool],
-      productionResultBytes: recorded.productionResultBytes, trace: recorded.trace,
-      completeArtifactBytes: artifact, projectedResultBytes: recorded.projectedBytes,
-    });
-    observerEvents.push({
-      provider: 'aishell', tool: preparedCall.tool, action: preparedCall.action,
-      request: preparedCall.frozenRequest,
-      metadata: { preStateDigest: preAttemptManifest.digest },
-      result: recorded.projected, resultDigest: sha256Hex(canonicalJSONBytes(recorded.projected)),
-      status: 'succeeded', isError: false,
-    });
+      projectedResult = recorded.projected;
+      adapterTraceBytes = candidateAdapterTraceBytes({
+        attemptID: attempt.attemptID, taskID: attempt.taskID, preparedCall: observedPreparedCall,
+        benchmarkSetupEvidence, trustedSetupEvidence: trustedProductionSetup[call.tool],
+        productionResultBytes: recorded.productionResultBytes, trace: recorded.trace,
+        completeArtifactBytes: artifact, projectedResultBytes: recorded.projectedBytes,
+      });
+    }
   } else {
     for (const call of calls) {
       const action = call.request.action ?? (call.tool === 'run_check' ? 'execute' : call.request.operation);
@@ -766,17 +797,17 @@ export async function collectAttemptEvidence(input) {
       observerEvents.push({
         provider: 'aishell', tool: call.tool, action, request: call.request,
         metadata: { preStateDigest: preAttemptManifest.digest }, result: call.result,
-        resultDigest: sha256Hex(canonicalJSONBytes(call.result)), status: 'succeeded', isError: false,
+        resultDigest: sha256Hex(canonicalJSONBytes(call.result)), status: call.status, isError: call.isError,
       });
     }
-    projectedResult = Object.assign({}, ...calls.map(({ result }) => result));
+    projectedResult = Object.assign({}, ...calls.filter(({ isError }) => !isError).map(({ result }) => result));
   }
   if (!plainObject(finalAgent?.assertions)) throw new Error('final agent assertions are unavailable');
-  const telemetry = Object.assign({}, ...calls.map(({ result }) => ({
-    ...(Number.isInteger(result.processesStarted) ? { secondExecutionCount: result.processesStarted } : {}),
-    ...(typeof result.cacheHit === 'boolean' ? { cacheHit: result.cacheHit } : {}),
-    ...(Number.isInteger(result.falseFresh) ? { falseFresh: result.falseFresh } : {}),
-  })));
+  const telemetry = {
+    secondExecutionCount: calls.reduce((sum, { result }) => sum + (Number.isInteger(result.processesStarted) ? result.processesStarted : 0), 0),
+    cacheHit: calls.some(({ result }) => result.cacheState === 'hit' || result.cacheHit === true),
+    falseFresh: calls.reduce((sum, { result }) => sum + (Number.isInteger(result.falseFresh) ? result.falseFresh : 0), 0),
+  };
   return {
     result: Object.keys(projectedResult).length === 0 ? structuredClone(finalAgent.assertions) : projectedResult,
     process: { agentExitCode: execution.exitCode, agentTimedOut: execution.timedOut },
@@ -786,21 +817,24 @@ export async function collectAttemptEvidence(input) {
   };
 }
 
-/** Actual provider metadata bytes are mandatory; requested model configuration is never read. */
-export async function observeProviderModel({ providerTraceBytes, providerSSEBytes }) {
+/** Actual provider metadata bytes are mandatory; requested values only classify the observed unordered model set. */
+export async function observeProviderModel({ providerTraceBytes, providerSSEBytes, mainModelSnapshot, approvalReviewer }) {
   const trace = bytes(providerTraceBytes, 'provider trace');
   const sse = bytes(providerSSEBytes, 'provider SSE trace');
   const responseEvents = jsonLines(sse, 'provider SSE trace');
   if (responseEvents.some(({ type }) => type !== 'response.created' && type !== 'response.completed')) {
     throw new Error('provider SSE trace contains unrelated events');
   }
-  const completed = responseEvents.filter(({ type }) => type === 'response.completed');
-  const models = new Set(responseEvents.map(({ response }) => response?.model));
-  if (completed.length === 0 || models.size !== 1 || typeof [...models][0] !== 'string' || [...models][0].length === 0) {
+  const models = extractProviderModelsFromSSETrace(sse);
+  const actualModels = models.map(({ modelSnapshot }) => modelSnapshot);
+  const expectedModels = [mainModelSnapshot, ...(approvalReviewer?.modelSnapshots ?? [])].sort();
+  if (typeof mainModelSnapshot !== 'string' || mainModelSnapshot.length === 0
+    || approvalReviewer?.mode !== 'auto_review'
+    || JSON.stringify(actualModels) !== JSON.stringify(expectedModels)) {
     throw new Error('actual provider model snapshot is unavailable or inconsistent');
   }
   return canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
-    modelSnapshot: [...models][0], providerTraceSHA256: sha256Hex(trace), providerSSETraceSHA256: sha256Hex(sse),
+    schema: 'aishell.provider-model-evidence.v3', source: 'codex-provider-sse', models,
+    providerTraceSHA256: sha256Hex(trace), providerSSETraceSHA256: sha256Hex(sse),
   });
 }

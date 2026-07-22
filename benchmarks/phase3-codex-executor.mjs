@@ -8,7 +8,8 @@ import { captureManifest } from './capture-workspace-manifest.mjs';
 import { materializeGeneratedSeed } from './materialize-generated-seed.mjs';
 import {
   exactByteBinding,
-  extractProviderUsageFromTrace,
+  extractProviderModelsFromSSETrace,
+  extractProviderUsageFromSSETrace,
   runPhase3Attempts,
 } from './phase3-representative-runner.mjs';
 import { canonicalJSONBytes, sha256Hex } from './production-v2-benchmark-adapter.mjs';
@@ -107,10 +108,16 @@ async function digestFile(file) {
   return sha256Hex(await readFile(file));
 }
 
-function validateProviderModelEvidence(value, bytes, providerTraceBytes, providerSSEBytes) {
-  exactObjectKeys(value, ['schema', 'source', 'modelSnapshot', 'providerTraceSHA256', 'providerSSETraceSHA256'], 'provider model evidence');
-  if (value.schema !== 'aishell.provider-model-evidence.v1' || value.source !== 'codex-provider-sse'
-    || typeof value.modelSnapshot !== 'string' || value.modelSnapshot.length === 0
+function validateProviderModelEvidence(value, bytes, providerTraceBytes, providerSSEBytes, expectedMainModel, expectedReviewer) {
+  exactObjectKeys(value, [
+    'schema', 'source', 'models',
+    'providerTraceSHA256', 'providerSSETraceSHA256',
+  ], 'provider model evidence');
+  const models = extractProviderModelsFromSSETrace(providerSSEBytes);
+  const expectedModels = [expectedMainModel, ...expectedReviewer.modelSnapshots].sort();
+  if (value.schema !== 'aishell.provider-model-evidence.v3' || value.source !== 'codex-provider-sse'
+    || JSON.stringify(value.models) !== JSON.stringify(models)
+    || JSON.stringify(models.map(({ modelSnapshot }) => modelSnapshot)) !== JSON.stringify(expectedModels)
     || value.providerTraceSHA256 !== sha256Hex(providerTraceBytes)
     || value.providerSSETraceSHA256 !== sha256Hex(providerSSEBytes)) {
     throw new Error('provider model evidence is not bound to trusted provider metadata');
@@ -255,6 +262,7 @@ function codexArguments({ prompt, workspace, attempt, isolation, options, stateD
   const args = [
     'exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
     '--skip-git-repo-check', '--color', 'never', ...options.sandboxArguments,
+    '--config', `approvals_reviewer=${tomlString(options.approvalReviewer.mode)}`,
     '--config', `model_reasoning_effort=${tomlString(isolation.reasoningEffort)}`,
     '--model', isolation.modelSnapshot,
     '--cd', workspace,
@@ -302,6 +310,13 @@ function normalizeOptions(options) {
     throw new Error('commonHostCatalogDigest must be SHA-256');
   }
   const exactSandboxArguments = sandboxArguments(options.sandboxConfiguration);
+  if (options.approvalReviewer?.mode !== 'auto_review' || !Array.isArray(options.approvalReviewer.modelSnapshots)
+    || options.approvalReviewer.modelSnapshots.length === 0
+    || options.approvalReviewer.modelSnapshots.some((model) => typeof model !== 'string' || model.length === 0)
+    || new Set(options.approvalReviewer.modelSnapshots).size !== options.approvalReviewer.modelSnapshots.length
+    || JSON.stringify(options.approvalReviewer.modelSnapshots) !== JSON.stringify([...options.approvalReviewer.modelSnapshots].sort())) {
+    throw new Error('approvalReviewer must freeze auto-review model snapshots');
+  }
   validateCommonCodexArguments(options.commonCodexArguments);
   return {
     ...options,
@@ -309,6 +324,7 @@ function normalizeOptions(options) {
     codexCommand,
     armBinaries,
     sandboxArguments: exactSandboxArguments,
+    approvalReviewer: structuredClone(options.approvalReviewer),
     timeoutMilliseconds,
     setupAttempt: requireFunction(options.setupAttempt, 'setupAttempt'),
     observeToolCatalog: requireFunction(options.observeToolCatalog, 'observeToolCatalog'),
@@ -339,6 +355,9 @@ export function createPhase3CodexExecutor(rawOptions) {
     }
     if (options.commonHostCatalogDigest !== isolation.commonHostCatalogDigest) {
       throw new Error('common host catalog differs from manifest');
+    }
+    if (JSON.stringify(options.approvalReviewer) !== JSON.stringify(isolation.approvalReviewer)) {
+      throw new Error('approval reviewer differs from manifest');
     }
     const runDirectory = path.join(options.outputDirectory, attempt.attemptID);
     const workspace = path.join(runDirectory, 'workspace');
@@ -417,9 +436,37 @@ export function createPhase3CodexExecutor(rawOptions) {
     await writeFile(path.join(runDirectory, 'provider-events.jsonl'), stdout, { flag: 'wx' });
     await writeFile(path.join(runDirectory, 'provider-sse.jsonl'), providerSSEBytes, { flag: 'wx' });
     await writeFile(path.join(runDirectory, 'stderr.log'), diagnosticStderr(stderr), { flag: 'wx' });
+    if (execution.timedOut) {
+      let providerModels = null;
+      let extractedUsage = null;
+      try { providerModels = extractProviderModelsFromSSETrace(providerSSEBytes); } catch { /* Raw incomplete SSE remains the evidence. */ }
+      try { extractedUsage = extractProviderUsageFromSSETrace(providerSSEBytes); } catch { /* Missing usage remains invalid, never zero. */ }
+      await writeJSON(path.join(runDirectory, 'provider-usage.json'), {
+        format: extractedUsage?.format ?? null, usage: null,
+      });
+      return {
+        attemptID: attempt.attemptID,
+        sequence: attempt.sequence,
+        taskID: attempt.taskID,
+        arm: attempt.arm,
+        repetition: attempt.repetition,
+        usage: null,
+        providerTrace: exactByteBinding(stdout),
+        providerSSE: exactByteBinding(providerSSEBytes),
+        providerModels,
+        providerUsageFormat: extractedUsage?.format ?? null,
+        agentResult: exactByteBinding(Buffer.alloc(0)),
+        adapterTrace: null,
+        agentExitCode: execution.exitCode,
+        timedOut: true,
+        wallMilliseconds,
+      };
+    }
     const rawProviderModelEvidence = await options.observeProviderModel(Object.freeze({
       providerTraceBytes: Buffer.from(stdout),
       providerSSEBytes: Buffer.from(providerSSEBytes),
+      mainModelSnapshot: isolation.modelSnapshot,
+      approvalReviewer: structuredClone(isolation.approvalReviewer),
     }));
     if (!Buffer.isBuffer(rawProviderModelEvidence) && !ArrayBuffer.isView(rawProviderModelEvidence)) {
       throw new Error('observeProviderModel must return trusted evidence bytes, not a requested-model echo');
@@ -433,10 +480,8 @@ export function createPhase3CodexExecutor(rawOptions) {
     }
     const providerModelEvidence = validateProviderModelEvidence(
       providerModelEvidenceValue, providerModelEvidenceBytes, stdout, providerSSEBytes,
+      isolation.modelSnapshot, isolation.approvalReviewer,
     );
-    if (providerModelEvidence.modelSnapshot !== isolation.modelSnapshot) {
-      throw new Error(`actual provider model differs from manifest: ${providerModelEvidence.modelSnapshot}`);
-    }
     await writeFile(path.join(runDirectory, 'provider-model-evidence.json'), providerModelEvidenceBytes, { flag: 'wx' });
     await writeJSON(path.join(runDirectory, 'observed-bindings.json'), {
       arm: attempt.arm,
@@ -447,7 +492,8 @@ export function createPhase3CodexExecutor(rawOptions) {
       sandboxSHA256: sha256Hex(canonicalJSONBytes(options.sandboxConfiguration)),
       commonHostCatalogSHA256: options.commonHostCatalogDigest,
       requestedModelSnapshot: isolation.modelSnapshot,
-      actualProviderModelSnapshot: providerModelEvidence.modelSnapshot,
+      requestedApprovalReviewer: isolation.approvalReviewer,
+      actualProviderModels: providerModelEvidence.models,
       providerModelEvidenceSHA256: sha256Hex(providerModelEvidenceBytes),
       mcpWireTapSHA256: attempt.arm === 'native' ? null : await digestFile(MCP_WIRE_TAP),
     });
@@ -471,7 +517,7 @@ export function createPhase3CodexExecutor(rawOptions) {
     }
     await writeJSON(path.join(runDirectory, 'observer-evidence.json'), observed.observerEvidence);
     let extractedUsage = null;
-    try { extractedUsage = extractProviderUsageFromTrace(stdout); } catch { /* Runner records invalid evidence without inventing usage. */ }
+    try { extractedUsage = extractProviderUsageFromSSETrace(providerSSEBytes); } catch { /* Missing usage remains an invalid run, never zero. */ }
     const usage = execution.timedOut ? null : extractedUsage?.usage ?? null;
     const providerUsageFormat = extractedUsage?.format ?? null;
     await writeJSON(path.join(runDirectory, 'provider-usage.json'), { format: providerUsageFormat, usage });
@@ -486,6 +532,8 @@ export function createPhase3CodexExecutor(rawOptions) {
       repetition: attempt.repetition,
       usage,
       providerTrace: exactByteBinding(stdout),
+      providerSSE: exactByteBinding(providerSSEBytes),
+      providerModels: providerModelEvidence.models,
       providerUsageFormat,
       agentResult: exactByteBinding(finalAgent.bytes),
       adapterTrace: attempt.arm === 'candidate' && adapterTraceBytes ? exactByteBinding(adapterTraceBytes) : null,

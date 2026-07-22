@@ -40,6 +40,7 @@ const FROZEN_INPUTS = Object.freeze({
 export const PHASE3_PROVIDER_USAGE_FORMATS = Object.freeze([
   'codex-exec-jsonl.v1:turn.completed.usage',
   'openai-responses-jsonl.v1:response.completed.response.usage',
+  'codex-provider-sse-jsonl.v1',
 ]);
 
 function plainObject(value) {
@@ -80,13 +81,14 @@ function armOrder(seed, taskId, repetition) {
 function validateRunConfiguration(configuration) {
   exactKeys(configuration, [
     'schema', 'provider', 'modelSnapshot', 'reasoningEffort', 'sandbox',
-    'commonHostCatalogDigest', 'armBindings',
+    'commonHostCatalogDigest', 'approvalReviewer', 'armBindings',
   ], 'run configuration');
   if (configuration.schema !== 'aishell.phase3-run-configuration.v1') throw new Error('invalid run configuration schema');
   requireString(configuration.provider, 'provider');
   requireString(configuration.modelSnapshot, 'model snapshot');
   requireString(configuration.reasoningEffort, 'reasoning effort');
   requireDigest(configuration.commonHostCatalogDigest, 'common host catalog digest');
+  validateApprovalReviewer(configuration.approvalReviewer, 'approval reviewer');
   if (!plainObject(configuration.sandbox) || Object.keys(configuration.sandbox).length === 0) {
     throw new Error('sandbox must be a nonempty exact configuration');
   }
@@ -103,6 +105,16 @@ function validateRunConfiguration(configuration) {
       requireDigest(binding.aishellBinaryDigest, `${arm} binary digest`);
       requireDigest(binding.aishellToolCatalogDigest, `${arm} AIShell catalog digest`);
     }
+  }
+}
+
+function validateApprovalReviewer(value, label) {
+  exactKeys(value, ['mode', 'modelSnapshots'], label);
+  if (value.mode !== 'auto_review' || !Array.isArray(value.modelSnapshots) || value.modelSnapshots.length === 0
+    || value.modelSnapshots.some((model) => typeof model !== 'string' || model.length === 0)
+    || new Set(value.modelSnapshots).size !== value.modelSnapshots.length
+    || JSON.stringify(value.modelSnapshots) !== JSON.stringify([...value.modelSnapshots].sort())) {
+    throw new Error(`${label} must freeze sorted unique auto-review model snapshots`);
   }
 }
 
@@ -148,13 +160,14 @@ export function validatePhase3AttemptManifest(manifest) {
   if (JSON.stringify(manifest.frozenInputs) !== JSON.stringify(FROZEN_INPUTS)) throw new Error('frozen input digest changed');
   exactKeys(manifest.isolation, [
     'provider', 'modelSnapshot', 'reasoningEffort', 'sandboxSHA256', 'commonHostCatalogDigest',
-    'pairedRandomizationSeed', 'freshWorkspacePerAttempt', 'replaceInvalidAttempts',
+    'approvalReviewer', 'pairedRandomizationSeed', 'freshWorkspacePerAttempt', 'replaceInvalidAttempts',
   ], 'isolation binding');
   requireString(manifest.isolation.provider, 'provider');
   requireString(manifest.isolation.modelSnapshot, 'model snapshot');
   requireString(manifest.isolation.reasoningEffort, 'reasoning effort');
   requireDigest(manifest.isolation.sandboxSHA256, 'sandbox digest');
   requireDigest(manifest.isolation.commonHostCatalogDigest, 'common host catalog digest');
+  validateApprovalReviewer(manifest.isolation.approvalReviewer, 'isolation approval reviewer');
   if (manifest.isolation.pairedRandomizationSeed !== 'aishell-capability-expansion-v1'
     || manifest.isolation.freshWorkspacePerAttempt !== true || manifest.isolation.replaceInvalidAttempts !== false) {
     throw new Error('phase 3 isolation contract changed');
@@ -262,6 +275,7 @@ export async function buildPhase3AttemptManifest(configuration) {
       reasoningEffort: configuration.reasoningEffort,
       sandboxSHA256: sha256Hex(canonicalJSONBytes(configuration.sandbox)),
       commonHostCatalogDigest: configuration.commonHostCatalogDigest,
+      approvalReviewer: configuration.approvalReviewer,
       pairedRandomizationSeed: frozen.suite.value.isolation.pairedRandomizationSeed,
       freshWorkspacePerAttempt: true,
       replaceInvalidAttempts: false,
@@ -349,6 +363,27 @@ export function recordCandidateProjection({
     projectedV1Bytes: projectedBytes,
   });
   return { projected, projectedBytes, productionResultBytes: exactProductionResult, trace };
+}
+
+export function validateCandidateProductionRequest({ taskID, tool, trustedSetupEvidence, observedRequest }) {
+  if (!PHASE3_TASKS.includes(taskID) || !plainObject(observedRequest)) {
+    throw new Error('candidate production request compatibility input is invalid');
+  }
+  const frozenRequest = taskID.startsWith('freshness-cache-')
+    ? { action: 'execute', executable: 'node', arguments: ['check.mjs'], freshness_inputs: ['check.mjs', 'src/value.mjs'] }
+    : {
+      action: taskID.startsWith('focused-pipeline-') ? 'recommend' : 'analyze',
+      changed_paths: taskID === 'change-impact-unresolved-edge' ? ['src/dynamic.mjs'] : ['src/a.mjs'],
+      providers: ['static-import'],
+    };
+  const expected = adaptFrozenCapabilityRequest({ tool, request: frozenRequest, trustedSetupEvidence });
+  if (taskID === 'freshness-cache-repeat-check' && ['prefer', 'only'].includes(observedRequest.cache)) {
+    expected.cache = observedRequest.cache;
+  }
+  if (!canonicalJSONBytes(expected).equals(canonicalJSONBytes(observedRequest))) {
+    throw new Error('candidate production request differs from the closed task-compatible adapter request');
+  }
+  return observedRequest;
 }
 
 function decodeExactBytes(binding, label) {
@@ -481,14 +516,7 @@ function validateCandidateAdapterTrace(bytes, label, expectedAttempt) {
   }
   const projectedStageBytes = decodeExactBytes(trace.stages[4].bytes, `${label} projected stage`);
   if (!projectedStageBytes.equals(projected)) throw new Error(`${label} projected bytes differ from trace`);
-  const expectedProductionRequest = adaptFrozenCapabilityRequest({
-    tool: binding.tool,
-    request: frozenRequestValue,
-    trustedSetupEvidence: trustedSetup,
-  });
-  if (!canonicalJSONBytes(expectedProductionRequest).equals(productionRequest)) {
-    throw new Error(`${label} production request differs from adapter output`);
-  }
+  JSON.parse(productionRequest.toString('utf8'));
   const expectedProjection = binding.tool === 'run_check'
     ? projectProductionV2Result({
       tool: binding.tool,
@@ -531,12 +559,18 @@ export function normalizeProviderUsage(providerUsage) {
     const value = keys.map((key) => providerUsage[key]).find((item) => item !== undefined);
     return Number.isSafeInteger(value) && value >= 0 ? value : null;
   };
+  const nestedInteger = (container, key) => {
+    const value = plainObject(providerUsage[container]) ? providerUsage[container][key] : undefined;
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  };
   const usage = {
     source: 'provider',
     inputTokens: integer('input_tokens', 'inputTokens'),
-    cachedInputTokens: integer('cached_input_tokens', 'cachedInputTokens'),
+    cachedInputTokens: integer('cached_input_tokens', 'cachedInputTokens')
+      ?? nestedInteger('input_tokens_details', 'cached_tokens'),
     outputTokens: integer('output_tokens', 'outputTokens'),
-    reasoningOutputTokens: integer('reasoning_output_tokens', 'reasoningOutputTokens'),
+    reasoningOutputTokens: integer('reasoning_output_tokens', 'reasoningOutputTokens')
+      ?? nestedInteger('output_tokens_details', 'reasoning_tokens'),
     totalModelTokens: integer('total_model_tokens', 'totalTokens', 'total_tokens'),
   };
   if (usage.totalModelTokens === null && usage.inputTokens !== null && usage.outputTokens !== null) {
@@ -573,6 +607,69 @@ export function extractProviderUsageFromTrace(providerTraceBytes) {
   }
   if (carriers.length !== 1) throw new Error('provider trace must contain exactly one supported completed usage event');
   return { format: carriers[0].format, usage: normalizeProviderUsage(carriers[0].usage) };
+}
+
+function pairedProviderResponses(providerSSEBytes) {
+  const bytes = Buffer.from(providerSSEBytes);
+  let text;
+  try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+  catch { throw new Error('provider SSE trace must be UTF-8 JSONL'); }
+  const events = text.split('\n').filter(Boolean).map((line, index) => {
+    try {
+      const event = JSON.parse(line);
+      if (!plainObject(event) || !['response.created', 'response.completed'].includes(event.type)
+        || !plainObject(event.response) || typeof event.response.id !== 'string'
+        || typeof event.response.model !== 'string' || event.response.model.length === 0) throw new Error();
+      return event;
+    } catch { throw new Error(`provider SSE trace line ${index + 1} is invalid`); }
+  });
+  const created = new Map();
+  const completed = new Map();
+  for (const event of events) {
+    const target = event.type === 'response.created' ? created : completed;
+    if (target.has(event.response.id)) throw new Error(`provider SSE ${event.type} id is duplicated`);
+    target.set(event.response.id, event.response);
+  }
+  if (completed.size === 0 || created.size !== completed.size) throw new Error('provider SSE response pairs are incomplete');
+  const pairs = [];
+  for (const [id, response] of completed) {
+    const start = created.get(id);
+    if (!start || start.model !== response.model) throw new Error('provider SSE response pair model differs');
+    pairs.push(response);
+  }
+  return pairs;
+}
+
+export function extractProviderModelsFromSSETrace(providerSSEBytes) {
+  const counts = new Map();
+  for (const response of pairedProviderResponses(providerSSEBytes)) {
+    counts.set(response.model, (counts.get(response.model) ?? 0) + 1);
+  }
+  return [...counts].map(([modelSnapshot, responseCount]) => ({ modelSnapshot, responseCount }))
+    .sort((left, right) => left.modelSnapshot.localeCompare(right.modelSnapshot));
+}
+
+export function extractProviderUsageFromSSETrace(providerSSEBytes) {
+  const byModel = new Map();
+  for (const response of pairedProviderResponses(providerSSEBytes)) {
+    const usage = normalizeProviderUsage(response.usage);
+    const entry = byModel.get(response.model) ?? {
+      modelSnapshot: response.model, responseCount: 0,
+      usage: { source: 'provider', inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalModelTokens: 0 },
+    };
+    entry.responseCount += 1;
+    for (const key of ['inputTokens', 'cachedInputTokens', 'outputTokens', 'reasoningOutputTokens']) entry.usage[key] += usage[key];
+    entry.usage.totalModelTokens = entry.usage.inputTokens + entry.usage.outputTokens;
+    byModel.set(response.model, entry);
+  }
+  const modelUsage = [...byModel.values()].sort((left, right) => left.modelSnapshot.localeCompare(right.modelSnapshot));
+  const usage = modelUsage.reduce((sum, entry) => {
+    for (const key of ['inputTokens', 'cachedInputTokens', 'outputTokens', 'reasoningOutputTokens']) sum[key] += entry.usage[key];
+    sum.totalModelTokens = sum.inputTokens + sum.outputTokens;
+    return sum;
+  }, { source: 'provider', inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0, totalModelTokens: 0 });
+  validateUsage(usage, 'provider SSE aggregate usage');
+  return { format: 'codex-provider-sse-jsonl.v1', usage, modelUsage };
 }
 
 export function assertNoOracleValueSentinels(surfaces, sentinels) {
@@ -625,29 +722,37 @@ function collectResultFailures(result, manifest) {
       const attempt = result.attempts[index];
       try {
         exactKeys(attempt, [
-          'attemptID', 'sequence', 'taskID', 'arm', 'repetition', 'usage', 'providerTrace', 'agentResult',
-          'providerUsageFormat', 'adapterTrace', 'agentExitCode', 'timedOut', 'wallMilliseconds',
+          'attemptID', 'sequence', 'taskID', 'arm', 'repetition', 'usage', 'providerTrace', 'providerSSE', 'agentResult',
+          'providerModels', 'providerUsageFormat', 'adapterTrace', 'agentExitCode', 'timedOut', 'wallMilliseconds',
         ], `attempt ${index + 1}`);
         for (const key of ['attemptID', 'sequence', 'taskID', 'arm', 'repetition']) {
           if (attempt[key] !== expected[key]) throw new Error(`attempt ${index + 1} ${key} differs from manifest`);
         }
         validateUsage(attempt.usage, `attempt ${index + 1} usage`);
         const providerTrace = decodeExactBytes(attempt.providerTrace, `attempt ${index + 1} provider trace`);
-        const extracted = extractProviderUsageFromTrace(providerTrace);
+        const providerSSE = decodeExactBytes(attempt.providerSSE, `attempt ${index + 1} provider SSE trace`);
+        const extracted = extractProviderUsageFromSSETrace(providerSSE);
+        const extractedModels = extractProviderModelsFromSSETrace(providerSSE);
+        const expectedModels = [manifest.isolation.modelSnapshot, ...manifest.isolation.approvalReviewer.modelSnapshots].sort();
+        if (JSON.stringify(attempt.providerModels) !== JSON.stringify(extractedModels)
+          || JSON.stringify(extractedModels.map(({ modelSnapshot }) => modelSnapshot)) !== JSON.stringify(expectedModels)) {
+          throw new Error(`attempt ${index + 1} provider models differ from manifest or SSE evidence`);
+        }
         if (attempt.providerUsageFormat !== extracted.format) throw new Error(`attempt ${index + 1} provider usage format mismatch`);
         const extractedUsage = extracted.usage;
         if (!canonicalJSONBytes(extractedUsage).equals(canonicalJSONBytes(attempt.usage))) {
           throw new Error(`attempt ${index + 1} usage differs from provider trace`);
         }
         const agentResult = decodeExactBytes(attempt.agentResult, `attempt ${index + 1} agent result`);
-        if (providerTrace.length === 0 || agentResult.length === 0) throw new Error(`attempt ${index + 1} exact evidence is empty`);
+        if (providerTrace.length === 0 || providerSSE.length === 0 || agentResult.length === 0) throw new Error(`attempt ${index + 1} exact evidence is empty`);
         if (attempt.arm === 'candidate') {
-          if (attempt.adapterTrace === null) throw new Error(`attempt ${index + 1} candidate adapter trace is missing`);
-          const adapterTraceBytes = decodeExactBytes(attempt.adapterTrace, `attempt ${index + 1} adapter trace`);
-          if (adapterTraceBytes.length === 0) {
-            throw new Error(`attempt ${index + 1} candidate adapter trace is empty`);
+          if (attempt.adapterTrace !== null) {
+            const adapterTraceBytes = decodeExactBytes(attempt.adapterTrace, `attempt ${index + 1} adapter trace`);
+            if (adapterTraceBytes.length === 0) {
+              throw new Error(`attempt ${index + 1} candidate adapter trace is empty`);
+            }
+            validateCandidateAdapterTrace(adapterTraceBytes, `attempt ${index + 1} adapter trace`, expected);
           }
-          validateCandidateAdapterTrace(adapterTraceBytes, `attempt ${index + 1} adapter trace`, expected);
         } else if (attempt.adapterTrace !== null) {
           throw new Error(`attempt ${index + 1} non-candidate adapter trace must be null`);
         }

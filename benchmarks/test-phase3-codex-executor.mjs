@@ -9,6 +9,7 @@ import {
   assemblePhase3Result,
   buildPhase3AttemptManifest,
   candidateAdapterTraceBytes,
+  extractProviderModelsFromSSETrace,
   runPhase3Attempts,
   validatePhase3Result,
 } from './phase3-representative-runner.mjs';
@@ -37,6 +38,7 @@ const configuration = {
   modelSnapshot: 'fixture-model-snapshot', reasoningEffort: 'high',
   sandbox: { approvalPolicy: 'on-request', filesystem: 'workspace-write', network: false },
   commonHostCatalogDigest: digest('host-catalog'),
+  approvalReviewer: { mode: 'auto_review', modelSnapshots: ['fixture-reviewer-model'] },
   armBindings: {
     native: { binding: 'native', aishellBinaryDigest: null, aishellToolCatalogDigest: null },
     'current-aishell-0.3.3': {
@@ -54,6 +56,7 @@ const selected = Object.fromEntries(['native', 'current-aishell-0.3.3', 'candida
 const invocations = [];
 let timedOut = false;
 let omitUsage = false;
+let incompleteSSE = false;
 
 async function setupAttempt({ attempt, workspace, frozen, applyFrozenMutation }) {
   assert.equal(frozen.task.id, attempt.taskID);
@@ -86,12 +89,22 @@ function providerEvents(taskID) {
 
 async function runProcess(command, args, context) {
   invocations.push({ command, args, context });
-  const stderr = Buffer.from([
-    `TRACE tungstenite::protocol: Received message ${JSON.stringify({ type: 'response.created', response: { model: configuration.modelSnapshot } })}`,
-    `TRACE tungstenite::protocol: Received message ${JSON.stringify({ type: 'response.completed', response: { model: configuration.modelSnapshot, usage: { input_tokens: 12, output_tokens: 5 } } })}`,
-    'fixture diagnostic',
-    '',
-  ].join('\n'));
+  const reviewerCompleted = { type: 'response.completed', response: {
+    id: 'reviewer-response', model: configuration.approvalReviewer.modelSnapshots[0],
+    ...(!omitUsage ? { usage: { input_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens: 0, output_tokens_details: { reasoning_tokens: 0 } } } : {}),
+  } };
+  const mainCompleted = { type: 'response.completed', response: {
+    id: 'main-response', model: configuration.modelSnapshot,
+    ...(!omitUsage ? { usage: { input_tokens: 12, input_tokens_details: { cached_tokens: 0 }, output_tokens: 5, output_tokens_details: { reasoning_tokens: 0 } } } : {}),
+  } };
+  const stderrLines = [
+    `TRACE tungstenite::protocol: Received message ${JSON.stringify({ type: 'response.created', response: { id: 'reviewer-response', model: configuration.approvalReviewer.modelSnapshots[0] } })}`,
+    `TRACE tungstenite::protocol: Received message ${JSON.stringify(reviewerCompleted)}`,
+    `TRACE tungstenite::protocol: Received message ${JSON.stringify({ type: 'response.created', response: { id: 'main-response', model: configuration.modelSnapshot } })}`,
+  ];
+  if (!incompleteSSE) stderrLines.push(`TRACE tungstenite::protocol: Received message ${JSON.stringify(mainCompleted)}`);
+  stderrLines.push('fixture diagnostic', '');
+  const stderr = Buffer.from(stderrLines.join('\n'));
   return { stdout: providerEvents(selected.native.taskID), stderr, exitCode: 0, timedOut };
 }
 
@@ -115,13 +128,11 @@ async function observeToolCatalog({ binary, profile, workspace, stateDirectory }
 }
 
 async function observeProviderModel(input) {
-  assert.deepEqual(Object.keys(input).sort(), ['providerSSEBytes', 'providerTraceBytes']);
-  const metadata = input.providerTraceBytes.toString('utf8').split('\n').filter(Boolean)
-    .map(JSON.parse).find((event) => event.type === 'provider.metadata');
-  if (typeof metadata?.model_snapshot !== 'string') throw new Error('provider model metadata unavailable');
+  assert.deepEqual(Object.keys(input).sort(), ['approvalReviewer', 'mainModelSnapshot', 'providerSSEBytes', 'providerTraceBytes']);
+  const models = extractProviderModelsFromSSETrace(input.providerSSEBytes);
   return canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
-    modelSnapshot: metadata.model_snapshot, providerTraceSHA256: sha256Hex(input.providerTraceBytes),
+    schema: 'aishell.provider-model-evidence.v3', source: 'codex-provider-sse', models,
+    providerTraceSHA256: sha256Hex(input.providerTraceBytes),
     providerSSETraceSHA256: sha256Hex(input.providerSSEBytes),
   });
 }
@@ -131,6 +142,7 @@ function executorOptions(overrides = {}) {
     outputDirectory: path.join(root, `options-${digest(JSON.stringify(overrides)).slice(0, 12)}`),
     armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: candidateBinary },
     sandboxConfiguration: configuration.sandbox,
+    approvalReviewer: configuration.approvalReviewer,
     commonHostCatalogDigest: configuration.commonHostCatalogDigest,
     commonCodexArguments: [], setupAttempt, observeToolCatalog, observeProviderModel, observeAttempt, runProcess,
     ...overrides,
@@ -159,6 +171,7 @@ const executor = createPhase3CodexExecutor({
   outputDirectory,
   armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: candidateBinary },
   sandboxConfiguration: configuration.sandbox,
+  approvalReviewer: configuration.approvalReviewer,
   commonHostCatalogDigest: configuration.commonHostCatalogDigest,
   commonCodexArguments: ['--config', 'fixture_host_catalog=true'],
   setupAttempt, observeToolCatalog, observeProviderModel, observeAttempt, runProcess, timeoutMilliseconds: 300_000,
@@ -172,20 +185,26 @@ for (const arm of ['native', 'current-aishell-0.3.3', 'candidate']) {
   });
   assert.equal(record.arm, arm);
   assert.deepEqual(record.usage, {
-    source: 'provider', inputTokens: 12, cachedInputTokens: 3,
-    outputTokens: 5, reasoningOutputTokens: 2, totalModelTokens: 17,
+    source: 'provider', inputTokens: 12, cachedInputTokens: 0,
+    outputTokens: 5, reasoningOutputTokens: 0, totalModelTokens: 17,
   });
-  assert.equal(record.providerUsageFormat, 'codex-exec-jsonl.v1');
+  assert.equal(record.providerUsageFormat, 'codex-provider-sse-jsonl.v1');
+  assert.deepEqual(record.providerModels, [
+    { modelSnapshot: configuration.modelSnapshot, responseCount: 1 },
+    { modelSnapshot: configuration.approvalReviewer.modelSnapshots[0], responseCount: 1 },
+  ].sort((left, right) => left.modelSnapshot.localeCompare(right.modelSnapshot)));
   assert.equal(record.adapterTrace !== null, arm === 'candidate');
   assert.equal(record.providerTrace.byteLength > 0, true);
   assert.equal(JSON.parse(await readFile(path.join(outputDirectory, attempt.attemptID, 'observer-evidence.json'))).attemptID, attempt.attemptID);
   const bindings = JSON.parse(await readFile(path.join(outputDirectory, attempt.attemptID, 'observed-bindings.json')));
   assert.equal(bindings.requestedModelSnapshot, configuration.modelSnapshot);
-  assert.equal(bindings.actualProviderModelSnapshot, configuration.modelSnapshot);
+  assert.deepEqual(bindings.actualProviderModels, record.providerModels);
   const modelEvidence = await readFile(path.join(outputDirectory, attempt.attemptID, 'provider-model-evidence.json'));
-  assert.equal(JSON.parse(modelEvidence).modelSnapshot, configuration.modelSnapshot);
+  assert.deepEqual(JSON.parse(modelEvidence).models, record.providerModels);
   const providerSSE = (await readFile(path.join(outputDirectory, attempt.attemptID, 'provider-sse.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-  assert.deepEqual(providerSSE.map(({ type }) => type), ['response.created', 'response.completed']);
+  assert.deepEqual(providerSSE.map(({ type }) => type), [
+    'response.created', 'response.completed', 'response.created', 'response.completed',
+  ]);
   assert.equal(await readFile(path.join(outputDirectory, attempt.attemptID, 'stderr.log'), 'utf8'), 'fixture diagnostic\n');
 }
 
@@ -199,6 +218,7 @@ assert.equal(nativeInvocation.args.includes('--dangerously-bypass-approvals-and-
 assert.equal(nativeInvocation.args.includes('--sandbox'), true);
 assert.equal(nativeInvocation.args.includes('workspace-write'), true);
 assert.equal(nativeInvocation.args.includes('approval_policy="on-request"'), true);
+assert.equal(nativeInvocation.args.includes('approvals_reviewer="auto_review"'), true);
 assert.equal(nativeInvocation.args.includes('sandbox_workspace_write.network_access=false'), true);
 assert.equal(nativeInvocation.args.some((value) => value.includes('mcp_servers.aishell')), false);
 assert.equal(currentInvocation.args.some((value) => value.includes(currentBinary)), true);
@@ -225,9 +245,23 @@ const timeoutRecord = await executor({
 });
 assert.equal(timeoutRecord.timedOut, true);
 assert.equal(timeoutRecord.usage, null, 'timeout must invalidate usage even if a completion event was emitted');
-assert.equal(timeoutRecord.providerUsageFormat, 'codex-exec-jsonl.v1');
+assert.equal(timeoutRecord.providerUsageFormat, 'codex-provider-sse-jsonl.v1');
+
+incompleteSSE = true;
+const midResponseTimeoutAttempt = { ...selected.native, attemptID: `${selected.native.attemptID}-mid-response-timeout` };
+const midResponseTimeoutRecord = await executor({
+  attempt: midResponseTimeoutAttempt, isolation: manifest.isolation, armBinding: manifest.armBindings.native,
+  prompt: await renderRepresentativePrompt(midResponseTimeoutAttempt.taskID),
+});
+assert.equal(midResponseTimeoutRecord.timedOut, true);
+assert.equal(midResponseTimeoutRecord.usage, null);
+assert.equal(midResponseTimeoutRecord.providerUsageFormat, null);
+assert.equal(midResponseTimeoutRecord.providerModels, null);
+assert.equal(midResponseTimeoutRecord.providerSSE.byteLength > 0, true, 'incomplete raw SSE must be retained');
+assert.equal(midResponseTimeoutRecord.agentResult.byteLength, 0);
 
 timedOut = false;
+incompleteSSE = false;
 omitUsage = true;
 const missingUsageAttempt = { ...selected.native, attemptID: `${selected.native.attemptID}-missing-usage` };
 const missingUsageRecord = await executor({
@@ -240,6 +274,7 @@ assert.equal(missingUsageRecord.providerUsageFormat, null);
 assert.throws(() => createPhase3CodexExecutor({
   outputDirectory, armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: candidateBinary },
   sandboxConfiguration: configuration.sandbox,
+  approvalReviewer: configuration.approvalReviewer,
   commonHostCatalogDigest: configuration.commonHostCatalogDigest, commonCodexArguments: [],
   observeToolCatalog, observeProviderModel, observeAttempt,
 }), /setupAttempt callback is required/u);
@@ -250,6 +285,7 @@ const badExecutor = createPhase3CodexExecutor({
   outputDirectory: path.join(root, 'bad-runs'),
   armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: changedCandidate },
   sandboxConfiguration: configuration.sandbox,
+  approvalReviewer: configuration.approvalReviewer,
   commonHostCatalogDigest: configuration.commonHostCatalogDigest,
   commonCodexArguments: [], setupAttempt, observeToolCatalog, observeProviderModel, observeAttempt, runProcess,
 });
@@ -262,6 +298,7 @@ const badCatalogExecutor = createPhase3CodexExecutor({
   outputDirectory: path.join(root, 'bad-catalog-runs'),
   armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: candidateBinary },
   sandboxConfiguration: configuration.sandbox,
+  approvalReviewer: configuration.approvalReviewer,
   commonHostCatalogDigest: configuration.commonHostCatalogDigest,
   commonCodexArguments: [], setupAttempt,
   observeToolCatalog: async () => digest('observed-wrong-catalog'),
@@ -278,15 +315,15 @@ const actualModelAttempt = { ...selected.native, attemptID: `${selected.native.a
 const wrongActualModelExecutor = createPhase3CodexExecutor(executorOptions({
   outputDirectory: path.join(root, 'wrong-actual-model'),
   observeProviderModel: async ({ providerTraceBytes, providerSSEBytes }) => canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
-    modelSnapshot: 'different-provider-model', providerTraceSHA256: sha256Hex(providerTraceBytes),
+    schema: 'aishell.provider-model-evidence.v3', source: 'codex-provider-sse',
+    models: [{ modelSnapshot: 'different-provider-model', responseCount: 1 }], providerTraceSHA256: sha256Hex(providerTraceBytes),
     providerSSETraceSHA256: sha256Hex(providerSSEBytes),
   }),
 }));
 await assert.rejects(() => wrongActualModelExecutor({
   attempt: actualModelAttempt, isolation: manifest.isolation, armBinding: manifest.armBindings.native,
   prompt: candidatePrompt,
-}), /actual provider model differs from manifest/u);
+}), /not bound to trusted provider metadata/u);
 
 const missingMetadataAttempt = { ...selected.native, attemptID: `${selected.native.attemptID}-missing-model-metadata` };
 const missingMetadataExecutor = createPhase3CodexExecutor(executorOptions({
@@ -312,8 +349,9 @@ const unboundEvidenceAttempt = { ...selected.native, attemptID: `${selected.nati
 const unboundEvidenceExecutor = createPhase3CodexExecutor(executorOptions({
   outputDirectory: path.join(root, 'unbound-model-evidence'),
   observeProviderModel: async ({ providerSSEBytes }) => canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
-    modelSnapshot: configuration.modelSnapshot, providerTraceSHA256: digest('different-provider-trace'),
+    schema: 'aishell.provider-model-evidence.v3', source: 'codex-provider-sse',
+    models: extractProviderModelsFromSSETrace(providerSSEBytes),
+    providerTraceSHA256: digest('different-provider-trace'),
     providerSSETraceSHA256: sha256Hex(providerSSEBytes),
   }),
 }));
@@ -402,6 +440,7 @@ const integratedExecutor = createPhase3CodexExecutor({
   outputDirectory: path.join(root, 'integrated-runs'),
   armBinaries: { 'current-aishell-0.3.3': currentBinary, candidate: candidateBinary },
   sandboxConfiguration: configuration.sandbox,
+  approvalReviewer: configuration.approvalReviewer,
   commonHostCatalogDigest: configuration.commonHostCatalogDigest,
   commonCodexArguments: ['--config', 'fixture_host_catalog=true'],
   setupAttempt: async ({ attempt, workspace, applyFrozenMutation }) => {
@@ -421,7 +460,7 @@ const integratedResult = await runPhase3Attempts({ manifest, executeAttempt: int
 assert.equal(integratedResult.status, 'valid', JSON.stringify(integratedResult.invalidReasons));
 assert.deepEqual(validatePhase3Result(integratedResult, manifest), { valid: true, reasons: [] });
 assert.equal(integratedResult.attempts.length, 54);
-assert.equal(integratedResult.attempts.every(({ providerUsageFormat }) => providerUsageFormat === 'codex-exec-jsonl.v1'), true);
+assert.equal(integratedResult.attempts.every(({ providerUsageFormat }) => providerUsageFormat === 'codex-provider-sse-jsonl.v1'), true);
 
 const wrongFormatAttempts = structuredClone(integratedResult.attempts);
 wrongFormatAttempts[0].providerUsageFormat = 'openai-responses-jsonl.v1';

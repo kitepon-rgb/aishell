@@ -298,6 +298,18 @@ export function createPhase3ProductionHarness(options) {
     if (consumed) throw new Error('production harness instance may run only once');
     consumed = true;
     const result = await runPhase3CodexBenchmark({ manifest, executorOptions });
+    if (result.status !== 'valid') {
+      const executions = manifest.attempts.map((attempt) => executorEvidenceRecords.get(attempt.sequence) ?? {
+        sequence: attempt.sequence, status: 'failed', failure: result.invalidReasons.join('; '),
+      });
+      return {
+        result,
+        oracleRecords: [...oracleRecords.values()].sort((left, right) => left.sequence - right.sequence),
+        observerMetricRecords: [...observerMetricRecords.values()].sort((left, right) => left.sequence - right.sequence),
+        executorEvidenceRecords: executions,
+        report: null,
+      };
+    }
     const ordered = (map, label) => {
       if (map.size !== manifest.attempts.length) throw new Error(`${label} records are incomplete`);
       return [...map.values()].sort((left, right) => left.sequence - right.sequence);

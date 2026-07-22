@@ -9,7 +9,7 @@ import {
 } from './phase3-acceptance-aggregate.mjs';
 import {
   assemblePhase3Result, buildPhase3AttemptManifest, candidateAdapterTraceBytes, exactByteBinding,
-  prepareCandidateRequests, recordCandidateProjection,
+  extractProviderModelsFromSSETrace, prepareCandidateRequests, recordCandidateProjection,
 } from './phase3-representative-runner.mjs';
 import {
   adaptFrozenCapabilityRequest, buildBenchmarkTrace, canonicalJSONBytes, frozenRunCheckBindingDigest,
@@ -24,6 +24,7 @@ const configuration = {
   reasoningEffort: 'medium',
   sandbox: { approvalPolicy: 'never', filesystem: 'isolated-disposable-workspace', network: false },
   commonHostCatalogDigest: digest('same-common-host-catalog'),
+  approvalReviewer: { mode: 'auto_review', modelSnapshots: ['fixture-reviewer-model'] },
   armBindings: {
     native: { binding: 'frozen native host surface', aishellBinaryDigest: null, aishellToolCatalogDigest: null },
     'current-aishell-0.3.3': {
@@ -43,6 +44,14 @@ const exactProviderTrace = exactByteBinding(Buffer.from(`${JSON.stringify({
   type: 'turn.completed',
   usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30, reasoning_output_tokens: 10 },
 })}\n`, 'utf8'));
+const exactProviderSSE = exactByteBinding(Buffer.from([
+  JSON.stringify({ type: 'response.created', response: { id: 'main', model: configuration.modelSnapshot } }),
+  JSON.stringify({ type: 'response.completed', response: { id: 'main', model: configuration.modelSnapshot, usage: { input_tokens: 100, input_tokens_details: { cached_tokens: 20 }, output_tokens: 30, output_tokens_details: { reasoning_tokens: 10 } } } }),
+  JSON.stringify({ type: 'response.created', response: { id: 'review', model: configuration.approvalReviewer.modelSnapshots[0] } }),
+  JSON.stringify({ type: 'response.completed', response: { id: 'review', model: configuration.approvalReviewer.modelSnapshots[0], usage: { input_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens: 0, output_tokens_details: { reasoning_tokens: 0 } } } }),
+  '',
+].join('\n')));
+const providerModels = extractProviderModelsFromSSETrace(Buffer.from(exactProviderSSE.base64, 'base64'));
 const exactAgentResult = exactByteBinding(Buffer.from('{"schema":"aishell.agent-benchmark-report.v1"}\n', 'utf8'));
 
 const runPreAttempt = {
@@ -175,7 +184,8 @@ const attempts = manifest.attempts.map((attempt) => ({
     source: 'provider', inputTokens: 100, cachedInputTokens: 20,
     outputTokens: 30, reasoningOutputTokens: 10, totalModelTokens: 130,
   },
-  providerTrace: structuredClone(exactProviderTrace), providerUsageFormat: 'codex-exec-jsonl.v1',
+  providerTrace: structuredClone(exactProviderTrace), providerSSE: structuredClone(exactProviderSSE),
+  providerModels: structuredClone(providerModels), providerUsageFormat: 'codex-provider-sse-jsonl.v1',
   agentResult: structuredClone(exactAgentResult),
   adapterTrace: attempt.arm === 'candidate' ? adapterTraceForAttempt(attempt) : null,
   agentExitCode: 0, timedOut: false, wallMilliseconds: attempt.sequence * 10,
@@ -213,7 +223,7 @@ const aggregate = (overrides = {}) => aggregatePhase3Acceptance({
 });
 
 const report = aggregate();
-assert.equal(report.status, 'valid');
+assert.equal(report.status, 'valid', JSON.stringify(report.invalidReasons));
 assert.equal(report.overallArms.length, 3);
 assert.equal(report.perTaskArms.length, 18);
 assert.equal(report.correctnessGate.passed, true);

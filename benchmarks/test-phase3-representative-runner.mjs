@@ -10,12 +10,14 @@ import {
   buildPhase3AttemptManifest,
   candidateAdapterTraceBytes,
   exactByteBinding,
+  extractProviderModelsFromSSETrace,
   extractProviderUsageFromTrace,
   normalizeProviderUsage,
   oracleFreeFixtureMaterial,
   prepareCandidateRequests,
   recordCandidateProjection,
   runPhase3Attempts,
+  validateCandidateProductionRequest,
   validatePhase3Result,
 } from './phase3-representative-runner.mjs';
 import {
@@ -31,6 +33,7 @@ const configuration = {
   reasoningEffort: 'medium',
   sandbox: { approvalPolicy: 'never', filesystem: 'isolated-disposable-workspace', network: false },
   commonHostCatalogDigest: digest('same-common-host-catalog'),
+  approvalReviewer: { mode: 'auto_review', modelSnapshots: ['fixture-reviewer-model'] },
   armBindings: {
     native: { binding: 'frozen native host surface', aishellBinaryDigest: null, aishellToolCatalogDigest: null },
     'current-aishell-0.3.3': {
@@ -143,6 +146,15 @@ const preparedRun = await prepareCandidateRequests({
 });
 assert.equal(preparedRun.calls[0].productionRequest.invocation.mode, 'profile_check');
 assert.equal(preparedRun.calls[0].productionRequest.cache, 'prefer');
+const repeatOnlyRequest = { ...structuredClone(preparedRun.calls[0].productionRequest), cache: 'only' };
+assert.deepEqual(validateCandidateProductionRequest({
+  taskID: 'freshness-cache-repeat-check', tool: 'run_check',
+  trustedSetupEvidence: trustedRunSetup, observedRequest: repeatOnlyRequest,
+}), repeatOnlyRequest);
+assert.throws(() => validateCandidateProductionRequest({
+  taskID: 'freshness-cache-input-change', tool: 'run_check',
+  trustedSetupEvidence: trustedRunSetup, observedRequest: repeatOnlyRequest,
+}), /closed task-compatible adapter request/u);
 
 const productionRunResult = {
   schemaVersion: 'aishell.run-check.v2',
@@ -171,6 +183,14 @@ const providerUsageEvent = {
   usage: { input_tokens: 100, cached_input_tokens: 20, output_tokens: 30, reasoning_output_tokens: 10 },
 };
 const exactProviderTrace = exactByteBinding(Buffer.from(`${JSON.stringify(providerUsageEvent)}\n`, 'utf8'));
+const exactProviderSSE = exactByteBinding(Buffer.from([
+  JSON.stringify({ type: 'response.created', response: { id: 'main', model: configuration.modelSnapshot } }),
+  JSON.stringify({ type: 'response.completed', response: { id: 'main', model: configuration.modelSnapshot, usage: { input_tokens: 100, input_tokens_details: { cached_tokens: 20 }, output_tokens: 30, output_tokens_details: { reasoning_tokens: 10 } } } }),
+  JSON.stringify({ type: 'response.created', response: { id: 'review', model: configuration.approvalReviewer.modelSnapshots[0] } }),
+  JSON.stringify({ type: 'response.completed', response: { id: 'review', model: configuration.approvalReviewer.modelSnapshots[0], usage: { input_tokens: 0, input_tokens_details: { cached_tokens: 0 }, output_tokens: 0, output_tokens_details: { reasoning_tokens: 0 } } } }),
+  '',
+].join('\n')));
+const providerModels = extractProviderModelsFromSSETrace(Buffer.from(exactProviderSSE.base64, 'base64'));
 assert.deepEqual(extractProviderUsageFromTrace(Buffer.from(exactProviderTrace.base64, 'base64')), {
   format: 'codex-exec-jsonl.v1',
   usage: {
@@ -277,7 +297,9 @@ const attempts = first.attempts.map((attempt) => ({
     outputTokens: 30, reasoningOutputTokens: 10, totalModelTokens: 130,
   },
   providerTrace: structuredClone(exactProviderTrace),
-  providerUsageFormat: 'codex-exec-jsonl.v1',
+  providerSSE: structuredClone(exactProviderSSE),
+  providerModels: structuredClone(providerModels),
+  providerUsageFormat: 'codex-provider-sse-jsonl.v1',
   agentResult: structuredClone(exactAgentResult),
   adapterTrace: attempt.arm === 'candidate' ? adapterTraceForAttempt(attempt) : null,
   agentExitCode: 0,
@@ -320,13 +342,13 @@ assert.deepEqual(validatePhase3Result(usageMismatch, first), {
 });
 
 const unsupportedUsageTrace = structuredClone(validResult);
-unsupportedUsageTrace.attempts[0].providerTrace = exactByteBinding(Buffer.from(
+unsupportedUsageTrace.attempts[0].providerSSE = exactByteBinding(Buffer.from(
   `${JSON.stringify({ type: 'provider.completed', usage: providerUsageEvent.usage })}\n`, 'utf8',
 ));
 unsupportedUsageTrace.status = 'invalid';
-unsupportedUsageTrace.invalidReasons = ['provider trace must contain exactly one supported completed usage event'];
+unsupportedUsageTrace.invalidReasons = ['provider SSE trace line 1 is invalid'];
 assert.deepEqual(validatePhase3Result(unsupportedUsageTrace, first), {
-  valid: false, reasons: ['provider trace must contain exactly one supported completed usage event'],
+  valid: false, reasons: ['provider SSE trace line 1 is invalid'],
 });
 
 const changedTrace = structuredClone(validResult);
@@ -340,11 +362,9 @@ assert.deepEqual(validatePhase3Result(changedTrace, first), {
 const missingAdapter = structuredClone(validResult);
 const candidateIndex = missingAdapter.attempts.findIndex(({ arm }) => arm === 'candidate');
 missingAdapter.attempts[candidateIndex].adapterTrace = null;
-missingAdapter.status = 'invalid';
-missingAdapter.invalidReasons = [`attempt ${candidateIndex + 1} candidate adapter trace is missing`];
 assert.deepEqual(validatePhase3Result(missingAdapter, first), {
-  valid: false, reasons: [`attempt ${candidateIndex + 1} candidate adapter trace is missing`],
-});
+  valid: true, reasons: [],
+}, 'tool non-adoption is a valid failed attempt, not missing harness evidence');
 
 const reusedAdapter = structuredClone(validResult);
 const candidateIndices = reusedAdapter.attempts.map(({ arm }, index) => arm === 'candidate' ? index : -1).filter((index) => index >= 0);
@@ -455,6 +475,9 @@ assert.equal(schema.properties.attempts.minItems, 54);
 assert.equal(schema.properties.attempts.maxItems, 54);
 assert.equal(schema.$defs.usage.properties.source.const, 'provider');
 assert.equal(schema.$defs.attempt.additionalProperties, false);
+assert.equal(schema.$defs.attempt.required.includes('providerSSE'), true);
+assert.equal(schema.$defs.attempt.required.includes('providerModels'), true);
+assert.deepEqual(schema.$defs.attempt.properties.providerUsageFormat.enum, ['codex-provider-sse-jsonl.v1', null]);
 
 process.stdout.write(JSON.stringify({
   schema: 'aishell.phase3_representative_runner_self_test.v1', attempts: first.attempts.length,

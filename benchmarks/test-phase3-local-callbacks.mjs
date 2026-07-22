@@ -13,7 +13,7 @@ import {
   runProcess,
   runSetupStep,
 } from './phase3-local-callbacks.mjs';
-import { prepareCandidateRequests } from './phase3-representative-runner.mjs';
+import { extractProviderUsageFromSSETrace, prepareCandidateRequests } from './phase3-representative-runner.mjs';
 import { canonicalJSONBytes, sha256Hex } from './production-v2-benchmark-adapter.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'aishell-phase3-local-callbacks-'));
@@ -241,6 +241,30 @@ assert.deepEqual(collected.result, { secondExecutionCount: 0, cacheHit: true, fa
 assert.equal(Buffer.isBuffer(collected.adapterTraceBytes), true);
 assert.equal(collected.toolTrace.events[0].action, 'execute');
 assert.equal(collected.metrics.toolCalls, 1);
+const exploratoryResult = { schemaVersion: 'aishell.workspace-snapshot.v2', entries: [] };
+const expectedMiss = {
+  schemaVersion: 'aishell.run-check.v2',
+  error: { code: 'RUN_CHECK_CACHE_MISS', processesStarted: 0, lookupEvidence: [] },
+};
+const exploratoryEvents = [
+  { type: 'item.completed', item: {
+    type: 'mcp_tool_call', server: 'aishell', tool: 'workspace_snapshot', arguments: { path: '.' },
+    result: exploratoryResult, result_bytes_base64: canonicalJSONBytes(exploratoryResult).toString('base64'), status: 'completed',
+  } },
+  { type: 'item.completed', item: {
+    type: 'mcp_tool_call', server: 'aishell', tool: 'run_check', arguments: { ...productionRequest, cache: 'only' },
+    result: expectedMiss, result_bytes_base64: canonicalJSONBytes(expectedMiss).toString('base64'), status: 'failed',
+  } },
+  ...agentEvents,
+];
+const exploratoryCollected = await collectAttemptEvidence({
+  attempt: candidateAttempt, workspace, stateDirectory, preAttemptManifest, baselineManifest,
+  benchmarkSetupEvidence, trustedProductionSetup: trusted, agentEvents: exploratoryEvents,
+  finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+});
+assert.deepEqual(exploratoryCollected.result, collected.result);
+assert.equal(exploratoryCollected.metrics.toolCalls, 3);
+assert.equal(exploratoryCollected.metrics.retries, 1);
 const mcpWireDirectory = path.join(root, 'mcp-wire');
 await mkdir(mcpWireDirectory);
 await writeFile(path.join(mcpWireDirectory, 'requests.bin'), Buffer.from(`${JSON.stringify({
@@ -279,18 +303,35 @@ await assert.rejects(() => collectAttemptEvidence({
 
 const providerTrace = Buffer.from(`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
 const providerSSE = Buffer.from([
-  '{"type":"response.created","response":{"model":"actual-model-snapshot"}}',
-  '{"type":"response.completed","response":{"model":"actual-model-snapshot","usage":{"input_tokens":1,"output_tokens":1}}}',
+  '{"type":"response.created","response":{"id":"main-1","model":"actual-model-snapshot"}}',
+  '{"type":"response.completed","response":{"id":"main-1","model":"actual-model-snapshot","usage":{"input_tokens":1,"input_tokens_details":{"cached_tokens":0},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":0}}}}',
+  '{"type":"response.created","response":{"id":"review-1","model":"reviewer-model"}}',
+  '{"type":"response.completed","response":{"id":"review-1","model":"reviewer-model","usage":{"input_tokens":2,"input_tokens_details":{"cached_tokens":1},"output_tokens":1,"output_tokens_details":{"reasoning_tokens":1}}}}',
   '',
 ].join('\n'));
-const modelEvidence = JSON.parse(await observeProviderModel({ providerTraceBytes: providerTrace, providerSSEBytes: providerSSE }));
-assert.equal(modelEvidence.modelSnapshot, 'actual-model-snapshot');
+const approvalReviewer = { mode: 'auto_review', modelSnapshots: ['reviewer-model'] };
+const modelEvidence = JSON.parse(await observeProviderModel({
+  providerTraceBytes: providerTrace, providerSSEBytes: providerSSE,
+  mainModelSnapshot: 'actual-model-snapshot', approvalReviewer,
+}));
+assert.equal(modelEvidence.schema, 'aishell.provider-model-evidence.v3');
+assert.deepEqual(modelEvidence.models, [
+  { modelSnapshot: 'actual-model-snapshot', responseCount: 1 },
+  { modelSnapshot: 'reviewer-model', responseCount: 1 },
+]);
+assert.equal('mainModelSnapshot' in modelEvidence, false);
+assert.equal('approvalReviewer' in modelEvidence, false);
+assert.deepEqual(extractProviderUsageFromSSETrace(providerSSE).usage, {
+  source: 'provider', inputTokens: 3, cachedInputTokens: 1,
+  outputTokens: 2, reasoningOutputTokens: 1, totalModelTokens: 5,
+});
 assert.equal(modelEvidence.providerTraceSHA256, sha256Hex(providerTrace));
 assert.equal(modelEvidence.providerSSETraceSHA256, sha256Hex(providerSSE));
 await assert.rejects(() => observeProviderModel({
   providerTraceBytes: Buffer.from(`${JSON.stringify({ type: 'thread.started', requested_model: 'echo-must-not-be-used' })}\n`),
   providerSSEBytes: Buffer.from(''),
-}), /actual provider model snapshot is unavailable/u);
+  mainModelSnapshot: 'echo-must-not-be-used', approvalReviewer,
+}), /provider SSE response pairs are incomplete/u);
 
 for (const [key, value] of Object.entries(previous)) {
   if (value === undefined) delete process.env[key];

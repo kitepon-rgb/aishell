@@ -58,7 +58,8 @@ async function evaluate(taskId, extras = {}, resultOverrides = {}) {
   const fixture = catalog.fixtures.find(({id}) => id === task.fixture);
   const internal = new Set(suite.metrics.internalTelemetryKeys);
   const assertions = Object.fromEntries(Object.entries(fixture.scenarios[task.scenario].oracle).filter(([key]) => !internal.has(key)));
-  await writeJSON(files.agentReport, {schema:'aishell.agent-benchmark-report.v1',taskId,assertions});
+  await writeJSON(files.agentReport, {schema:'aishell.agent-benchmark-report.v1',taskId,
+    assertions:extras.agentAssertions ?? assertions});
   const preAttemptFile = extras.preAttemptFile ?? files.preAttempt;
   if (!extras.preAttemptFile) await writeJSON(preAttemptFile, await captureManifest(workspace));
   const preAttempt = JSON.parse(await readFile(preAttemptFile, 'utf8'));
@@ -116,6 +117,10 @@ try {
 
   assert.equal((await evaluate('change-impact-direct-dependent', {}, {provenance:'static-import'})).solved, true);
   assert.equal((await evaluate('change-impact-direct-dependent', {}, {provenance:''})).solved, false);
+  await assert.rejects(() => evaluate('change-impact-direct-dependent', {agentAssertions:{}}, {provenance:'static-import'}),
+    /invalid agent report/u, 'missing functional assertions must still fail closed');
+  await writeJSON(files.telemetry, {secondExecutionCount:0,cacheHit:true,falseFresh:0});
+  await evaluate('freshness-cache-repeat-check', {agentAssertions:{cacheState:'hit',processesStarted:0,terminalState:'passed'}});
 
   await writeJSON(files.process, {agentExitCode:0,agentTimedOut:false,firstDiagnostic:'first failure',terminalExitCode:1});
   assert.equal((await evaluate('async-process-first-useful-result')).solved, true);

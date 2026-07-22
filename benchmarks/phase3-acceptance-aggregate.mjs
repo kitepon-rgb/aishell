@@ -163,8 +163,8 @@ function validateInputs(manifest, result, evaluations) {
   const sequences = new Set();
   for (const [index, attempt] of result.attempts.entries()) {
     exactKeys(attempt, [
-      'attemptID', 'sequence', 'taskID', 'arm', 'repetition', 'usage', 'providerTrace', 'agentResult',
-      'providerUsageFormat', 'adapterTrace', 'agentExitCode', 'timedOut', 'wallMilliseconds',
+      'attemptID', 'sequence', 'taskID', 'arm', 'repetition', 'usage', 'providerTrace', 'providerSSE', 'agentResult',
+      'providerModels', 'providerUsageFormat', 'adapterTrace', 'agentExitCode', 'timedOut', 'wallMilliseconds',
     ], `attempt ${index + 1}`);
     if (!Number.isSafeInteger(attempt.sequence) || attempt.sequence < 1 || attempt.sequence > 54
       || sequences.has(attempt.sequence)) throw new Error(`attempt ${index + 1} sequence is invalid or duplicate`);
