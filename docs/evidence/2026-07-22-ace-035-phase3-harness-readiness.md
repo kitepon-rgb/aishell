@@ -88,7 +88,8 @@ current `0.3.3` armの実Codex preflightもharness exit 0でattempt recordを閉
 8. 訂正後の54試行は第三attemptの旧版arm observerで、`workspace_snapshot` requestに`action` / `operation`が無いことを未対応として停止した。旧development profileの5 toolだけをclosed mappingへ固定し、未知toolを推測しないaction adapterへ修正した。
 9. 修正確認preflightではauto-reviewerがtask条件に従い`run_check`をtransport前拒否し、host event 5件・wire call 4件となった。wire件数一致を緩めず、wire到達4件を順序付きでhost成功eventへ全件照合し、追加のhost失敗eventだけをexact error付き`aishell.host-rejection.v1`へ正規化する契約へ修正した。
 10. 再走は8 attempt完了後、native armがCodex標準MCPの`list_mcp_resources` / `list_mcp_resource_templates`を探索した際、全MCP eventをAIShell専用shapeと誤認して停止した。server identityを保持し、AIShell callだけにclosed action mappingを適用、外部MCP callはtool名を観測actionとして記録する契約へ修正した。native seq9の実model preflightはharness exit 0、main 15 response、reviewer 1 response、provider-reported total model token 516,415、wall 87,395msで完走した。外部MCP探索はAIShell capability evidenceへ混入させず、tool call/token会計からも削除しない。
+11. 外部MCP修正後の再走は20 attempt完了後、candidateのstatic-import setupで停止した。製品のevidence locatorはsource上の引用符込み文字列リテラルを正確に指すが、harness validatorとfake MCPだけが引用符なし範囲を要求していた。validatorを単一引用符または二重引用符込みのexact source一致へ直し、fake証拠も製品契約へ同期した。focused self-testと同じseq21の実candidate preflightはいずれもexit 0。実preflightはprovider-reported total model token 428,890、wall 71,343msで完走した。
 
 ## 次の実行gate
 
-action adapterとtransport前拒否の証拠契約をcommitした後、失敗3件の成果物を保持したまま新しい専用directoryで54実model attemptを最初から実行し、external oracle aggregationへ進む。
+static-import locator validator修正をcommitした後、既存の失敗成果物を保持したまま新しい専用directoryで54実model attemptを最初から実行し、external oracle aggregationへ進む。

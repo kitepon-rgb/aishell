@@ -328,6 +328,10 @@ async function validateStaticImportSetup(result, snapshot, workspace) {
   const testSHA256 = sha256Hex(testBytes);
   const tuple = (values) => values.map((value) => `${Buffer.byteLength(value)}:${value}`).join('');
   const expectedInputIdentity = tuple(['input_path', 'src/a.mjs', '0', inputSHA256]);
+  const exactQuotedSpecifier = (bytes, startOffset, endOffset, specifier) => {
+    const source = bytes.subarray(startOffset, endOffset).toString('utf8');
+    return source === `'${specifier}'` || source === `"${specifier}"`;
+  };
   const expectedImpacts = [
     {
       path: 'src/b.mjs', subjectKind: 'path', category: 'dependencies', bytes: dependentBytes,
@@ -352,7 +356,7 @@ async function validateStaticImportSetup(result, snapshot, workspace) {
       && proof.locator?.path === expected.path && proof.locator?.contentSHA256 === expected.sha256
       && Number.isSafeInteger(proof.locator?.startOffset) && proof.locator.startOffset >= 0
       && Number.isSafeInteger(proof.locator?.endOffset) && proof.locator.endOffset > proof.locator.startOffset
-      && expected.bytes.subarray(proof.locator.startOffset, proof.locator.endOffset).toString('utf8') === expected.specifier
+      && exactQuotedSpecifier(expected.bytes, proof.locator.startOffset, proof.locator.endOffset, expected.specifier)
       && proof.locator.edgeID === tuple([expected.path, expected.target])
       && proof.evidenceStrength === 'declared_edge' && matchingEdges.length === 1;
   });
