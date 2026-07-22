@@ -66,9 +66,17 @@ final class MCPRunCheckV2WireTests: XCTestCase {
     func testChangeImpactAnalyzeRunsThroughExpandedPublicWire() async throws {
         let fixture = try await MCPRunCheckWireFixture.make()
         defer { fixture.cleanup() }
-        let source = fixture.root.appendingPathComponent("Changed.swift")
-        let bytes = Data("struct Changed {}\n".utf8)
+        let sourceDirectory = fixture.root.appendingPathComponent("src", isDirectory: true)
+        let testDirectory = fixture.root.appendingPathComponent("test", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: testDirectory, withIntermediateDirectories: true)
+        let source = sourceDirectory.appendingPathComponent("a.mjs")
+        let bytes = Data("export const a = 2\n".utf8)
         try bytes.write(to: source)
+        try Data("import { a } from './a.mjs'\nexport const b = a\n".utf8)
+            .write(to: sourceDirectory.appendingPathComponent("b.mjs"))
+        try Data("import { b } from '../src/b.mjs'\n".utf8)
+            .write(to: testDirectory.appendingPathComponent("b.test.mjs"))
         let server = MCPServer(runtimeStore: fixture.store, capabilitySet: "expanded-v1")
         let snapshot = await server.callTool(id: .number(1), params: .object([
             "name": .string("workspace_snapshot"),
@@ -85,9 +93,10 @@ final class MCPRunCheckV2WireTests: XCTestCase {
                 "root": .string(fixture.root.path),
                 "workspace_cursor": .string(cursor),
                 "changed_paths": .array([.object([
-                    "path": .string("Changed.swift"),
+                    "path": .string("src/a.mjs"),
                     "content_sha256": .string(digest)
-                ])])
+                ])]),
+                "required_providers": .array([.string("static-import")])
             ])
         ]))
         let result = try XCTUnwrap(response.result?.objectValue)
@@ -97,6 +106,29 @@ final class MCPRunCheckV2WireTests: XCTestCase {
             .string("aishell.change-impact.v2")
         )
         XCTAssertEqual(result["structuredContent"]?.objectValue?["operation"], .string("analyze"))
+        XCTAssertEqual(result["structuredContent"]?.objectValue?["continuation"], .null)
+        let structured = try XCTUnwrap(result["structuredContent"])
+        let artifact = try XCTUnwrap(structured.objectValue?["artifact"]?.objectValue)
+        let handle = try XCTUnwrap(artifact["handle"]?.stringValue)
+        let size = try XCTUnwrap(artifact["sizeBytes"]?.intValue)
+        let evidence = EvidenceStore(
+            baseDirectory: fixture.store.baseDirectory.appendingPathComponent("evidence", isDirectory: true)
+        )
+        let slice = try await evidence.read(
+            handle: handle,
+            mode: .range(offset: 0, length: size),
+            byteBudget: size
+        )
+        let artifactBytes = try XCTUnwrap(slice.text).data(using: .utf8)!
+        try assertBenchmarkAdapterAcceptsProductionResult(
+            structured,
+            frozenRequest: .object([
+                "action": .string("analyze"),
+                "changed_paths": .array([.string("src/a.mjs")]),
+                "providers": .array([.string("static-import")]),
+            ]),
+            artifactBytes: artifactBytes
+        )
     }
 
     func testRecommendationFocusedSetRunsThroughSameRuntimeWithoutCallerSelectionHash() async throws {
@@ -177,7 +209,26 @@ final class MCPRunCheckV2WireTests: XCTestCase {
         }
         let focusedSetID = try XCTUnwrap(recommended["focusedSetID"]?.stringValue)
         let focusedSetDigest = try XCTUnwrap(recommended["focusedSetDigest"]?.stringValue)
+        XCTAssertEqual(recommended["continuation"], .null)
         let items = try XCTUnwrap(recommended["items"]?.arrayValue)
+        let recommendationArtifact = try XCTUnwrap(recommended["artifact"]?.objectValue)
+        let recommendationHandle = try XCTUnwrap(recommendationArtifact["handle"]?.stringValue)
+        let recommendationSize = try XCTUnwrap(recommendationArtifact["sizeBytes"]?.intValue)
+        let recommendationSlice = try await evidence.read(
+            handle: recommendationHandle,
+            mode: .range(offset: 0, length: recommendationSize),
+            byteBudget: recommendationSize
+        )
+        let recommendationBytes = try XCTUnwrap(recommendationSlice.text).data(using: .utf8)!
+        try assertBenchmarkAdapterAcceptsProductionResult(
+            .object(recommended),
+            frozenRequest: .object([
+                "action": .string("recommend"),
+                "changed_paths": .array([.string("Sources/WireFocused/Changed.swift")]),
+                "providers": .array([.string("static-import")]),
+            ]),
+            artifactBytes: recommendationBytes
+        )
         let candidateID: String = try XCTUnwrap(items.compactMap { item -> String? in
             guard item.objectValue?["kind"] == .string("focused_candidate") else { return nil }
             return item.objectValue?["focusedCheckID"]?.stringValue
@@ -291,6 +342,57 @@ final class MCPRunCheckV2WireTests: XCTestCase {
             ]),
             "selection": .object(["binding": .string("prepare")])
         ]
+    }
+
+    private func assertBenchmarkAdapterAcceptsProductionResult(
+        _ result: JSONValue,
+        frozenRequest: JSONValue,
+        artifactBytes: Data
+    ) throws {
+        let repository = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let module = repository.appendingPathComponent("benchmarks/production-v2-benchmark-adapter.mjs")
+        let payload = JSONValue.object([
+            "frozenRequest": frozenRequest,
+            "rawV2Pages": .array([.object(["result": result])]),
+            "artifactBase64": .string(artifactBytes.base64EncodedString()),
+        ])
+        let payloadURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aishell-benchmark-adapter-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: payloadURL) }
+        try JSONEncoder.aishell.encode(payload).write(to: payloadURL, options: .atomic)
+
+        let script = """
+        import { readFileSync } from 'node:fs';
+        import { pathToFileURL } from 'node:url';
+        const adapter = await import(pathToFileURL(process.argv[1]));
+        const payload = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+        const projected = adapter.projectProductionV2Result({
+          tool: 'change_impact',
+          frozenRequest: payload.frozenRequest,
+          rawV2Pages: payload.rawV2Pages,
+          completeArtifactBytes: Buffer.from(payload.artifactBase64, 'base64'),
+        });
+        if (projected.schemaVersion !== 'aishell.change-impact.v1') process.exit(3);
+        if (payload.frozenRequest.action === 'analyze') {
+          const expected = ['src/b.mjs', 'test/b.test.mjs'];
+          if (JSON.stringify(projected.impactedPaths) !== JSON.stringify(expected)) process.exit(4);
+        }
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["node", "--input-type=module", "--eval", script, module.path, payloadURL.path]
+        let stderr = Pipe()
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let errorText = String(
+            data: stderr.fileHandleForReading.readDataToEndOfFile(),
+            encoding: .utf8
+        ) ?? ""
+        XCTAssertEqual(process.terminationStatus, 0, errorText)
     }
 }
 

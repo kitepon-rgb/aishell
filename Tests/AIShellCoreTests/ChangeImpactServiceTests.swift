@@ -311,7 +311,17 @@ final class ChangeImpactServiceTests: XCTestCase {
         XCTAssertTrue(result.items.contains {
             $0.kind == .evidence && $0.evidenceStrength == .declaredEdge
         })
-        XCTAssertEqual(result.coverage, "complete")
+        XCTAssertEqual(result.coverage, "partial")
+        XCTAssertTrue(result.items.contains {
+            $0.kind == .providerReport
+                && $0.providerReport?.descriptor.providerID == "static-import"
+                && $0.providerReport?.status == .unsupported
+        })
+        XCTAssertTrue(result.items.contains {
+            $0.kind == .coverageGap
+                && $0.coverageGap?.providerID == "static-import"
+                && $0.coverageGap?.reasonCode == "static_import_ecosystem_unsupported"
+        })
     }
 
     func testRecommendKeepsFocusedSetResolvableAndEmitsClosedItemsWithoutProcess() async throws {

@@ -644,6 +644,30 @@ public struct ChangeImpactResult: Codable, Equatable, Sendable {
     public let hasMore: Bool
     public let continuation: String?
     public let artifact: ArtifactMetadata
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, operation, coverage, freshness, counts, items
+        case returnedBytes, omittedBytes, hasMore, continuation, artifact
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(operation, forKey: .operation)
+        try container.encode(coverage, forKey: .coverage)
+        try container.encode(freshness, forKey: .freshness)
+        try container.encode(counts, forKey: .counts)
+        try container.encode(items, forKey: .items)
+        try container.encode(returnedBytes, forKey: .returnedBytes)
+        try container.encode(omittedBytes, forKey: .omittedBytes)
+        try container.encode(hasMore, forKey: .hasMore)
+        if let continuation {
+            try container.encode(continuation, forKey: .continuation)
+        } else {
+            try container.encodeNil(forKey: .continuation)
+        }
+        try container.encode(artifact, forKey: .artifact)
+    }
 }
 
 /// `recommend` 専用の入力。analyze の入力へ profile catalog を混ぜず、catalog の exact
@@ -739,6 +763,36 @@ public struct ChangeImpactRecommendationResult: Encodable, Equatable, Sendable {
     public let hasMore: Bool
     public let continuation: String?
     public let artifact: ArtifactMetadata
+
+    private enum CodingKeys: String, CodingKey {
+        case schema, operation, executionPolicy, focusedSetID, focusedSetDigest, expiresAt
+        case freshness, coverage, candidateCount, stepCount, limitationCount, items
+        case byteBudget, hasMore, continuation, artifact
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schema, forKey: .schema)
+        try container.encode(operation, forKey: .operation)
+        try container.encode(executionPolicy, forKey: .executionPolicy)
+        try container.encode(focusedSetID, forKey: .focusedSetID)
+        try container.encode(focusedSetDigest, forKey: .focusedSetDigest)
+        try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encode(freshness, forKey: .freshness)
+        try container.encode(coverage, forKey: .coverage)
+        try container.encode(candidateCount, forKey: .candidateCount)
+        try container.encode(stepCount, forKey: .stepCount)
+        try container.encode(limitationCount, forKey: .limitationCount)
+        try container.encode(items, forKey: .items)
+        try container.encode(byteBudget, forKey: .byteBudget)
+        try container.encode(hasMore, forKey: .hasMore)
+        if let continuation {
+            try container.encode(continuation, forKey: .continuation)
+        } else {
+            try container.encodeNil(forKey: .continuation)
+        }
+        try container.encode(artifact, forKey: .artifact)
+    }
 }
 
 /// opaque continuation を再開した結果。token の文字列表現ではなく、service が所有する
@@ -847,7 +901,10 @@ public actor ChangeImpactService {
         self.evidenceStore = evidenceStore ?? EvidenceStore(
             baseDirectory: runtimeStore.baseDirectory.appendingPathComponent("evidence", isDirectory: true)
         )
-        self.providers = providers ?? [FileSystemChangeImpactProvider()]
+        self.providers = providers ?? [
+            FileSystemChangeImpactProvider(),
+            StaticImportChangeImpactProvider(),
+        ]
         self.clock = clock
         self.identifierHash = identifierHash
         self.focusedCheckService = focusedCheckService
@@ -1327,7 +1384,6 @@ public actor ChangeImpactService {
             items.append(.init(
                 kind: .providerReport,
                 itemID: "provider:\(report.descriptor.providerID)",
-                providerID: report.descriptor.providerID,
                 providerReport: report
             ))
         }
@@ -1416,7 +1472,6 @@ public actor ChangeImpactService {
                 kind: .evidence,
                 itemID: "evidence:\(record.evidenceID)",
                 providerID: record.providerID,
-                category: record.candidate.category,
                 subject: record.candidate.subject,
                 evidenceID: record.evidenceID,
                 inputIdentity: record.seed.inputIdentity,
