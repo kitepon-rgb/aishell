@@ -205,8 +205,10 @@ assert.equal(currentInvocation.args.some((value) => value.includes(currentBinary
 assert.equal(currentInvocation.args.some((value) => value.includes('phase3-mcp-wire-tap.mjs')), true);
 assert.equal(currentInvocation.args.some((value) => value.includes('AISHELL_PHASE3_MCP_WIRE_DIRECTORY')), true);
 assert.equal(currentInvocation.args.some((value) => value.includes('AISHELL_TOOL_PROFILE = "development"')), true);
+assert.equal(currentInvocation.args.some((value) => value.includes('AISHELL_CAPABILITY_SET')), false);
 assert.equal(candidateInvocation.args.some((value) => value.includes(candidateBinary)), true);
-assert.equal(candidateInvocation.args.some((value) => value.includes('AISHELL_TOOL_PROFILE = "expanded-v1"')), true);
+assert.equal(candidateInvocation.args.some((value) => value.includes('AISHELL_TOOL_PROFILE = "development"')), true);
+assert.equal(candidateInvocation.args.some((value) => value.includes('AISHELL_CAPABILITY_SET = "expanded-v1"')), true);
 for (const invocation of invocations) {
   assert.equal(invocation.args.includes(configuration.modelSnapshot), true);
   assert.equal(invocation.args.includes('model_reasoning_effort="high"'), true);

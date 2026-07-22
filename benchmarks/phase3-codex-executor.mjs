@@ -262,10 +262,11 @@ function codexArguments({ prompt, workspace, attempt, isolation, options, stateD
   ];
   if (attempt.arm !== 'native') {
     const binary = options.armBinaries[attempt.arm];
-    const profile = attempt.arm === 'candidate' ? 'expanded-v1' : 'development';
+    const capability = attempt.arm === 'candidate'
+      ? `, AISHELL_CAPABILITY_SET = ${tomlString('expanded-v1')}` : '';
     args.push('--config', `mcp_servers.aishell.command=${tomlString(process.execPath)}`);
     args.push('--config', `mcp_servers.aishell.args=${JSON.stringify([MCP_WIRE_TAP, binary])}`);
-    args.push('--config', `mcp_servers.aishell.env={ AISHELL_STATE_DIRECTORY = ${tomlString(stateDirectory)}, AISHELL_TOOL_PROFILE = ${tomlString(profile)}, AISHELL_PHASE3_MCP_WIRE_DIRECTORY = ${tomlString(mcpWireDirectory)} }`);
+    args.push('--config', `mcp_servers.aishell.env={ AISHELL_STATE_DIRECTORY = ${tomlString(stateDirectory)}, AISHELL_TOOL_PROFILE = ${tomlString('development')}${capability}, AISHELL_PHASE3_MCP_WIRE_DIRECTORY = ${tomlString(mcpWireDirectory)} }`);
   }
   args.push(prompt);
   return args;

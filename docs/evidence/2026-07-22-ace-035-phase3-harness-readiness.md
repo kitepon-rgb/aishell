@@ -57,6 +57,7 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 - Node syntax、JSON schema、`git diff --check`: 成功
 - release package build: 成功
 - actual release binary＋actual MCP single candidate preflight: exact profile/check解決、`miss_executed`、process 1、publication 1で成功
+- candidate capabilityは`AISHELL_TOOL_PROFILE=development`と`AISHELL_CAPABILITY_SET=expanded-v1`を分離して注入する。`expanded-v1`をtool profileへ誤投入して7-toolへ縮退する配線をfreeze採取時に検出し、正規の9-tool catalogへ修正した。
 - read-only反証のenvironment closure、npm shell迂回、NUL fail-late、profile environment失効を修正し、最終再監査で確実なP0–P2残存なし
 
 fake process/MCPを使うself-testは実model成功を主張しない。

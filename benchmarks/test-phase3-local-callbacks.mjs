@@ -59,7 +59,7 @@ for(const message of lines){
  if(message.id===1)console.log(JSON.stringify({jsonrpc:'2.0',id:1,result:{protocolVersion:'2025-11-25',capabilities:{},serverInfo:{name:'fake',version:'1'}}}));
  if(message.method==='tools/call'){
   const name=message.params.name;let structured;
-  if(process.env.AISHELL_TOOL_PROFILE==='development'&&name==='workspace_snapshot'&&message.params.arguments.project_profile)process.exit(3);
+  if(process.env.AISHELL_CAPABILITY_SET!=='expanded-v1'&&name==='workspace_snapshot'&&message.params.arguments.project_profile)process.exit(3);
   if(name==='workspace_snapshot'){
    const bad=process.env.FAKE_BAD_CHECK;const contract=bad==='missing-contract'?undefined:{schemaVersion:'aishell.project-profile-check-input.v1',completeness:'complete',provider:'fake',providerVersion:'1',includedRoots:bad==='wrong-inputs'?['check.mjs']:['check.mjs','src/value.mjs'],trackedPaths:[],effectCompleteness:'project_root_closed',reason:null};
    const check={checkId:'test',kind:'test',label:'fixture',executable:bad==='true-executable'?'/bin/true':node,arguments:['check.mjs'],workingDirectory:bad==='wrong-cwd'?realpathSync('..'):realpathSync(process.cwd()),environmentKeys:[],provenance:{kind:'fake',path:'check.mjs',contentSHA256:null,producerVersion:'1',confidence:'exact'},...(contract?{inputContract:contract}:{})};

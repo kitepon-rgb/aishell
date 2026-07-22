@@ -118,13 +118,16 @@ export async function runProcess(command, args, context) {
 /** One isolated AIShell stdio session. No retry or alternate transport is attempted. */
 export async function exchangeMCP({ binary, profile, stateDirectory, workspace, requestBytes }) {
   const timeoutMilliseconds = envTimeout('AISHELL_PHASE3_MCP_TIMEOUT_MS');
+  const environment = {
+    ...process.env,
+    AISHELL_STATE_DIRECTORY: stateDirectory,
+    AISHELL_TOOL_PROFILE: 'development',
+  };
+  if (profile === 'expanded-v1') environment.AISHELL_CAPABILITY_SET = 'expanded-v1';
+  else delete environment.AISHELL_CAPABILITY_SET;
   const execution = await collectProcess(binary, [], {
     cwd: workspace,
-    env: {
-      ...process.env,
-      AISHELL_STATE_DIRECTORY: stateDirectory,
-      AISHELL_TOOL_PROFILE: profile,
-    },
+    env: environment,
     timeoutMilliseconds,
     input: requestBytes,
   });
