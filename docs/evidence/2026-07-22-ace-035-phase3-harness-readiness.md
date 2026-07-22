@@ -87,6 +87,7 @@ current `0.3.3` armの実Codex preflightもharness exit 0でattempt recordを閉
 7. 54試行の初回起動は、旧版`0.3.3`のcatalog response digestを準備時に`9b539d…`と誤記していたため、第三attemptの実model起動前にfail closedした。凍結binary SHAは一致し、同じ凍結requestを実binaryへ2回再送したraw response SHA-256はいずれも`0491fd1024fc3a34b871c6d3cf1aabff6fce4ed2539d974f3a604d4c4ee45361`だった。検証対象や方式は緩和せず、manifestをこの再現値へ訂正した。
 8. 訂正後の54試行は第三attemptの旧版arm observerで、`workspace_snapshot` requestに`action` / `operation`が無いことを未対応として停止した。旧development profileの5 toolだけをclosed mappingへ固定し、未知toolを推測しないaction adapterへ修正した。
 9. 修正確認preflightではauto-reviewerがtask条件に従い`run_check`をtransport前拒否し、host event 5件・wire call 4件となった。wire件数一致を緩めず、wire到達4件を順序付きでhost成功eventへ全件照合し、追加のhost失敗eventだけをexact error付き`aishell.host-rejection.v1`へ正規化する契約へ修正した。
+10. 再走は8 attempt完了後、native armがCodex標準MCPの`list_mcp_resources` / `list_mcp_resource_templates`を探索した際、全MCP eventをAIShell専用shapeと誤認して停止した。server identityを保持し、AIShell callだけにclosed action mappingを適用、外部MCP callはtool名を観測actionとして記録する契約へ修正した。native seq9の実model preflightはharness exit 0、main 15 response、reviewer 1 response、provider-reported total model token 516,415、wall 87,395msで完走した。外部MCP探索はAIShell capability evidenceへ混入させず、tool call/token会計からも削除しない。
 
 ## 次の実行gate
 

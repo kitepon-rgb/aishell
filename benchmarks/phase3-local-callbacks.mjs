@@ -637,16 +637,36 @@ async function observedToolCalls(events, mcpWireDirectory) {
   if (mcpWireDirectory === undefined) {
     return hostCalls.map((event, index) => {
       const item = event.item;
-      exactKeys(item, ['type', 'server', 'tool', 'arguments', 'result', 'result_bytes_base64', 'status'],
-        ['raw_pages', 'complete_artifact_base64'], `Codex MCP call ${index}`);
-      if (item.server !== 'aishell' || !['completed', 'failed'].includes(item.status)
-        || !plainObject(item.arguments) || !plainObject(item.result)) {
+      if (Object.hasOwn(item, 'result_bytes_base64')) {
+        exactKeys(item, ['type', 'server', 'tool', 'arguments', 'result', 'result_bytes_base64', 'status'],
+          ['raw_pages', 'complete_artifact_base64'], `Codex MCP call ${index}`);
+      } else {
+        exactKeys(item, ['id', 'type', 'server', 'tool', 'arguments', 'result', 'error', 'status'], [],
+          `Codex MCP call ${index}`);
+      }
+      if (typeof item.server !== 'string' || item.server.length === 0 || typeof item.tool !== 'string'
+        || !['completed', 'failed'].includes(item.status) || !plainObject(item.arguments)) {
         throw new Error(`Codex MCP call ${index} is unsupported`);
       }
-      const resultBytes = exactBase64(item.result_bytes_base64, `Codex MCP call ${index} result`);
-      parseExactJSON(item.result, resultBytes, `Codex MCP call ${index} result`);
+      let result;
+      let resultBytes;
+      if (Object.hasOwn(item, 'result_bytes_base64')) {
+        if (!plainObject(item.result)) throw new Error(`Codex MCP call ${index} is unsupported`);
+        result = item.result;
+        resultBytes = exactBase64(item.result_bytes_base64, `Codex MCP call ${index} result`);
+        parseExactJSON(result, resultBytes, `Codex MCP call ${index} result`);
+      } else if (item.status === 'completed' && plainObject(item.result)) {
+        result = plainObject(item.result.structured_content) ? item.result.structured_content : item.result;
+        resultBytes = canonicalJSONBytes(result);
+      } else if (item.status === 'failed' && item.result === null && plainObject(item.error)
+        && typeof item.error.message === 'string' && item.error.message.length > 0) {
+        result = { schemaVersion: 'aishell.host-rejection.v1', error: structuredClone(item.error) };
+        resultBytes = canonicalJSONBytes(result);
+      } else {
+        throw new Error(`Codex MCP call ${index} is unsupported`);
+      }
       return {
-        tool: item.tool, request: item.arguments, result: item.result, resultBytes, item,
+        provider: item.server, tool: item.tool, request: item.arguments, result, resultBytes, item,
         requestBytes: canonicalJSONBytes(item.arguments),
         isError: item.status === 'failed', status: item.status === 'failed' ? 'failed' : 'succeeded',
       };
@@ -666,7 +686,7 @@ async function observedToolCalls(events, mcpWireDirectory) {
     if (call && item.status === expectedStatus && item.tool === call.tool
       && canonicalJSONBytes(item.arguments).equals(canonicalJSONBytes(call.request))) {
       wireIndex += 1;
-      return call;
+      return { ...call, provider: 'aishell' };
     }
     if (item.status !== 'failed' || item.result !== null || !plainObject(item.error)
       || typeof item.error.message !== 'string' || item.error.message.length === 0) {
@@ -675,7 +695,7 @@ async function observedToolCalls(events, mcpWireDirectory) {
     const result = { schemaVersion: 'aishell.host-rejection.v1', error: structuredClone(item.error) };
     const resultBytes = canonicalJSONBytes(result);
     return {
-      tool: item.tool, request: item.arguments, result, resultBytes, item,
+      provider: 'aishell', tool: item.tool, request: item.arguments, result, resultBytes, item,
       requestBytes: canonicalJSONBytes(item.arguments), isError: true, status: 'failed',
     };
   });
@@ -704,6 +724,7 @@ function observerMetrics(events, calls, attempt) {
 function localToolAction(call) {
   if (typeof call.request.action === 'string') return call.request.action;
   if (typeof call.request.operation === 'string') return call.request.operation;
+  if (call.provider !== 'aishell') return call.tool;
   const implicitActions = {
     artifact_read: 'read',
     read_context: 'read',
@@ -826,7 +847,7 @@ export async function collectAttemptEvidence(input) {
     for (const call of calls) {
       const action = localToolAction(call);
       observerEvents.push({
-        provider: 'aishell', tool: call.tool, action, request: call.request,
+        provider: call.provider, tool: call.tool, action, request: call.request,
         metadata: { preStateDigest: preAttemptManifest.digest }, result: call.result,
         resultDigest: sha256Hex(canonicalJSONBytes(call.result)), status: call.status, isError: call.isError,
       });

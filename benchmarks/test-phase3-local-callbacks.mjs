@@ -275,6 +275,19 @@ assert.deepEqual(currentCollected.toolTrace.events.map(({ tool, action }) => ({ 
   { tool: 'run_check', action: 'execute' },
   { tool: 'run_check', action: 'execute' },
 ]);
+const externalMCPResult = { content: [{ type: 'text', text: '{"resources":[]}' }], structured_content: null };
+const externalCollected = await collectAttemptEvidence({
+  attempt: { ...candidateAttempt, arm: 'native' }, workspace, stateDirectory,
+  preAttemptManifest, baselineManifest, benchmarkSetupEvidence, trustedProductionSetup: trusted,
+  agentEvents: [{ type: 'item.completed', item: {
+    id: 'external-1', type: 'mcp_tool_call', server: 'codex', tool: 'list_mcp_resources', arguments: {},
+    result: externalMCPResult, error: null, status: 'completed',
+  } }], finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+});
+assert.deepEqual(externalCollected.toolTrace.events.map(({ provider, tool, action, status }) => ({ provider, tool, action, status })), [{
+  provider: 'codex', tool: 'list_mcp_resources', action: 'list_mcp_resources', status: 'succeeded',
+}]);
+assert.equal(externalCollected.metrics.toolCalls, 1);
 const unknownLegacyResult = { schemaVersion: 'unknown.v1' };
 await assert.rejects(() => collectAttemptEvidence({
   attempt: { ...candidateAttempt, arm: 'native' }, workspace, stateDirectory,
