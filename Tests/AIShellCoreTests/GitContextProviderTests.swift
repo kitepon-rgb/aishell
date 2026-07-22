@@ -169,7 +169,15 @@ final class GitContextProviderTests: XCTestCase {
         try fixture.git(["add", "shared.txt"])
         try fixture.write("shared.txt", "worktree\n")
         let (provider, _, binding) = try fixture.provider()
-        let result = try await provider.context(request: .init(baseRef: baseSHA, includePatch: false), comparisonBinding: binding)
+        let result = try await provider.context(
+            request: .init(mode: .branch, baseRef: baseSHA, includePatch: false),
+            comparisonBinding: binding
+        )
+        XCTAssertEqual(result.comparisonMode, .branch)
+        XCTAssertEqual(result.headBranch, "main")
+        XCTAssertEqual(result.dirtyState, "dirty")
+        XCTAssertEqual(result.baseSHA, baseSHA)
+        XCTAssertFalse(result.repositoryIdentity.isEmpty)
         XCTAssertEqual(result.changes.filter { $0.path == "shared.txt" }.map(\.layer), [.baseToHead, .staged, .unstaged])
         XCTAssertEqual(result.changes.last?.newObjectIDSource, .worktreeRaw)
     }

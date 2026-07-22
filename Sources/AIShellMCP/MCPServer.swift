@@ -735,12 +735,18 @@ final class MCPServer: @unchecked Sendable {
         guard let object = value.objectValue else {
             throw AIShellError.invalidArgument("git_diffはobjectである必要があります。")
         }
-        try validateKeys(object, allowed: ["base_ref", "byte_budget", "include_patch", "continuation"])
+        try validateKeys(object, allowed: ["mode", "base_ref", "byte_budget", "include_patch", "continuation"])
         let continuation = try strictOptionalString("continuation", in: object)
         if continuation != nil, Set(object.keys).subtracting(["continuation", "byte_budget"]).isEmpty == false {
             throw AIShellError.invalidArgument("git_diff continuationと初回fieldは同時指定できません。")
         }
         return GitDiffContextRequest(
+            mode: try strictOptionalString("mode", in: object).map {
+                guard let mode = GitComparisonMode(rawValue: $0) else {
+                    throw AIShellError.invalidArgument("git_diff modeはworktreeまたはbranchです。")
+                }
+                return mode
+            },
             baseRef: try strictOptionalString("base_ref", in: object),
             byteBudget: try boundedInt("byte_budget", in: object, default: 65_536, minimum: 1, maximum: 1_048_576),
             includePatch: try strictOptionalBool("include_patch", in: object) ?? true,
@@ -1176,6 +1182,7 @@ final class MCPServer: @unchecked Sendable {
             case .notGitRepository: return ("NOT_GIT_REPOSITORY", error.localizedDescription)
             case .repositoryOutsideAllowedRoot: return ("REPOSITORY_OUTSIDE_ALLOWED_ROOT", error.localizedDescription)
             case .unresolvedBase: return ("UNRESOLVED_BASE", error.localizedDescription)
+            case .invalidComparisonMode: return ("INVALID_COMPARISON_MODE", error.localizedDescription)
             case .unbornHeadWithExplicitBase: return ("UNBORN_HEAD_WITH_EXPLICIT_BASE", error.localizedDescription)
             case .pathEncodingUnsupported: return ("PATH_ENCODING_UNSUPPORTED", error.localizedDescription)
             case .contentChanged: return ("CONTENT_CHANGED", error.localizedDescription)

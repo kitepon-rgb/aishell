@@ -6,6 +6,7 @@ public enum GitContextError: Error, Equatable, LocalizedError, Sendable {
     case notGitRepository
     case repositoryOutsideAllowedRoot(String)
     case unresolvedBase(String)
+    case invalidComparisonMode(String)
     case unbornHeadWithExplicitBase
     case pathEncodingUnsupported
     case contentChanged
@@ -19,6 +20,7 @@ public enum GitContextError: Error, Equatable, LocalizedError, Sendable {
         case .notGitRepository: "NOT_GIT_REPOSITORY"
         case let .repositoryOutsideAllowedRoot(path): "REPOSITORY_OUTSIDE_ALLOWED_ROOT: \(path)"
         case let .unresolvedBase(ref): "UNRESOLVED_BASE: \(ref)"
+        case let .invalidComparisonMode(reason): "INVALID_COMPARISON_MODE: \(reason)"
         case .unbornHeadWithExplicitBase: "UNBORN_HEAD_WITH_EXPLICIT_BASE"
         case .pathEncodingUnsupported: "PATH_ENCODING_UNSUPPORTED"
         case .contentChanged: "CONTENT_CHANGED"
@@ -31,18 +33,25 @@ public enum GitContextError: Error, Equatable, LocalizedError, Sendable {
     }
 }
 
+public enum GitComparisonMode: String, Codable, Equatable, Sendable {
+    case worktree, branch
+}
+
 public struct GitDiffContextRequest: Codable, Equatable, Sendable {
+    public let mode: GitComparisonMode
     public let baseRef: String?
     public let byteBudget: Int
     public let includePatch: Bool
     public let continuation: String?
 
     public init(
+        mode: GitComparisonMode? = nil,
         baseRef: String? = nil,
         byteBudget: Int = 65_536,
         includePatch: Bool = true,
         continuation: String? = nil
     ) {
+        self.mode = mode ?? (baseRef == nil ? .worktree : .branch)
         self.baseRef = baseRef
         self.byteBudget = min(max(1, byteBudget), 1_048_576)
         self.includePatch = includePatch
@@ -163,14 +172,17 @@ public struct GitDiffArtifactDescriptor: Codable, Equatable, Sendable {
 
 public struct GitDiffContextResult: Codable, Equatable, Sendable {
     public let schema: String
+    public let comparisonMode: GitComparisonMode
     public let repositoryRoot: String
     public let repositoryIdentity: String
     public let objectFormat: String
     public let headSHA: String?
+    public let headBranch: String?
     public let baseRef: String?
     public let baseSHA: String?
     public let indexTreeSHA: String?
     public let indexState: String
+    public let dirtyState: String
     public let workspaceCursor: String
     public let gitStateDigest: String
     public let layerCounts: [String: Int]
@@ -284,6 +296,9 @@ public actor GitContextProvider {
             }
             return try await continueContext(token: token, budget: request.byteBudget, currentBinding: comparisonBinding)
         }
+        if request.mode == .branch, request.baseRef == nil {
+            throw GitContextError.invalidComparisonMode("branch mode requires base_ref")
+        }
         let directory = try resolver.resolveExisting(path)
         let repositoryRoot = try repositoryRoot(from: directory)
         try validateRepositoryFamily(repositoryRoot)
@@ -305,6 +320,7 @@ public actor GitContextProvider {
         try rawContentOpenHookForTests?(repositoryRoot, .rootAnchored)
         let objectFormat = try text(try run(["rev-parse", "--show-object-format"], cwd: repositoryRoot).stdout)
         let headSHA = try optionalCommit("HEAD", cwd: repositoryRoot)
+        let headBranch = try optionalBranch(cwd: repositoryRoot)
         if headSHA == nil, request.baseRef != nil { throw GitContextError.unbornHeadWithExplicitBase }
         let baseSHA: String?
         if let baseRef = request.baseRef {
@@ -346,10 +362,12 @@ public actor GitContextProvider {
         let descriptor = GitDiffArtifactDescriptor(handle: metadata.handle, sha256: metadata.sha256, sizeBytes: metadata.sizeBytes, expiresAt: metadata.expiresAt)
         let stateDigest = sha256(Data("\(pre.digest)\u{0}\(sha256(bindingData))".utf8))
         let template = GitDiffContextResult(
-            schema: "aishell.git-diff-context.v1", repositoryRoot: repositoryRoot.path,
+            schema: "aishell.git-diff-context.v1", comparisonMode: request.mode,
+            repositoryRoot: repositoryRoot.path,
             repositoryIdentity: repositoryIdentity, objectFormat: objectFormat,
-            headSHA: headSHA, baseRef: request.baseRef, baseSHA: baseSHA,
+            headSHA: headSHA, headBranch: headBranch, baseRef: request.baseRef, baseSHA: baseSHA,
             indexTreeSHA: pre.indexTreeSHA, indexState: pre.indexState,
+            dirtyState: isDirty(pre) ? "dirty" : "clean",
             workspaceCursor: postBinding.workspaceCursor, gitStateDigest: stateDigest,
             layerCounts: Dictionary(grouping: collected.changes, by: { $0.layer.rawValue }).mapValues(\.count),
             changes: [], patches: [], returnedBytes: 0, omittedBytes: 0, hasMore: !items.isEmpty,
@@ -421,9 +439,12 @@ public actor GitContextProvider {
         let continuation = next < snapshot.items.count ? token(snapshotID: snapshotID, offset: next) : nil
         let t = snapshot.template
         return GitDiffContextResult(
-            schema: t.schema, repositoryRoot: t.repositoryRoot, repositoryIdentity: t.repositoryIdentity,
-            objectFormat: t.objectFormat, headSHA: t.headSHA, baseRef: t.baseRef, baseSHA: t.baseSHA,
-            indexTreeSHA: t.indexTreeSHA, indexState: t.indexState, workspaceCursor: t.workspaceCursor,
+            schema: t.schema, comparisonMode: t.comparisonMode,
+            repositoryRoot: t.repositoryRoot, repositoryIdentity: t.repositoryIdentity,
+            objectFormat: t.objectFormat, headSHA: t.headSHA, headBranch: t.headBranch,
+            baseRef: t.baseRef, baseSHA: t.baseSHA,
+            indexTreeSHA: t.indexTreeSHA, indexState: t.indexState, dirtyState: t.dirtyState,
+            workspaceCursor: t.workspaceCursor,
             gitStateDigest: t.gitStateDigest, layerCounts: t.layerCounts, changes: changes, patches: patches,
             returnedBytes: used, omittedBytes: omitted, hasMore: continuation != nil, continuation: continuation,
             artifact: t.artifact, worktreeEvidenceDigest: t.worktreeEvidenceDigest
@@ -503,6 +524,21 @@ private extension GitContextProvider {
             if case let .unresolvedBase(missing) = error, missing == ref { return nil }
             throw error
         }
+    }
+
+    func optionalBranch(cwd: URL) throws -> String? {
+        do {
+            return try text(run(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd: cwd).stdout)
+        } catch let GitContextError.gitFailed(exitCode, _, _) where exitCode == 1 {
+            return nil
+        }
+    }
+
+    func isDirty(_ inventory: Inventory) -> Bool {
+        inventory.indexState != "clean"
+            || !(inventory.raw[.staged] ?? Data()).isEmpty
+            || !(inventory.raw[.unstaged] ?? Data()).isEmpty
+            || !inventory.untrackedPaths.isEmpty
     }
 
     func resolveCommit(_ ref: String, cwd: URL) throws -> String {
@@ -1157,7 +1193,12 @@ private extension GitContextProvider {
     }
 
     func requestDigest(_ request: GitDiffContextRequest, scope: String?) throws -> String {
-        try sha256(canonicalAny(["baseRef": request.baseRef as Any, "includePatch": request.includePatch, "scope": scope as Any]))
+        try sha256(canonicalAny([
+            "baseRef": request.baseRef as Any,
+            "includePatch": request.includePatch,
+            "mode": request.mode.rawValue,
+            "scope": scope as Any
+        ]))
     }
 
     func token(snapshotID: String, offset: Int) -> String {

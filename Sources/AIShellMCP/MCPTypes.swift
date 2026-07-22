@@ -355,6 +355,7 @@ enum ToolCatalog {
                 "git_diff": .object([
                     "type": .string("object"),
                     "properties": .object([
+                        "mode": enumString(["worktree", "branch"], "worktreeはHEAD対index/worktree、branchはbase_ref対HEADも含める"),
                         "base_ref": string("比較元commit-ish。省略時HEAD"),
                         "byte_budget": integer("change/patch共有budget。1〜1048576", minimum: 1, maximum: 1_048_576),
                         "include_patch": boolean("patch previewを含める。既定true"),

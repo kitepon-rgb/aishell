@@ -4,6 +4,47 @@ import XCTest
 @testable import AIShellMCP
 
 final class MCPContextV2WireTests: XCTestCase {
+    func testWorkspaceBranchComparisonRoundTripsIdentityDirtyStateAndBudgetedDiff() async throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aishell-mcp-branch-\(UUID().uuidString)", isDirectory: true)
+        let root = temporary.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try Self.git(["init", "-b", "main"], root)
+        try Self.git(["config", "user.email", "fixture@example.invalid"], root)
+        try Self.git(["config", "user.name", "Fixture"], root)
+        try Data("one\n".utf8).write(to: root.appendingPathComponent("File.txt"))
+        try Self.git(["add", "File.txt"], root)
+        try Self.git(["commit", "-m", "base"], root)
+        let base = try Self.git(["rev-parse", "HEAD"], root)
+        try Data("two\n".utf8).write(to: root.appendingPathComponent("File.txt"))
+        try Self.git(["commit", "-am", "head"], root)
+        try Data("dirty\n".utf8).write(to: root.appendingPathComponent("File.txt"))
+        let store = RuntimeStore(baseDirectory: temporary.appendingPathComponent("state"))
+        try await store.setAllowedRoot(root)
+        let server = MCPServer(runtimeStore: store)
+
+        let response = await server.callTool(id: .number(1), params: .object([
+            "name": .string("workspace_snapshot"),
+            "arguments": .object([
+                "path": .string(root.path),
+                "context_budget": .number(0),
+                "git_diff": .object([
+                    "mode": .string("branch"), "base_ref": .string(base),
+                    "byte_budget": .number(1_024), "include_patch": .bool(false)
+                ])
+            ])
+        ]))
+        let comparison = try XCTUnwrap(response.result?.objectValue?["structuredContent"]?
+            .objectValue?["gitDiff"]?.objectValue)
+        XCTAssertEqual(comparison["comparisonMode"], .string("branch"))
+        XCTAssertEqual(comparison["headBranch"], .string("main"))
+        XCTAssertEqual(comparison["dirtyState"], .string("dirty"))
+        XCTAssertEqual(comparison["baseSHA"], .string(base))
+        XCTAssertFalse(comparison["repositoryIdentity"]?.stringValue?.isEmpty ?? true)
+        XCTAssertLessThanOrEqual(comparison["returnedBytes"]?.intValue ?? .max, 1_024)
+    }
+
     func testWorkspaceWaitTimeoutRoundTripsThroughExpandedMCP() async throws {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("aishell-mcp-workspace-wait-\(UUID().uuidString)", isDirectory: true)
@@ -161,6 +202,9 @@ final class MCPContextV2WireTests: XCTestCase {
         XCTAssertNotNil(workspaceProperties["git_diff"])
         XCTAssertNotNil(workspaceProperties["project_profile"])
         XCTAssertNotNil(workspaceProperties["since_cursor"])
+        let comparisonMode = workspaceProperties["git_diff"]?.objectValue?["properties"]?
+            .objectValue?["mode"]?.objectValue?["enum"]?.arrayValue
+        XCTAssertEqual(comparisonMode, [.string("worktree"), .string("branch")])
 
         let search = try XCTUnwrap(tools.first { $0.name == "search_context" })
         let searchProperties = try XCTUnwrap(search.inputSchema.objectValue?["properties"]?.objectValue)
@@ -171,5 +215,23 @@ final class MCPContextV2WireTests: XCTestCase {
         XCTAssertNotNil(profileProperties?["byte_budget"])
         XCTAssertNotNil(profileProperties?["profile_limit"])
         XCTAssertNotNil(profileProperties?["continuation"])
+    }
+
+    @discardableResult
+    private static func git(_ arguments: [String], _ root: URL) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = root
+        let output = Pipe(), error = Pipe()
+        process.standardOutput = output; process.standardError = error
+        try process.run(); process.waitUntilExit()
+        let stdout = output.fileHandleForReading.readDataToEndOfFile()
+        let stderr = error.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0 else {
+            throw NSError(domain: "MCPContextV2WireTests", code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: String(decoding: stderr, as: UTF8.self)])
+        }
+        return String(decoding: stdout, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

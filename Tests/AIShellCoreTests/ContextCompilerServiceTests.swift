@@ -66,6 +66,10 @@ final class ContextCompilerServiceTests: XCTestCase {
 
         XCTAssertEqual(result.schemaVersion, "aishell.workspace-snapshot.v2")
         XCTAssertEqual(result.gitStatusState, "dirty")
+        XCTAssertEqual(result.gitDiff?.comparisonMode, .worktree)
+        XCTAssertEqual(result.gitDiff?.dirtyState, "dirty")
+        XCTAssertFalse(result.gitDiff?.repositoryIdentity.isEmpty ?? true)
+        XCTAssertNotNil(result.gitDiff?.headBranch)
         XCTAssertTrue(result.manifests.contains("Cargo.toml"))
         XCTAssertTrue(result.gitDiff?.changes.contains {
             $0.layer == .unstaged && $0.path == "Source.swift" && $0.kind == .modified

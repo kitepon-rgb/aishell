@@ -22,6 +22,7 @@
 
 requestは次の値を持つ。
 
+- `mode`: `worktree | branch`。省略時は`base_ref`なしならworktree、ありならbranch。branchは`base_ref`必須。
 - `base_ref`: 比較元commit-ish。省略時は観測開始時の`HEAD`。入力文字列と解決commit SHAを両方保持する。
 - `byte_budget`: 全summary／patch previewで共有する1〜1,048,576 bytes。既定65,536。
 - `continuation`: 直前resultが返したopaque token。初回requestの他fieldと同時指定しない。
@@ -29,6 +30,11 @@ requestは次の値を持つ。
 
 repositoryでないrootに明示`git_diff` requestを行った場合は`NOT_GIT_REPOSITORY`とする。requestを省略した
 従来snapshotは`gitStatusState: not_repository`を維持する。
+
+Phase 6のworktree/branch比較では、budget対象のchange/patchとは別に`comparisonMode`、
+`repositoryIdentity`、`headBranch`、`headSHA`、`baseRef`、`baseSHA`、`dirtyState: clean | dirty`を常に返す。
+これらをdiff本文の省略に巻き込まず、AI hostがどのroot・branch・base・dirty状態を比較したかを先に判定できるようにする。
+detached HEADは`headBranch=null`とし、branch名を推測しない。
 
 unborn repositoryで`base_ref`を省略した場合、resultは`baseRef=null`、`baseSHA=null`、`headSHA=null`とし、
 `base_to_head`は0件、`staged`だけをempty treeからindexまで比較する。explicit `base_ref`を指定したunborn repositoryは
@@ -209,6 +215,7 @@ executable URL、arguments、working directoryを分離する。
 - page間のworktree／index／HEAD変更、token改ざん、base未解決、`-`始まりbase、Git失敗、invalid UTF-8 pathはtyped errorになる。
 - byte budget N/N+1、UTF-8境界、item境界を検証し、canonical JSONLから`returnedBytes`／`omittedBytes`、
   length-prefixed evidenceからartifact SHAを独立再計算する。
+- worktree/branch両modeでrepository identity、branch、base SHA、dirty stateがdiff budgetにかかわらず返ることを固定する。
 - subdirectory configured root、allowed root外repository、linked worktree、unmerged indexを固定する。
 - `*`、`?`、`[`、`:(`を含む実directory名と似た兄弟directoryを用意し、literal pathscope外を返さないことを固定する。
 - external clean/process filterとEOL attributeが存在しても起動せず、raw bytes OIDが決定的であることを固定する。
