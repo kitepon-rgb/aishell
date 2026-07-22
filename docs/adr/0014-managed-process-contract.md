@@ -45,6 +45,12 @@ PID、request ID、artifact handleをrun handleとして代用しない。
 `AISHELL_SCHEMA_COMPAT=v1`ではv1 shapeへ投影し、v2では対応する`run_handle`も返す。同期互換経路のために別process
 実装を残さず、既定development profileのtool数やfull profileの既存primitiveを削減しない。
 
+ADR 0018の`RunCheckInvocationPlan`導入後、managed runは「必ず一つのprocessをspawnするrun」ではなく、同じimmutable
+check invocation planへ束縛される0..N child processを所有する。`dispatch.mode: start`はprocess spawnの保証ではなく
+managed invocation admissionである。`cache: prefer | only`で全stepがcache hitした場合も同期resultへ暗黙変換せず、
+process 0件の即時terminal runとして同じ`run_handle`を返し、参照したsource runとartifact SHAを証拠化する。
+架空PID、架空duration、架空launch eventは作らない。
+
 作成後の観測と変更は`run_observe`だけが所有し、次のactionを持つ。
 
 | action | 意味 |
