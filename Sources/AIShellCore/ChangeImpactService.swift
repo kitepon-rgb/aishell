@@ -741,6 +741,13 @@ public struct ChangeImpactRecommendationResult: Encodable, Equatable, Sendable {
     public let artifact: ArtifactMetadata
 }
 
+/// opaque continuation を再開した結果。token の文字列表現ではなく、service が所有する
+/// continuation registry の完全一致だけで operation を確定する。
+public enum ChangeImpactContinuationResult: Sendable {
+    case analyze(ChangeImpactResult)
+    case recommend(ChangeImpactRecommendationResult)
+}
+
 public enum ChangeImpactError: Error, Equatable, Sendable {
     case invalidOperation
     case notReady(operation: ChangeImpactOperation, ownerTask: String)
@@ -971,6 +978,28 @@ public actor ChangeImpactService {
             expiresAt: artifact.expiresAt
         )
         return try page(analysis: analysis, offset: 0, budget: budget)
+    }
+
+    /// analyze / recommend の continuation を同じ opaque entry point から再開する。
+    /// token prefix は authority ではない。両 registry を完全照合し、存在しない又は
+    /// 一意に定まらない token は消費せず fail closed する。
+    public func continueImpact(continuation token: String, byteBudget: Int? = nil) async throws -> ChangeImpactContinuationResult {
+        let analysisMatch = continuations[token] != nil
+        let recommendationMatch = recommendationContinuations[token] != nil
+        switch (analysisMatch, recommendationMatch) {
+        case (true, false):
+            return .analyze(try await continueAnalysis(
+                ChangeImpactRequest(operation: nil, byteBudget: byteBudget, continuation: token),
+                token: token
+            ))
+        case (false, true):
+            return .recommend(try continueRecommendation(
+                ChangeImpactRecommendationRequest(byteBudget: byteBudget, continuation: token),
+                token: token
+            ))
+        case (false, false), (true, true):
+            throw ChangeImpactError.invalidContinuation
+        }
     }
 
     /// complete analyze evidence を全page回収してから、caller が指定した profile catalog とだけ exact join する。

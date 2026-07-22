@@ -187,6 +187,67 @@ final class ChangeImpactServiceTests: XCTestCase {
         }
     }
 
+    func testOpaqueContinuationResumesAnalyzeByExactRegistryMembershipAndConsumesItOnce() async throws {
+        let fixture = try ImpactFixture()
+        defer { fixture.cleanup() }
+        let sourceSHA = try fixture.write("Changed.swift", "struct Changed {}\n")
+        let referenceSHA = try fixture.write("Use.swift", "let value = Changed()\n")
+        let provider = StubImpactProvider(
+            id: "lexical",
+            kind: .lexicalSearch,
+            binding: .init(role: .analysis, path: "Use.swift", contentSHA256: referenceSHA),
+            evidence: .init(
+                inputIdentity: "changed",
+                candidate: .init(category: .references, subject: .path("Use.swift")),
+                relation: .lexicalReference,
+                locator: .init(path: "Use.swift", contentSHA256: referenceSHA, startOffset: 12, endOffset: 19),
+                strength: .lexicalMatch,
+                summary: "token一致"
+            )
+        )
+        let runtime = try await fixture.runtime()
+        let service = ChangeImpactService(
+            runtimeStore: runtime.store,
+            workspaceRuntime: runtime.workspace,
+            evidenceStore: fixture.evidenceStore(),
+            providers: [provider]
+        )
+        let initial = try await service.analyze(.init(
+            root: fixture.root.path,
+            workspaceCursor: runtime.cursor,
+            changedPaths: [.init(path: "Changed.swift", contentSHA256: sourceSHA)],
+            byteBudget: 512
+        ))
+        let token = try XCTUnwrap(initial.continuation)
+
+        let resumed = try await service.continueImpact(continuation: token, byteBudget: 1_024)
+        guard case let .analyze(page) = resumed else {
+            return XCTFail("analyze continuation が recommend として再開されました")
+        }
+        XCTAssertEqual(page.operation, .analyze)
+        await XCTAssertThrowsImpactError(try await service.continueImpact(continuation: token)) { error in
+            XCTAssertEqual(error, .invalidContinuation)
+        }
+    }
+
+    func testOpaqueContinuationDoesNotUseTokenPrefixAsAuthority() async throws {
+        let fixture = try ImpactFixture()
+        defer { fixture.cleanup() }
+        let sourceSHA = try fixture.write("Changed.swift", "struct Changed {}\n")
+        let referenceSHA = try fixture.write("Use.swift", "let value = Changed()\n")
+        let provider = StubImpactProvider(id: "lexical", kind: .lexicalSearch, binding: .init(role: .analysis, path: "Use.swift", contentSHA256: referenceSHA), evidence: .init(inputIdentity: "changed", candidate: .init(category: .references, subject: .path("Use.swift")), relation: .lexicalReference, locator: .init(path: "Use.swift", contentSHA256: referenceSHA), strength: .lexicalMatch, summary: "token一致"))
+        let runtime = try await fixture.runtime()
+        let service = ChangeImpactService(runtimeStore: runtime.store, workspaceRuntime: runtime.workspace, evidenceStore: fixture.evidenceStore(), providers: [provider])
+        let initial = try await service.analyze(.init(root: fixture.root.path, workspaceCursor: runtime.cursor, changedPaths: [.init(path: "Changed.swift", contentSHA256: sourceSHA)], byteBudget: 512))
+        let token = try XCTUnwrap(initial.continuation)
+        let forgedPrefix = "cir2:" + token.dropFirst(4)
+
+        await XCTAssertThrowsImpactError(try await service.continueImpact(continuation: forgedPrefix)) { error in
+            XCTAssertEqual(error, .invalidContinuation)
+        }
+        _ = try await service.continueImpact(continuation: token, byteBudget: 1_024)
+    }
+
     func testRequiredProviderMustBeFreshAndDoesNotFallback() async throws {
         let fixture = try ImpactFixture()
         defer { fixture.cleanup() }
@@ -448,6 +509,37 @@ final class ChangeImpactRecommendationTests: XCTestCase {
         XCTAssertEqual(pages.flatMap(\.items).filter { $0.kind == .focusedCandidate }.count, 1)
         XCTAssertEqual(pages.flatMap(\.items).filter { $0.kind == .focusedStep }.count, 1)
         XCTAssertEqual(pages.flatMap(\.items).filter { $0.kind == .impactEvidence }.count, 1)
+    }
+
+    func testOpaqueContinuationResumesRecommendByExactRegistryMembership() async throws {
+        let fixture = try ImpactFixture()
+        defer { fixture.cleanup() }
+        let manifestSHA = try fixture.write("Package.swift", "// manifest\n")
+        let changedSHA = try fixture.write("Sources/App/Changed.swift", "struct Changed {}\n")
+        let testSHA = try fixture.write("Tests/AppTests/ChangedTests.swift", "func testChanged() {}\n")
+        let runtime = try await fixture.runtime()
+        let digest = String(repeating: "f", count: 64)
+        let provider = StubImpactProvider(
+            id: "impact",
+            kind: .lexicalSearch,
+            binding: .init(role: .analysis, path: "Tests/AppTests/ChangedTests.swift", contentSHA256: testSHA),
+            evidence: testEvidence(path: "Tests/AppTests/ChangedTests.swift", sha: testSHA, summary: "page")
+        )
+        let service = ChangeImpactService(runtimeStore: runtime.store, workspaceRuntime: runtime.workspace, evidenceStore: fixture.evidenceStore(), providers: [provider])
+        let initial = try await service.recommend(.init(
+            impactRequest: recommendationImpact(fixture: fixture, cursor: runtime.cursor, changedSHA: changedSHA),
+            projectID: "project-1",
+            profileDigest: digest,
+            catalog: recommendationCatalog(fixture: fixture, runtimeCursor: runtime.cursor, manifestSHA: manifestSHA, digest: digest),
+            byteBudget: 600
+        ))
+        let token = try XCTUnwrap(initial.continuation)
+
+        let resumed = try await service.continueImpact(continuation: token, byteBudget: 600)
+        guard case let .recommend(page) = resumed else {
+            return XCTFail("recommend continuation が analyze として再開されました")
+        }
+        XCTAssertEqual(page.operation, .recommend)
     }
 
     private func recommendationImpact(fixture: ImpactFixture, cursor: String, changedSHA: String) -> ChangeImpactRequest {
