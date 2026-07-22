@@ -653,17 +653,34 @@ async function observedToolCalls(events, mcpWireDirectory) {
     });
   }
   const wireCalls = await exactWireToolCalls(mcpWireDirectory);
-  if (hostCalls.length !== wireCalls.length) throw new Error('Codex MCP event/wire call count differs');
-  hostCalls.forEach((event, index) => {
+  let wireIndex = 0;
+  const calls = hostCalls.map((event, index) => {
     const item = event.item;
-    const call = wireCalls[index];
-    const expectedStatus = call.isError ? 'failed' : 'completed';
-    if (item.server !== 'aishell' || item.status !== expectedStatus || item.tool !== call.tool
-      || !canonicalJSONBytes(item.arguments).equals(canonicalJSONBytes(call.request))) {
+    exactKeys(item, ['id', 'type', 'server', 'tool', 'arguments', 'result', 'error', 'status'], [],
+      `Codex MCP event ${index}`);
+    if (item.server !== 'aishell' || typeof item.tool !== 'string' || !plainObject(item.arguments)) {
+      throw new Error(`Codex MCP event ${index} is unsupported`);
+    }
+    const call = wireCalls[wireIndex];
+    const expectedStatus = call?.isError ? 'failed' : 'completed';
+    if (call && item.status === expectedStatus && item.tool === call.tool
+      && canonicalJSONBytes(item.arguments).equals(canonicalJSONBytes(call.request))) {
+      wireIndex += 1;
+      return call;
+    }
+    if (item.status !== 'failed' || item.result !== null || !plainObject(item.error)
+      || typeof item.error.message !== 'string' || item.error.message.length === 0) {
       throw new Error(`Codex MCP event/wire call ${index} differs`);
     }
+    const result = { schemaVersion: 'aishell.host-rejection.v1', error: structuredClone(item.error) };
+    const resultBytes = canonicalJSONBytes(result);
+    return {
+      tool: item.tool, request: item.arguments, result, resultBytes, item,
+      requestBytes: canonicalJSONBytes(item.arguments), isError: true, status: 'failed',
+    };
   });
-  return wireCalls;
+  if (wireIndex !== wireCalls.length) throw new Error('MCP wire call has no matching Codex event');
+  return calls;
 }
 
 function observerMetrics(events, calls, attempt) {
@@ -682,6 +699,21 @@ function observerMetrics(events, calls, attempt) {
     changeJournalHits: results.filter((result) => result.changeJournalHit === true).length,
     toolAdoption: attempt.arm === 'candidate' && calls.length > 0,
   };
+}
+
+function localToolAction(call) {
+  if (typeof call.request.action === 'string') return call.request.action;
+  if (typeof call.request.operation === 'string') return call.request.operation;
+  const implicitActions = {
+    artifact_read: 'read',
+    read_context: 'read',
+    run_check: 'execute',
+    search_context: 'search',
+    workspace_snapshot: 'snapshot',
+  };
+  const action = implicitActions[call.tool];
+  if (action === undefined) throw new Error(`legacy/local tool action is unavailable: ${call.tool}`);
+  return action;
 }
 
 /** Parse Codex JSONL/MCP results without accepting lossy strings or unknown call shapes. */
@@ -792,8 +824,7 @@ export async function collectAttemptEvidence(input) {
     }
   } else {
     for (const call of calls) {
-      const action = call.request.action ?? (call.tool === 'run_check' ? 'execute' : call.request.operation);
-      if (typeof action !== 'string') throw new Error('legacy/local tool action is unavailable');
+      const action = localToolAction(call);
       observerEvents.push({
         provider: 'aishell', tool: call.tool, action, request: call.request,
         metadata: { preStateDigest: preAttemptManifest.digest }, result: call.result,

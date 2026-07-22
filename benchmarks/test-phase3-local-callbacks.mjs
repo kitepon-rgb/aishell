@@ -265,6 +265,26 @@ const exploratoryCollected = await collectAttemptEvidence({
 assert.deepEqual(exploratoryCollected.result, collected.result);
 assert.equal(exploratoryCollected.metrics.toolCalls, 3);
 assert.equal(exploratoryCollected.metrics.retries, 1);
+const currentCollected = await collectAttemptEvidence({
+  attempt: { ...candidateAttempt, arm: 'current-aishell-0.3.3' }, workspace, stateDirectory,
+  preAttemptManifest, baselineManifest, benchmarkSetupEvidence, trustedProductionSetup: trusted,
+  agentEvents: exploratoryEvents, finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+});
+assert.deepEqual(currentCollected.toolTrace.events.map(({ tool, action }) => ({ tool, action })), [
+  { tool: 'workspace_snapshot', action: 'snapshot' },
+  { tool: 'run_check', action: 'execute' },
+  { tool: 'run_check', action: 'execute' },
+]);
+const unknownLegacyResult = { schemaVersion: 'unknown.v1' };
+await assert.rejects(() => collectAttemptEvidence({
+  attempt: { ...candidateAttempt, arm: 'native' }, workspace, stateDirectory,
+  preAttemptManifest, baselineManifest, benchmarkSetupEvidence, trustedProductionSetup: trusted,
+  agentEvents: [{ type: 'item.completed', item: {
+    type: 'mcp_tool_call', server: 'aishell', tool: 'unknown_tool', arguments: {},
+    result: unknownLegacyResult, result_bytes_base64: canonicalJSONBytes(unknownLegacyResult).toString('base64'),
+    status: 'completed',
+  } }], finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+}), /legacy\/local tool action is unavailable: unknown_tool/u);
 const mcpWireDirectory = path.join(root, 'mcp-wire');
 await mkdir(mcpWireDirectory);
 await writeFile(path.join(mcpWireDirectory, 'requests.bin'), Buffer.from(`${JSON.stringify({
@@ -285,6 +305,25 @@ const wireCollected = await collectAttemptEvidence({
   benchmarkSetupEvidence, trustedProductionSetup: trusted, agentEvents: wireAgentEvents,
   finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
 });
+const rejectedBeforeTransportEvents = [
+  { type: 'item.completed', item: {
+    id: 'rejected-1', type: 'mcp_tool_call', server: 'aishell', tool: 'workspace_snapshot', arguments: { path: '.' },
+    result: null, error: { message: 'rejected before MCP transport' }, status: 'failed',
+  } },
+  ...wireAgentEvents,
+];
+const rejectedBeforeTransportCollected = await collectAttemptEvidence({
+  attempt: { ...candidateAttempt, arm: 'current-aishell-0.3.3' }, workspace, stateDirectory,
+  mcpWireDirectory, preAttemptManifest, baselineManifest, benchmarkSetupEvidence,
+  trustedProductionSetup: trusted, agentEvents: rejectedBeforeTransportEvents,
+  finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+});
+assert.deepEqual(rejectedBeforeTransportCollected.toolTrace.events.map(({ tool, action, status }) => ({ tool, action, status })), [
+  { tool: 'workspace_snapshot', action: 'snapshot', status: 'failed' },
+  { tool: 'run_check', action: 'execute', status: 'succeeded' },
+]);
+assert.equal(rejectedBeforeTransportCollected.toolTrace.events[0].result.schemaVersion, 'aishell.host-rejection.v1');
+assert.equal(rejectedBeforeTransportCollected.metrics.retries, 1);
 assert.deepEqual(wireCollected.result, collected.result);
 assert.equal(Buffer.isBuffer(wireCollected.adapterTraceBytes), true);
 await assert.rejects(() => collectAttemptEvidence({

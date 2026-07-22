@@ -74,6 +74,8 @@ provider evidence v3修正後、candidateの`freshness-cache-repeat-check`を実
 
 最終preflightはharness exit 0でattempt recordを閉じた。実測はmain `gpt-5.6-sol` 23 response、auto-reviewer `gpt-5.4` 4 response、provider-reported total model token 1,073,598、wall 162,282ms。ただしexternal oracleは`secondExecutionCount=1`と凍結required outcome欠落により`solved=false`と判定した。これは期待どおり失敗試行を成功へ偽装せず、token分子へ残せた証拠であり、candidate correctness成功の主張ではない。
 
+current `0.3.3` armの実Codex preflightもharness exit 0でattempt recordを閉じた。実測はmain `gpt-5.6-sol` 19 response、auto-reviewer `gpt-5.4` 3 response、provider-reported total model token 840,561、wall 129,053ms。旧版armは同じcheckを2回実行しており、機能評価ではunsolved候補のまま保持する。observerは旧development profileの暗黙actionをclosed mappingで正規化し、auto-reviewerがMCP transport前に拒否したcallはhost JSONLのexact errorを失敗callとして保持する。wire到達callは引き続き全件をhost eventと一対一照合し、成功callの欠落や未知tool形はfail closedする。
+
 ## 解消したpreflight blocker
 
 1. Codex CLI 0.144.6のstdout JSONLにはactual provider modelがなかったが、provider WebSocket受信frameにactual `response.model`とusageが存在することを実測し、`response.created/completed`だけをbyte抽出した専用provider SSE JSONLへのbinding付きparserを追加した。requested `gpt-5.6-sol`は引き続き代用しない。
@@ -83,7 +85,9 @@ provider evidence v3修正後、candidateの`freshness-cache-repeat-check`を実
 5. freshness/focused fixtureへproduction manifestを追加し、fixture catalog SHAを正式改訂した。oracle、task、scenario mutation、prompt、execution contractは変えていない。合成catalog/checkは使わない。
 6. production wireでは`lookupEvidence.ineligibilityReason`がnil時にfield自体を省略するため、harness validatorを現行Codable wireへ合わせた。値の意味検証は維持する。
 7. 54試行の初回起動は、旧版`0.3.3`のcatalog response digestを準備時に`9b539d…`と誤記していたため、第三attemptの実model起動前にfail closedした。凍結binary SHAは一致し、同じ凍結requestを実binaryへ2回再送したraw response SHA-256はいずれも`0491fd1024fc3a34b871c6d3cf1aabff6fce4ed2539d974f3a604d4c4ee45361`だった。検証対象や方式は緩和せず、manifestをこの再現値へ訂正した。
+8. 訂正後の54試行は第三attemptの旧版arm observerで、`workspace_snapshot` requestに`action` / `operation`が無いことを未対応として停止した。旧development profileの5 toolだけをclosed mappingへ固定し、未知toolを推測しないaction adapterへ修正した。
+9. 修正確認preflightではauto-reviewerがtask条件に従い`run_check`をtransport前拒否し、host event 5件・wire call 4件となった。wire件数一致を緩めず、wire到達4件を順序付きでhost成功eventへ全件照合し、追加のhost失敗eventだけをexact error付き`aishell.host-rejection.v1`へ正規化する契約へ修正した。
 
 ## 次の実行gate
 
-provider model evidence v3とsingle attempt record経路をcommitし、candidate commit／sandbox・reviewer digestを再freezeした後、54実model attempt、external oracle aggregationの順で実行する。
+action adapterとtransport前拒否の証拠契約をcommitした後、失敗3件の成果物を保持したまま新しい専用directoryで54実model attemptを最初から実行し、external oracle aggregationへ進む。
