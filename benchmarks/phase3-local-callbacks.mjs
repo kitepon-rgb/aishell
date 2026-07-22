@@ -757,10 +757,16 @@ export function localToolAction(call) {
   if (call.provider !== 'aishell') return call.tool;
   const implicitActions = {
     artifact_read: 'read',
+    apply_change_set: 'apply',
+    change_impact: 'analyze',
     read_context: 'read',
     run_check: 'execute',
+    run_observe: 'observe',
+    runtime_open_manager: 'open',
+    runtime_status: 'status',
     search_context: 'search',
     workspace_snapshot: 'snapshot',
+    workspace_wait: 'wait',
   };
   const action = implicitActions[call.tool];
   if (action === undefined) throw new Error(`legacy/local tool action is unavailable: ${call.tool}`);

@@ -12,6 +12,7 @@ import {
   captureTrustedSetup,
   collectAttemptEvidence,
   exchangeMCP,
+  localToolAction,
   observeProviderModel,
   runProcess,
   runSetupStep,
@@ -21,6 +22,15 @@ import { extractProviderUsageFromSSETrace, prepareCandidateRequests } from './ph
 import { canonicalJSONBytes, sha256Hex } from './production-v2-benchmark-adapter.mjs';
 
 const root = await mkdtemp(path.join(tmpdir(), 'aishell-phase3-local-callbacks-'));
+
+for (const [tool, action] of Object.entries({
+  run_check: 'execute', run_observe: 'observe', artifact_read: 'read', workspace_snapshot: 'snapshot',
+  workspace_wait: 'wait', read_context: 'read', search_context: 'search', change_impact: 'analyze',
+  apply_change_set: 'apply', runtime_status: 'status', runtime_open_manager: 'open',
+})) {
+  assert.equal(localToolAction({ provider: 'aishell', tool, request: {} }), action);
+}
+assert.throws(() => localToolAction({ provider: 'aishell', tool: 'unknown', request: {} }), /unavailable/u);
 
 const incompatibleAnalyze = { tool: 'change_impact', isError: false, request: { operation: 'analyze' } };
 const failedRecommend = { tool: 'change_impact', isError: true, request: { operation: 'recommend' } };
