@@ -22,11 +22,35 @@ tool順、責務、成功result schemaを次で固定する。
 | 5 | `workspace_wait` | cursor以後のOS変更待機、timeout/cancel、event-gap判定 | `aishell.workspace-wait.v1` |
 | 6 | `read_context` | 複数file、line/symbol range、expected SHA、共有budgetとcontinuation | `aishell.read-context.v2` |
 | 7 | `search_context` | 複数query、regex/glob、lexical/semantic provider、共有budgetとranking | `aishell.search-context.v2` |
-| 8 | `change_impact` | 変更symbol、reference/dependency、関連test、focused check候補と根拠 | `aishell.change-impact.v1` |
+| 8 | `change_impact` | 変更symbol、reference/dependency、関連test、focused check候補と根拠 | `aishell.change-impact.v2` |
 | 9 | `apply_change_set` | expected SHA付きmulti-file transaction、result diff、更新後cursor | `aishell.apply-change-set.v1` |
 
-この後ろへ`runtime_status`、`runtime_open_manager`を固定順で置く。full profileだけが残るlegacy primitiveは
-その後ろへ現行順で置く。tool definitionへtimestamp、cwd、runtime状態を混ぜない。
+`change_impact`のv2はADR 0012によるversioned amendmentであり、tool名、責務、公開順、feature gateは変えない。
+
+この後ろへ`runtime_status`、`runtime_open_manager`を固定順で置く。full profileだけが残る18 primitiveは
+その後ろへ次の現行順で置く。
+
+1. `files_list`
+2. `files_search`
+3. `files_read_text`
+4. `files_stat`
+5. `files_tree`
+6. `files_create_directory`
+7. `files_create_text`
+8. `files_write_text`
+9. `files_replace_text`
+10. `files_copy`
+11. `files_move`
+12. `files_rename`
+13. `files_trash`
+14. `apps_list_running`
+15. `apps_list_installed`
+16. `apps_open`
+17. `apps_activate`
+18. `process_run`
+
+したがってfull 29本はdevelopment 9本、復旧control 2本、full-only 18本の順である。既存20 primitiveは
+復旧control 2本とfull-only 18本として全て残る。tool definitionへtimestamp、cwd、runtime状態を混ぜない。
 
 ## Responsibility boundaries
 
@@ -41,10 +65,17 @@ tool順、責務、成功result schemaを次で固定する。
 
 - 実装中は`AISHELL_CAPABILITY_SET=expanded-v1`を明示した時だけ拡張9本を公開する。未指定時は
   0.3.3の高密度5本＋復旧control 2本を維持する。不正値はstartupでtyped failureにし、黙って旧面へ戻さない。
-- `AISHELL_TOOL_PROFILE=full`の意味は維持する。expanded flagと組み合わせた時だけ最大29本になる。
+- `AISHELL_TOOL_PROFILE`は未指定、`development`、`full`、既存互換aliasの`legacy`だけを受理する。
+  `legacy`は`full`と同義に保つ。未知値と空文字は`INVALID_TOOL_PROFILE`でstartupを停止し、黙ってdevelopmentへ戻さない。
+  expanded flagと`full`または`legacy`を組み合わせた時だけ最大29本になる。
 - product gate受入後の次minorでexpanded-v1をdefaultへ昇格する。受入前にdefaultを切り替えない。
-- 既存5 toolのv1 inputはdefault昇格から2 minor releaseの間受理する。意味が曖昧な省略値はv2へ推測変換せず、
-  v1既定値を使う。v1 resultが必要なclientは同期間`AISHELL_SCHEMA_COMPAT=v1`を明示できる。
+- default昇格minorをNとすると、既存5 toolのv1 inputはNとN+1で受理し、N+2から削除可能とする。
+  意味が曖昧な省略値はv2へ推測変換せず、v1既定値を使う。v1 resultが必要なclientは同期間
+  `AISHELL_SCHEMA_COMPAT=v1`を明示できる。`AISHELL_SCHEMA_COMPAT`は未指定または`v1`だけを受理し、
+  未知値と空文字は`INVALID_SCHEMA_COMPAT`でstartupを停止する。
+- default昇格後も`AISHELL_CAPABILITY_SET=expanded-v1`はNとN+1で冪等な互換aliasとして受理する。
+  `AISHELL_CAPABILITY_SET`は未指定または`expanded-v1`だけを受理し、未知値と空文字は
+  `INVALID_CAPABILITY_SET`でstartupを停止する。
 - 新規4 toolにv0互換はない。未知field、未知action、cursor/schema mismatchはtyped errorとする。
 
 ## Non-reduction preservation table
