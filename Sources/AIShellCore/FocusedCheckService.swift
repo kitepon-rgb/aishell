@@ -165,6 +165,8 @@ public actor FocusedCheckService {
     public init(now: @escaping @Sendable () -> Date = Date.init) { self.now = now }
 
     /// 同じ logical descriptor の理由を一候補へ集約し、content-addressed set を登録する。
+    /// expiry は admission validity であり identity ではない。同じ identity が既に登録済みなら、
+    /// 既発行 receipt の expiry を短縮・延長せず、その receipt を返す。
     public func compile(_ request: CompileRequest) throws -> FocusedSet {
         guard nonEmpty(request.rootIdentity, request.generation, request.cursor, request.profileDigest, request.manifestIdentity, request.impactArtifactDigest), validSHA256(request.profileDigest), validSHA256(request.impactArtifactDigest), request.expiresAt > now() else { throw Error.invocationInvalid }
         var byID: [String: Candidate] = [:]
@@ -185,7 +187,10 @@ public actor FocusedCheckService {
         let limitations = request.limitations.sorted(by: utf8Less)
         let digest = digest(parts: canonicalSetParts(request: request, coverage: coverage, limitations: limitations, candidates: compiled))
         let set = FocusedSet(schema: Self.schema, id: "fset_\(digest.prefix(24))", digest: digest, rootIdentity: request.rootIdentity, generation: request.generation, cursor: request.cursor, profileDigest: request.profileDigest, manifestIdentity: request.manifestIdentity, impactArtifactDigest: request.impactArtifactDigest, coverage: coverage, limitations: limitations, candidates: compiled, expiresAt: request.expiresAt)
-        if let existing = sets[set.id], existing != set { throw Error.invocationInvalid }
+        if let existing = sets[set.id] {
+            guard existing.digest == set.digest else { throw Error.invocationInvalid }
+            return existing
+        }
         sets[set.id] = set
         return set
     }
@@ -267,7 +272,7 @@ public actor FocusedCheckService {
         Dictionary(grouping: values, by: { [$0.id, $0.provenance.providerID, $0.provenance.providerVersion, $0.provenance.artifactDigest, $0.provenance.freshness].joined(separator: "\u{0}") }).keys.sorted(by: utf8Less).compactMap { key in values.first { [$0.id, $0.provenance.providerID, $0.provenance.providerVersion, $0.provenance.artifactDigest, $0.provenance.freshness].joined(separator: "\u{0}") == key } }
     }
     private func canonicalSetParts(request: CompileRequest, coverage: [String], limitations: [String], candidates: [FocusedCandidate]) -> [String] {
-        var result = ["schema", Self.schema, "root", request.rootIdentity, "generation", request.generation, "cursor", request.cursor, "profile", request.profileDigest, "manifest", request.manifestIdentity, "impact", request.impactArtifactDigest, "expires_at_bits", String(request.expiresAt.timeIntervalSinceReferenceDate.bitPattern)]
+        var result = ["schema", Self.schema, "root", request.rootIdentity, "generation", request.generation, "cursor", request.cursor, "profile", request.profileDigest, "manifest", request.manifestIdentity, "impact", request.impactArtifactDigest]
         appendArray("coverage", coverage, to: &result)
         appendArray("limitations", limitations, to: &result)
         result += ["candidate_count", String(candidates.count)]

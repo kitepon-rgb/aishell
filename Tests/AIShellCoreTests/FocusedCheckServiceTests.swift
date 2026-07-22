@@ -63,7 +63,7 @@ final class FocusedCheckServiceTests: XCTestCase {
         }, { XCTAssertEqual($0 as? FocusedCheckService.Error, .selectionStale) })
     }
 
-    func testDigestBindsEvidenceCoverageLimitationsExpiryAndNormalizesInputOrder() async throws {
+    func testDigestBindsEvidenceCoverageLimitationsAndNormalizesInputOrder() async throws {
         let service = FocusedCheckService()
         let one = candidate(evidence: [evidence("two"), evidence("one")])
         let expiry = Date(timeIntervalSince1970: 3_000_000_000)
@@ -75,9 +75,30 @@ final class FocusedCheckServiceTests: XCTestCase {
         let changedExpiry = try await service.compile(request(candidates: [candidate(evidence: [evidence("one"), evidence("two")])], coverage: ["a", "b"], limitations: ["x", "z"], expiry: Date(timeIntervalSince1970: 3_000_000_001)))
         XCTAssertNotEqual(canonical.digest, changedEvidence.digest)
         XCTAssertNotEqual(canonical.digest, changedCoverage.digest)
-        XCTAssertNotEqual(canonical.digest, changedExpiry.digest)
+        XCTAssertEqual(canonical.digest, changedExpiry.digest)
+        XCTAssertEqual(canonical.id, changedExpiry.id)
+        XCTAssertEqual(changedExpiry.expiresAt, canonical.expiresAt)
         let oldID = canonical.candidates[0].focusedCheckID
         _ = try await service.resolve(focusedSetID: canonical.id, focusedSetDigest: canonical.digest, requestedCheckIDs: [oldID], admission: admission())
+    }
+
+    func testFirstReceiptExpiryIsImmutableForSameCanonicalIdentity() async throws {
+        let shortExpiry = Date(timeIntervalSince1970: 100)
+        let longExpiry = Date(timeIntervalSince1970: 200)
+
+        let longFirst = FocusedCheckService(now: { .distantPast })
+        let longReceipt = try await longFirst.compile(request(candidates: [candidate()], expiry: longExpiry))
+        let shortenedRequest = try await longFirst.compile(request(candidates: [candidate()], expiry: shortExpiry))
+        XCTAssertEqual(shortenedRequest.id, longReceipt.id)
+        XCTAssertEqual(shortenedRequest.digest, longReceipt.digest)
+        XCTAssertEqual(shortenedRequest.expiresAt, longExpiry)
+
+        let shortFirst = FocusedCheckService(now: { .distantPast })
+        let shortReceipt = try await shortFirst.compile(request(candidates: [candidate()], expiry: shortExpiry))
+        let extendedRequest = try await shortFirst.compile(request(candidates: [candidate()], expiry: longExpiry))
+        XCTAssertEqual(extendedRequest.id, shortReceipt.id)
+        XCTAssertEqual(extendedRequest.digest, shortReceipt.digest)
+        XCTAssertEqual(extendedRequest.expiresAt, shortExpiry)
     }
 
     func testUnicodeHexAndExpandedStepDuplicatesAreInvalidBeforeExecution() async throws {
