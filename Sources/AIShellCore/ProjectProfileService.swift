@@ -533,8 +533,12 @@ public actor ProjectProfileService {
         sinceCursor: String? = nil
     ) async throws -> ProjectProfileCheckResolution {
         try loadCacheIfNeeded()
-        let roots = Dictionary(grouping: cache.values, by: \.ownerRootPath)
+        let roots = Dictionary(
+            grouping: cache.values.filter { $0.profile.projectId == projectID },
+            by: \.ownerRootPath
+        )
         guard !roots.isEmpty else { throw ProjectProfileResolutionError.projectNotFound(projectID) }
+        guard roots.count == 1 else { throw ProjectProfileResolutionError.projectAmbiguous(projectID) }
         var matches: [(catalog: ProjectProfileCatalogResult, profile: ProjectProfile)] = []
         for ownerRoot in roots.keys.sorted() {
             guard let entries = roots[ownerRoot], let indexed = entries.sorted(by: {
@@ -581,8 +585,12 @@ public actor ProjectProfileService {
         sinceCursor: String? = nil
     ) async throws -> ProjectProfileResolution {
         try loadCacheIfNeeded()
-        let roots = Dictionary(grouping: cache.values, by: \.ownerRootPath)
+        let roots = Dictionary(
+            grouping: cache.values.filter { $0.profile.profileDigest == profileDigest },
+            by: \.ownerRootPath
+        )
         guard !roots.isEmpty else { throw ProjectProfileResolutionError.profileDigestNotFound(profileDigest) }
+        guard roots.count == 1 else { throw ProjectProfileResolutionError.profileDigestAmbiguous(profileDigest) }
         var catalogs: [ProjectProfileCatalogResult] = []
         for ownerRoot in roots.keys.sorted() {
             guard let entries = roots[ownerRoot], let indexed = entries.sorted(by: {

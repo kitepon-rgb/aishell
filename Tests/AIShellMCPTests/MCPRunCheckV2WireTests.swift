@@ -102,6 +102,11 @@ final class MCPRunCheckV2WireTests: XCTestCase {
     func testRecommendationFocusedSetRunsThroughSameRuntimeWithoutCallerSelectionHash() async throws {
         let fixture = try await MCPRunCheckWireFixture.make()
         defer { fixture.cleanup() }
+        let otherRoot = fixture.base.appendingPathComponent("OtherProject", isDirectory: true)
+        try FileManager.default.createDirectory(at: otherRoot, withIntermediateDirectories: true)
+        try Data("{\"name\":\"other-project\",\"version\":\"1.0.0\"}\n".utf8)
+            .write(to: otherRoot.appendingPathComponent("package.json"))
+        try await fixture.store.setAllowedRoots([fixture.root, otherRoot])
         let sourceDirectory = fixture.root.appendingPathComponent("Sources/WireFocused", isDirectory: true)
         let testDirectory = fixture.root.appendingPathComponent("Tests/WireFocusedTests", isDirectory: true)
         try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
@@ -137,6 +142,8 @@ final class MCPRunCheckV2WireTests: XCTestCase {
             focusedChecks: focused,
             projectProfiles: profiles
         )
+        let otherSnapshot = try await workspace.snapshot(path: otherRoot.path, contextBudget: 0)
+        _ = try await profiles.catalog(for: otherSnapshot)
         let snapshot = try await workspace.snapshot(path: fixture.root.path, contextBudget: 0)
         let catalog = try await profiles.catalog(for: snapshot)
         let profile = try XCTUnwrap(catalog.profiles.first)
