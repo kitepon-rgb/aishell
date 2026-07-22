@@ -2,7 +2,7 @@
 
 ## 結論
 
-Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。release binaryを使うsingle candidate product preflightは成功した。実Codex attempt preflightで発見したexpanded capability配線、MCP承認経路、auto-reviewer込みprovider event/token会計を修正し、独立反証で見つかったmodel役割の過剰主張、timeout失敗記録、公開result schemaの閉包も修正した。54実model attemptとexternal oracle aggregationは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
+Phase 3のproduction受入網で54 attemptを完走し、observer契約修正後のexternal oracle aggregationはvalid、correctness gate通過、candidate 6 task・18 attemptすべて成功した。native/currentの既存成功taskに対するregressionは0。release candidateはcommit `873d2bc7b5acba9c1286847c39612048338f1530`、binary SHA-256 `046df45ab842c2e37cc074a160183412f6e3ad52bcb06ee0f37b0b2fe8440843`へ固定した。
 
 requested model名、合成profile、canonical再serializationを証拠の代用にしない。
 
@@ -41,7 +41,7 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 | arm | commit | release binary SHA-256 | tools catalog |
 | --- | --- | --- | --- |
 | current-aishell-0.3.3 | `2705b407cde704873c40b833507059eba99a1a82` | `982b9a3d07a358440937acecc6535063f7e9691dd8f8a8ae0368dcf7a0b43c4c` | 7 tools, digest `0491fd1024fc3a34b871c6d3cf1aabff6fce4ed2539d974f3a604d4c4ee45361` |
-| candidate | `aca3a95129baecb740e892fea897446f4b03f8b8` | `c6fc0ed4e0a906446c8ba5c04ec68dc3534638804e6ddea54b2b226f74fdf560` | expanded 9 tools, digest `f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58` |
+| candidate | `873d2bc7b5acba9c1286847c39612048338f1530` | `046df45ab842c2e37cc074a160183412f6e3ad52bcb06ee0f37b0b2fe8440843` | expanded 9 tools, digest `f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58` |
 
 current armは隔離worktreeから、candidate armは上記commitの製品sourceをrelease buildして固定した。candidateのbinary/catalog digestはblocker解消後に実MCP `initialize` / `tools/list` から再採取済み。
 
@@ -90,6 +90,14 @@ current `0.3.3` armの実Codex preflightもharness exit 0でattempt recordを閉
 10. 再走は8 attempt完了後、native armがCodex標準MCPの`list_mcp_resources` / `list_mcp_resource_templates`を探索した際、全MCP eventをAIShell専用shapeと誤認して停止した。server identityを保持し、AIShell callだけにclosed action mappingを適用、外部MCP callはtool名を観測actionとして記録する契約へ修正した。native seq9の実model preflightはharness exit 0、main 15 response、reviewer 1 response、provider-reported total model token 516,415、wall 87,395msで完走した。外部MCP探索はAIShell capability evidenceへ混入させず、tool call/token会計からも削除しない。
 11. 外部MCP修正後の再走は20 attempt完了後、candidateのstatic-import setupで停止した。製品のevidence locatorはsource上の引用符込み文字列リテラルを正確に指すが、harness validatorとfake MCPだけが引用符なし範囲を要求していた。validatorを単一引用符または二重引用符込みのexact source一致へ直し、fake証拠も製品契約へ同期した。focused self-testと同じseq21の実candidate preflightはいずれもexit 0。実preflightはprovider-reported total model token 428,890、wall 71,343msで完走した。
 
-## 次の実行gate
+## 最終production受入
 
-static-import locator validator修正をcommitした後、既存の失敗成果物を保持したまま新しい専用directoryで54実model attemptを最初から実行し、external oracle aggregationへ進む。
+- run: `benchmarks/results/phase3-production-20260723-restart-v10`
+- 54/54 attempt完了、provider usage 54/54、harness stderr 0 bytes、result `valid`
+- provider-reported model token: native 8,504,497、current 3,124,692、candidate 9,966,710
+- solved task: native 2/6、current 2/6、candidate 6/6
+- candidate: 18/18 attempt成功、tokens per solved attempt 553,706.11、tool adoption 18/18
+- regression: native→current 0、native→candidate 0、current→candidate 0
+- candidate product evidence: repeat cache hit 3、input change再実行3、直接/未解決impact各3/3、focused recommend/explicit-run各3/3
+
+初回aggregationはfocused recommend-onlyの`executedChecks=0`をagent reportには保持した一方、process supervisor証拠へ転記せず、raw `change_impact` resultにも同名fieldを誤要求してcandidate 3件をfalse negativeにした。raw provider/model/MCP証拠は変更せず、観測した`processesStarted`を`executedChecks`へ投影し、tool-result照合を`structured_result`所有fieldへ限定した。修正後の18 candidate raw evidence再投影は18/18成功。元の`harness-outcome.json`、再投影`ace035-restart-v10-candidate-reprojection.json`、最終`acceptance-report-observer-fixed.json`を別々に保持し、失敗判定を上書きしていない。

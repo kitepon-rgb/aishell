@@ -55,7 +55,9 @@ export async function evaluateAttempt({ taskId, armId, actual }) {
   const functional = Object.fromEntries(Object.entries(applicable).filter(([key]) => !internal.has(key)));
   failures.push(...subsetFailures(functional, actual.agentReport.assertions, 'agentReport.assertions'));
   if (armId === 'candidate') {
-    const toolBound = Object.fromEntries(Object.entries(functional).filter(([key]) => !execution.toolResultProjection.exemptKeys.includes(key)));
+    const toolBound = Object.fromEntries(Object.entries(functional).filter(([key]) =>
+      sourceForKey.get(key) === 'structured_result'
+      && !execution.toolResultProjection.exemptKeys.includes(key)));
     failures.push(...subsetFailures(toolBound, actual.toolResultAssertions, 'toolResultAssertions'));
   }
   const frozenRequired = Object.entries(execution.candidateRequiredActionsByTask[taskId])

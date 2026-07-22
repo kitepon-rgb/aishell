@@ -889,7 +889,11 @@ export async function collectAttemptEvidence(input) {
   } : observedTelemetry;
   return {
     result: Object.keys(projectedResult).length === 0 ? structuredClone(finalAgent.assertions) : projectedResult,
-    process: { agentExitCode: execution.exitCode, agentTimedOut: execution.timedOut },
+    process: {
+      agentExitCode: execution.exitCode,
+      agentTimedOut: execution.timedOut,
+      executedChecks: observedTelemetry.secondExecutionCount,
+    },
     artifactStore: path.join(stateDirectory, 'evidence'), telemetry, trace: {},
     toolTrace: { events: observerEvents }, metrics: observerMetrics(agentEvents, calls, attempt),
     adapterTraceBytes,
