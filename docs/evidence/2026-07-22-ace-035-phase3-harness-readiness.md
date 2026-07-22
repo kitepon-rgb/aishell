@@ -40,9 +40,9 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 | arm | commit | release binary SHA-256 | tools catalog |
 | --- | --- | --- | --- |
 | current-aishell-0.3.3 | `2705b407cde704873c40b833507059eba99a1a82` | `982b9a3d07a358440937acecc6535063f7e9691dd8f8a8ae0368dcf7a0b43c4c` | 7 tools, digest `9b539dc63e48868152fadd59a575325464af1b67b64826032daf1a27af1f0b36` |
-| candidate | `a6d9bdf` | `203ab4044b9140255ac4ccd5a0f8cecdad466d47735083fd6ac9c084d510a8b9` | expanded 9 tools, digest `6e421587fb8e5e6e60d81f5b079739f485e02defc9c3bd44fe3a40e6d76c09f6` |
+| candidate | `a4cd9ae9a3150757400c9ba5a2657923ae0c5499` | `c6fc0ed4e0a906446c8ba5c04ec68dc3534638804e6ddea54b2b226f74fdf560` | expanded 9 tools, digest `f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58` |
 
-両armは隔離worktreeからrelease buildした。candidate実行commitはblocker解消後に再freezeし、binary/catalog digestを再採取する。
+current armは隔離worktreeから、candidate armは上記commitの製品sourceをrelease buildして固定した。candidateのbinary/catalog digestはblocker解消後に実MCP `initialize` / `tools/list` から再採取済み。
 
 ## focused verification
 
@@ -73,4 +73,4 @@ fake process/MCPを使うself-testは実model成功を主張しない。
 
 ## 次の実行gate
 
-candidate commitを再freezeしてbinary/catalog digestを再採取し、54実model attempt、external oracle aggregationの順で実行する。preflight blockerは残っていない。
+上記freezeを入力として54実model attempt、external oracle aggregationの順で実行する。preflight blockerは残っていない。
