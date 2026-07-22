@@ -156,6 +156,25 @@ public struct ProcessExecutionResult: Codable, Equatable, Sendable {
     }
 }
 
+public struct PreparedProcessInvocation: Equatable, Sendable {
+    public let executableURL: URL
+    public let arguments: [String]
+    public let workingDirectoryURL: URL
+    public let environment: [String: String]
+
+    public init(
+        executableURL: URL,
+        arguments: [String],
+        workingDirectoryURL: URL,
+        environment: [String: String]
+    ) {
+        self.executableURL = executableURL
+        self.arguments = arguments
+        self.workingDirectoryURL = workingDirectoryURL
+        self.environment = environment
+    }
+}
+
 public struct ArtifactMetadata: Codable, Equatable, Sendable {
     public let handle: String
     public let kind: String

@@ -31,10 +31,14 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         let expanded = try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1")
         XCTAssertEqual(expanded.map(\.name), [
             "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
-            "change_impact", "workspace_wait", "apply_change_set", "runtime_status", "runtime_open_manager"
+            "change_impact", "run_observe", "workspace_wait", "apply_change_set",
+            "runtime_status", "runtime_open_manager"
         ])
-        XCTAssertEqual(try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1").count, 28)
-        XCTAssertFalse(expanded.map(\.name).contains("run_observe"))
+        XCTAssertEqual(try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1").count, 29)
+        let observe = tool("run_observe", in: expanded)
+        XCTAssertFalse(observe.annotations.readOnlyHint)
+        XCTAssertTrue(observe.annotations.destructiveHint)
+        XCTAssertTrue(observe.annotations.idempotentHint)
         let wait = tool("workspace_wait", in: expanded)
         XCTAssertTrue(wait.annotations.readOnlyHint)
         XCTAssertTrue(wait.annotations.idempotentHint)
@@ -141,15 +145,28 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         let expanded = try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1")
         let schema = try wireSchema(try XCTUnwrap(tool("run_check", in: expanded).outputSchema))
         let variants = try XCTUnwrap(schema.objectValue?["oneOf"]?.arrayValue)
-        XCTAssertEqual(variants.count, 4)
+        XCTAssertEqual(variants.count, 5)
         XCTAssertEqual(variants[2].objectValue?["additionalProperties"], .bool(false))
         XCTAssertEqual(variants[3].objectValue?["additionalProperties"], .bool(false))
+        XCTAssertEqual(variants[4].objectValue?["additionalProperties"], .bool(false))
         XCTAssertEqual(propertyKeys(variants[2]), [
             "cacheState", "lookupEvidence", "planDigest", "plannedCheckIDs", "processesStarted",
             "publications", "requestedCheckIDs", "schemaVersion", "selectionDigest", "steps"
         ])
-        XCTAssertEqual(propertyKeys(variants[3]), ["error", "schemaVersion"])
-        let error = try XCTUnwrap(variants[3].objectValue?["properties"]?.objectValue?["error"])
+        XCTAssertEqual(propertyKeys(variants[3]), [
+            "arguments", "diagnosticArtifact", "diagnosticBytes", "dispatch", "environmentDigest",
+            "evidenceCursor", "executable", "expiresAt", "planDigest", "retentionSeconds",
+            "runHandle", "runID", "schemaVersion", "startedAt", "state", "stateRevision",
+            "stderrArtifact", "stderrBytes", "stdoutArtifact", "stdoutBytes", "terminationCause",
+            "timeoutDeadline", "workingDirectory"
+        ])
+        XCTAssertEqual(variants[3].objectValue?["properties"]?.objectValue?["dispatch"]?.objectValue?["const"], .string("start"))
+        XCTAssertEqual(
+            variants[3].objectValue?["properties"]?.objectValue?["environmentDigest"]?.objectValue?["pattern"],
+            .string("^[0-9a-f]{64}$")
+        )
+        XCTAssertEqual(propertyKeys(variants[4]), ["error", "schemaVersion"])
+        let error = try XCTUnwrap(variants[4].objectValue?["properties"]?.objectValue?["error"])
         XCTAssertEqual(propertyKeys(error), ["code", "lookupEvidence", "message", "processesStarted"])
     }
 

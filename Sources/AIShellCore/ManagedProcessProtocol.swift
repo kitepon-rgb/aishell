@@ -60,22 +60,37 @@ public struct ManagedProcessIdentityProof: Equatable, Sendable {
 public struct ManagedSupervisorLaunchRequest: Equatable, Sendable {
     public let runID: UUID
     public let spawnReservationID: UUID?
+    public let requestDigest: String
     public let executableURL: URL
     public let arguments: [String]
     public let workingDirectoryURL: URL
+    public let environment: [String: String]
+    public let timeoutDeadline: Date?
+    public let admittedAt: Date
+    public let retentionSeconds: TimeInterval
 
     public init(
         runID: UUID,
         spawnReservationID: UUID? = nil,
+        requestDigest: String = "",
         executableURL: URL,
         arguments: [String],
-        workingDirectoryURL: URL
+        workingDirectoryURL: URL,
+        environment: [String: String] = [:],
+        timeoutDeadline: Date? = nil,
+        admittedAt: Date = Date(timeIntervalSince1970: 0),
+        retentionSeconds: TimeInterval = 3_600
     ) {
         self.runID = runID
         self.spawnReservationID = spawnReservationID
+        self.requestDigest = requestDigest
         self.executableURL = executableURL
         self.arguments = arguments
         self.workingDirectoryURL = workingDirectoryURL
+        self.environment = environment
+        self.timeoutDeadline = timeoutDeadline
+        self.admittedAt = admittedAt
+        self.retentionSeconds = retentionSeconds
     }
 }
 

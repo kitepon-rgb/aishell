@@ -10,7 +10,8 @@ let package = Package(
     products: [
         .library(name: "AIShellCore", targets: ["AIShellCore"]),
         .executable(name: "AIShell", targets: ["AIShellApp"]),
-        .executable(name: "aishell-mcp", targets: ["AIShellMCP"])
+        .executable(name: "aishell-mcp", targets: ["AIShellMCP"]),
+        .executable(name: "aishell-run-supervisor", targets: ["AIShellRunSupervisor"])
     ],
     targets: [
         .target(
@@ -26,6 +27,11 @@ let package = Package(
             name: "AIShellMCP",
             dependencies: ["AIShellCore"],
             path: "Sources/AIShellMCP"
+        ),
+        .executableTarget(
+            name: "AIShellRunSupervisor",
+            dependencies: ["AIShellCore"],
+            path: "Sources/AIShellRunSupervisor"
         ),
         .testTarget(
             name: "AIShellCoreTests",

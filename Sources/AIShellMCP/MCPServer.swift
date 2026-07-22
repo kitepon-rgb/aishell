@@ -10,12 +10,14 @@ final class MCPServer: @unchecked Sendable {
     private lazy var processes = NativeProcessService(store: store)
     private let development: DevelopmentRuntimeService
     private var changeSetServices: [String: ApplyChangeSetService] = [:]
+    private var managedRuns: ManagedRunService?
 
     init(
         runtimeStore: RuntimeStore = RuntimeStore(),
         toolProfile: String? = nil,
         capabilitySet: String? = ProcessInfo.processInfo.environment["AISHELL_CAPABILITY_SET"],
-        developmentRuntime: DevelopmentRuntimeService? = nil
+        developmentRuntime: DevelopmentRuntimeService? = nil,
+        managedRunService: ManagedRunService? = nil
     ) {
         store = runtimeStore
         self.toolProfile = toolProfile
@@ -23,6 +25,7 @@ final class MCPServer: @unchecked Sendable {
             ?? "development"
         self.capabilitySet = capabilitySet
         development = developmentRuntime ?? DevelopmentRuntimeService(runtimeStore: runtimeStore)
+        managedRuns = managedRunService
     }
 
     func run() async {
@@ -180,6 +183,22 @@ final class MCPServer: @unchecked Sendable {
                         cachePolicy: request.cachePolicy,
                         executionPolicy: request.executionPolicy
                     ))
+                    if case let .start(clientRunKey) = plan.dispatch {
+                        guard case let .direct(direct) = plan.invocation else {
+                            throw RunCheckPipelineError.dispatchNotReady(processesStarted: 0)
+                        }
+                        return try await .from(managedRunService().start(
+                            clientRunKey: clientRunKey,
+                            requestDigest: plan.requestDigest,
+                            planDigest: plan.digest,
+                            executable: direct.executable,
+                            arguments: direct.arguments,
+                            workingDirectory: direct.workingDirectory,
+                            environment: direct.effectiveEnvironment,
+                            timeoutSeconds: Double(plan.executionPolicy.timeoutMilliseconds) / 1_000,
+                            retentionSeconds: TimeInterval(plan.executionPolicy.retentionSeconds)
+                        ))
+                    }
                     return try await .from(development.runCheck(plan: plan))
                 case .prepareFocusedSet(let setDigest):
                     return try await .from(development.runFocusedCheck(
@@ -199,6 +218,50 @@ final class MCPServer: @unchecked Sendable {
                         expectedSelectionDigest: selectionDigest
                     ))
                 }
+            }
+        case "run_observe":
+            let action = try requiredString("action", in: arguments)
+            switch action {
+            case "status":
+                try validateKeys(arguments, allowed: ["action", "run_handle"])
+                return try await .from(managedRunService().status(
+                    runHandle: requiredString("run_handle", in: arguments)
+                ))
+            case "read":
+                try validateKeys(arguments, allowed: ["action", "run_handle", "cursor", "byte_budget"])
+                return try await .from(managedRunService().read(
+                    runHandle: requiredString("run_handle", in: arguments),
+                    cursor: try strictOptionalString("cursor", in: arguments),
+                    byteBudget: try boundedInt(
+                        "byte_budget", in: arguments, default: 65_536,
+                        minimum: 1, maximum: 1_048_576
+                    )
+                ))
+            case "wait":
+                try validateKeys(arguments, allowed: [
+                    "action", "run_handle", "after_state_revision", "cursor", "timeout_ms"
+                ])
+                return try await .from(managedRunService().wait(
+                    runHandle: requiredString("run_handle", in: arguments),
+                    afterStateRevision: UInt64(try boundedInt(
+                        "after_state_revision", in: arguments, default: 0,
+                        minimum: 0, maximum: Int.max
+                    )),
+                    cursor: try strictOptionalString("cursor", in: arguments),
+                    timeoutMilliseconds: try boundedInt(
+                        "timeout_ms", in: arguments, default: 30_000,
+                        minimum: 1, maximum: 300_000
+                    )
+                ))
+            case "cancel":
+                try validateKeys(arguments, allowed: ["action", "run_handle"])
+                return try await .from(managedRunService().cancel(
+                    runHandle: requiredString("run_handle", in: arguments)
+                ))
+            default:
+                throw AIShellError.invalidArgument(
+                    "run_observe actionはstatus、read、wait、cancelのいずれかです。"
+                )
             }
         case "change_impact":
             switch try MCPRunCheckAdapter.changeImpact(arguments: arguments) {
@@ -441,6 +504,26 @@ final class MCPServer: @unchecked Sendable {
             "managerTool": .string("runtime_open_manager"),
             "nextAction": .string(nextAction)
         ])
+    }
+
+    private func managedRunService() throws -> ManagedRunService {
+        if let managedRuns { return managedRuns }
+        let executable: URL
+        if let override = ProcessInfo.processInfo.environment["AISHELL_RUN_SUPERVISOR_PATH"],
+           !override.isEmpty {
+            executable = URL(fileURLWithPath: override)
+        } else {
+            executable = URL(fileURLWithPath: CommandLine.arguments[0])
+                .resolvingSymlinksInPath()
+                .deletingLastPathComponent()
+                .appendingPathComponent("aishell-run-supervisor")
+        }
+        let service = try ManagedRunService(
+            runtimeStore: store,
+            supervisorExecutableURL: executable
+        )
+        managedRuns = service
+        return service
     }
 
     private func managerApplicationURL() throws -> URL {

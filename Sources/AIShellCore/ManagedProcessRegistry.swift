@@ -84,6 +84,9 @@ public actor ManagedProcessRegistry {
         executableURL: URL,
         arguments: [String] = [],
         workingDirectoryURL: URL,
+        environment: [String: String] = [:],
+        timeoutDeadline: Date? = nil,
+        admittedAt: Date = Date(),
         retentionSeconds: TimeInterval = 3_600,
         runID requestedRunID: UUID = UUID()
     ) async throws -> ManagedProcessRegistration {
@@ -135,9 +138,14 @@ public actor ManagedProcessRegistry {
 
         let request = ManagedSupervisorLaunchRequest(
             runID: requestedRunID,
+            requestDigest: requestDigest,
             executableURL: executableURL,
             arguments: arguments,
-            workingDirectoryURL: workingDirectoryURL
+            workingDirectoryURL: workingDirectoryURL,
+            environment: environment,
+            timeoutDeadline: timeoutDeadline,
+            admittedAt: admittedAt,
+            retentionSeconds: retentionSeconds
         )
         do {
             let identity = try await supervisor.launch(request)

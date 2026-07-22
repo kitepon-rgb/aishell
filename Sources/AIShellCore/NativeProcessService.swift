@@ -11,6 +11,27 @@ public actor NativeProcessService {
         self.store = store
     }
 
+    public func prepareManagedInvocation(
+        executable: String,
+        arguments: [String] = [],
+        workingDirectory: String? = nil,
+        environment: [String: String] = [:]
+    ) async throws -> PreparedProcessInvocation {
+        let resolver = try await activeResolver()
+        let directory = try resolver.resolveExisting(workingDirectory)
+        guard try directory.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw AIShellError.invalidPath(directory.path)
+        }
+        return PreparedProcessInvocation(
+            executableURL: try validateExecutable(
+                executable, environment: environment, workingDirectory: directory
+            ),
+            arguments: arguments,
+            workingDirectoryURL: directory,
+            environment: environment
+        )
+    }
+
     public func run(
         executable: String,
         arguments: [String] = [],

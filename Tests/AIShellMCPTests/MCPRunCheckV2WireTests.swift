@@ -43,24 +43,66 @@ final class MCPRunCheckV2WireTests: XCTestCase {
         XCTAssertEqual(structured["steps"]?.arrayValue?.first?.objectValue?["terminalState"], .string("passed"))
     }
 
-    func testStartFailsTypedBeforeResolutionAndStartsNoProcess() async throws {
+    func testDirectStartAndRunObserveReachManagedSidecarThroughPublicWire() async throws {
         let fixture = try await MCPRunCheckWireFixture.make()
         defer { fixture.cleanup() }
-        let server = MCPServer(runtimeStore: fixture.store, capabilitySet: "expanded-v1")
+        let managed = try ManagedRunService(
+            runtimeStore: fixture.store,
+            supervisorExecutableURL: try fixture.supervisorBinary()
+        )
+        let server = MCPServer(
+            runtimeStore: fixture.store,
+            capabilitySet: "expanded-v1",
+            managedRunService: managed
+        )
         let response = await server.callTool(id: .number(1), params: .object([
             "name": .string("run_check"),
             "arguments": .object(v2Direct(
-                executable: "/usr/bin/true",
+                executable: "/usr/bin/python3",
                 workingDirectory: fixture.root.path,
-                dispatch: ["mode": .string("start"), "client_run_key": .string("wire-start")]
+                dispatch: ["mode": .string("start"), "client_run_key": .string("wire-start")],
+                arguments: ["-c", "import time; print('wire',flush=True); time.sleep(.2)"]
             ))
         ]))
         let result = try XCTUnwrap(response.result?.objectValue)
         let structured = try XCTUnwrap(result["structuredContent"]?.objectValue)
-        XCTAssertEqual(result["isError"], .bool(true))
+        XCTAssertEqual(result["isError"], .bool(false))
         XCTAssertEqual(structured["schemaVersion"], .string("aishell.run-check.v2"))
-        XCTAssertEqual(structured["error"]?.objectValue?["code"], .string("RUN_CHECK_START_NOT_READY"))
-        XCTAssertEqual(structured["error"]?.objectValue?["processesStarted"], .number(0))
+        XCTAssertEqual(structured["dispatch"], .string("start"))
+        XCTAssertEqual(structured["planDigest"]?.stringValue?.count, 64)
+        XCTAssertEqual(structured["environmentDigest"]?.stringValue?.count, 64)
+        XCTAssertEqual(structured["executable"], .string("/usr/bin/python3"))
+        XCTAssertEqual(structured["workingDirectory"], .string(fixture.root.path))
+        XCTAssertNotNil(structured["startedAt"])
+        XCTAssertNotNil(structured["timeoutDeadline"])
+        XCTAssertEqual(structured["retentionSeconds"], .number(3_600))
+        XCTAssertEqual(structured["state"], .string("running"))
+        let handle = try XCTUnwrap(structured["runHandle"]?.stringValue)
+
+        let read = await server.callTool(id: .number(2), params: .object([
+            "name": .string("run_observe"),
+            "arguments": .object([
+                "action": .string("wait"), "run_handle": .string(handle),
+                "after_state_revision": structured["stateRevision"]!, "timeout_ms": .number(5_000)
+            ])
+        ]))
+        let waited = try XCTUnwrap(read.result?.objectValue?["structuredContent"]?.objectValue)
+        XCTAssertEqual(read.result?.objectValue?["isError"], .bool(false))
+        XCTAssertEqual(waited["schema"], .string("aishell.run-observe-wait.v1"))
+        XCTAssertEqual(waited["outcome"], .string("changed"))
+
+        let evidence = await server.callTool(id: .number(3), params: .object([
+            "name": .string("run_observe"),
+            "arguments": .object([
+                "action": .string("read"), "run_handle": .string(handle),
+                "byte_budget": .number(65_536)
+            ])
+        ]))
+        let evidenceResult = try XCTUnwrap(evidence.result?.objectValue?["structuredContent"]?.objectValue)
+        XCTAssertEqual(evidenceResult["schema"], .string("aishell.run-observe-read.v1"))
+        XCTAssertTrue(evidenceResult["chunks"]?.arrayValue?.contains {
+            $0.objectValue?["text"]?.stringValue?.contains("wire") == true
+        } == true)
     }
 
     func testChangeImpactAnalyzeRunsThroughExpandedPublicWire() async throws {
@@ -325,13 +367,15 @@ final class MCPRunCheckV2WireTests: XCTestCase {
     private func v2Direct(
         executable: String,
         workingDirectory: String,
-        dispatch: [String: JSONValue]
+        dispatch: [String: JSONValue],
+        arguments: [String] = []
     ) -> [String: JSONValue] {
         [
             "schema": .string("aishell.run-check.v2"),
             "invocation": .object([
                 "mode": .string("direct"),
                 "executable": .string(executable),
+                "arguments": .array(arguments.map(JSONValue.string)),
                 "working_directory": .string(workingDirectory)
             ]),
             "dispatch": .object(dispatch),
@@ -416,4 +460,17 @@ private final class MCPRunCheckWireFixture {
     }
 
     func cleanup() { try? FileManager.default.removeItem(at: base) }
+
+    func supervisorBinary() throws -> URL {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let candidates = [
+            projectRoot.appendingPathComponent(".build/debug/aishell-run-supervisor"),
+            projectRoot.appendingPathComponent(".build/arm64-apple-macosx/debug/aishell-run-supervisor")
+        ]
+        guard let binary = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0.path)
+        }) else { throw XCTSkip("aishell-run-supervisor productを先にbuildしてください。") }
+        return binary
+    }
 }

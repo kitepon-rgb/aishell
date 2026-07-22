@@ -241,7 +241,7 @@ enum ToolCatalog {
         "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context"
     ]
     static let implementedExpandedToolNames: Set<String> = [
-        "change_impact", "apply_change_set", "workspace_wait"
+        "change_impact", "run_observe", "apply_change_set", "workspace_wait"
     ]
     static let controlToolNames: Set<String> = [
         "runtime_status", "runtime_open_manager"
@@ -275,6 +275,7 @@ enum ToolCatalog {
             "read_context": "複数fileを共有byte budgetとcontinuationで読む。",
             "search_context": "rg workerで変更近接性付きbounded検索を行う。",
             "change_impact": "OS現在状態へ束縛した変更影響候補とfocused check候補を返す。",
+            "run_observe": "managed runの状態・増分証拠・待機・取消を扱う。",
             "apply_change_set": "複数file変更を一つのdurable transactionとして適用する。",
             "workspace_wait": "cursor以後のfilesystem変更を消費せず、期限付きで待つ。"
         ]
@@ -464,6 +465,7 @@ enum ToolCatalog {
             )
         ),
         changeImpactTool,
+        runObserveTool,
         tool(
             "workspace_wait", "workspace変更を待機", "保持済みworkspace journalを消費せず、指定cursorより後の変更または期限まで待ちます。gap・期限切れcursorはfull scanへfallbackせず明示errorにし、request cancellationは待機だけを終了します。",
             properties: [
@@ -710,6 +712,60 @@ enum ToolCatalog {
         )
     )
 
+    private static let runObserveTool = MCPTool(
+        name: "run_observe",
+        title: "managed runを観測・取消",
+        description: "認証付きrun_handleで、adapterから独立して継続するmanaged runの状態確認、stdout/stderr/diagnostic増分読取、revision/evidence待機、identity照合付き取消を行います。request cancellationはrunを停止しません。",
+        inputSchema: .object(["oneOf": .array([
+            closedObject(required: ["action", "run_handle"], properties: [
+                "action": constString("status"), "run_handle": boundedString(minLength: 1, maxLength: 16_384)
+            ]),
+            closedObject(required: ["action", "run_handle"], properties: [
+                "action": constString("read"), "run_handle": boundedString(minLength: 1, maxLength: 16_384),
+                "cursor": boundedString(minLength: 1, maxLength: 16_384),
+                "byte_budget": integer("stdout/stderr/diagnostic共有budget", minimum: 1, maximum: 1_048_576)
+            ]),
+            closedObject(required: ["action", "run_handle", "after_state_revision", "timeout_ms"], properties: [
+                "action": constString("wait"), "run_handle": boundedString(minLength: 1, maxLength: 16_384),
+                "after_state_revision": integer("既知state revision", minimum: 0),
+                "cursor": boundedString(minLength: 1, maxLength: 16_384),
+                "timeout_ms": integer("待機上限milliseconds", minimum: 1, maximum: 300_000)
+            ]),
+            closedObject(required: ["action", "run_handle"], properties: [
+                "action": constString("cancel"), "run_handle": boundedString(minLength: 1, maxLength: 16_384)
+            ])
+        ])]),
+        outputSchema: .object([
+            "type": .string("object"),
+            "oneOf": .array([
+                runObserveResultSchema("aishell.run-observe-status.v1", required: ["runHandle", "runID", "state", "stateRevision", "evidenceCursor"]),
+                runObserveResultSchema("aishell.run-observe-read.v1", required: ["status", "chunks", "cursor", "hasMore", "omittedBytes"]),
+                runObserveResultSchema("aishell.run-observe-wait.v1", required: ["outcome", "status"]),
+                .object([
+                    "type": .string("object"),
+                    "required": .array([.string("schemaVersion"), .string("error")]),
+                    "properties": .object([
+                        "schemaVersion": .object(["const": .string("aishell.error.v1")]),
+                        "error": type("object")
+                    ]),
+                    "additionalProperties": .bool(true)
+                ])
+            ])
+        ]),
+        annotations: MCPToolAnnotations(
+            readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false
+        )
+    )
+
+    private static func runObserveResultSchema(_ schema: String, required: [String]) -> JSONValue {
+        .object([
+            "type": .string("object"),
+            "required": .array((["schema"] + required).map(JSONValue.string)),
+            "properties": .object(["schema": .object(["const": .string(schema)])]),
+            "additionalProperties": .bool(true)
+        ])
+    }
+
     private static let sha256Schema: JSONValue = .object([
         "type": .string("string"), "pattern": .string("^[0-9a-f]{64}$")
     ])
@@ -863,10 +919,44 @@ enum ToolCatalog {
         ]
     )
 
+    private static let runCheckV2StartSchema = closedObject(
+        required: [
+            "schemaVersion", "dispatch", "planDigest", "runHandle", "runID", "state",
+            "stateRevision", "evidenceCursor", "stdoutBytes", "stderrBytes", "diagnosticBytes",
+            "executable", "arguments", "workingDirectory", "environmentDigest", "startedAt",
+            "timeoutDeadline", "retentionSeconds"
+        ],
+        properties: [
+            "schemaVersion": constString("aishell.run-check.v2"),
+            "dispatch": constString("start"),
+            "planDigest": sha256Schema,
+            "runHandle": boundedString(minLength: 1, maxLength: 16_384),
+            "runID": type("string"),
+            "state": enumType(["starting", "running", "cancelling", "timing_out", "finalizing", "recovery_required", "passed", "failed", "timed_out", "cancelled", "interrupted"]),
+            "stateRevision": integer("managed run state revision", minimum: 0),
+            "evidenceCursor": boundedString(minLength: 1, maxLength: 16_384),
+            "stdoutBytes": integer("persisted stdout bytes", minimum: 0),
+            "stderrBytes": integer("persisted stderr bytes", minimum: 0),
+            "diagnosticBytes": integer("persisted diagnostic bytes", minimum: 0),
+            "executable": boundedString(minLength: 1, maxLength: 4_096),
+            "arguments": arrayOf(type("string")),
+            "workingDirectory": boundedString(minLength: 1, maxLength: 4_096),
+            "environmentDigest": sha256Schema,
+            "startedAt": type("string"),
+            "timeoutDeadline": type("string"),
+            "retentionSeconds": type("number"),
+            "terminationCause": type("string"),
+            "stdoutArtifact": type("object"),
+            "stderrArtifact": type("object"),
+            "diagnosticArtifact": type("object"),
+            "expiresAt": type("string")
+        ]
+    )
+
     private static func runCheckExpandedOutputSchema(legacy: JSONValue) -> JSONValue {
         let legacyVariants = legacy.objectValue?["oneOf"]?.arrayValue ?? []
         return .object([
-            "oneOf": .array(legacyVariants + [runCheckV2SuccessSchema, runCheckV2ErrorSchema])
+            "oneOf": .array(legacyVariants + [runCheckV2SuccessSchema, runCheckV2StartSchema, runCheckV2ErrorSchema])
         ])
     }
 
