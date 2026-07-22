@@ -4,6 +4,37 @@ import XCTest
 @testable import AIShellMCP
 
 final class MCPContextV2WireTests: XCTestCase {
+    func testWorkspaceWaitTimeoutRoundTripsThroughExpandedMCP() async throws {
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("aishell-mcp-workspace-wait-\(UUID().uuidString)", isDirectory: true)
+        let root = temporary.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = RuntimeStore(baseDirectory: temporary.appendingPathComponent("state"))
+        try await store.setAllowedRoot(root)
+        let server = MCPServer(runtimeStore: store, capabilitySet: "expanded-v1")
+
+        let snapshot = await server.callTool(id: .number(1), params: .object([
+            "name": .string("workspace_snapshot"),
+            "arguments": .object(["path": .string(root.path)])
+        ]))
+        let cursor = try XCTUnwrap(
+            snapshot.result?.objectValue?["structuredContent"]?.objectValue?["cursor"]?.stringValue
+        )
+        let response = await server.callTool(id: .number(2), params: .object([
+            "name": .string("workspace_wait"),
+            "arguments": .object([
+                "path": .string(root.path), "from_cursor": .string(cursor), "timeout_ms": .number(0)
+            ])
+        ]))
+        let result = try XCTUnwrap(response.result?.objectValue)
+        XCTAssertEqual(result["isError"], .bool(false))
+        XCTAssertEqual(result["structuredContent"]?.objectValue?["schemaVersion"], .string("aishell.workspace-wait.v1"))
+        XCTAssertEqual(result["structuredContent"]?.objectValue?["status"], .string("timed_out"))
+        XCTAssertEqual(result["structuredContent"]?.objectValue?["observedFrom"], .string(cursor))
+        XCTAssertEqual(result["structuredContent"]?.objectValue?["observedThrough"], .string(cursor))
+    }
+
     func testProjectProfileContinuationRoundTripsThroughMCP() async throws {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("aishell-mcp-profile-page-\(UUID().uuidString)", isDirectory: true)

@@ -267,6 +267,16 @@ final class MCPServer: @unchecked Sendable {
                 entryLimit: entryLimit,
                 contextBudget: contextBudget
             ))
+        case "workspace_wait":
+            try validateKeys(arguments, allowed: ["path", "from_cursor", "timeout_ms"])
+            return try await .from(development.workspaceRuntime.workspaceWait(
+                path: try strictOptionalString("path", in: arguments),
+                fromCursor: try requiredString("from_cursor", in: arguments),
+                timeoutSeconds: Double(try boundedInt(
+                    "timeout_ms", in: arguments, default: 30_000,
+                    minimum: 0, maximum: 300_000
+                )) / 1_000
+            ))
         case "read_context":
             try validateKeys(arguments, allowed: ["targets", "byte_budget", "continuation"])
             return try await .from(development.readContext(

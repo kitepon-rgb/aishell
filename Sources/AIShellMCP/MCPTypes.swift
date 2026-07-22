@@ -240,7 +240,9 @@ enum ToolCatalog {
     static let developmentToolNames: Set<String> = [
         "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context"
     ]
-    static let implementedExpandedToolNames: Set<String> = ["change_impact", "apply_change_set"]
+    static let implementedExpandedToolNames: Set<String> = [
+        "change_impact", "apply_change_set", "workspace_wait"
+    ]
     static let controlToolNames: Set<String> = [
         "runtime_status", "runtime_open_manager"
     ]
@@ -273,7 +275,8 @@ enum ToolCatalog {
             "read_context": "複数fileを共有byte budgetとcontinuationで読む。",
             "search_context": "rg workerで変更近接性付きbounded検索を行う。",
             "change_impact": "OS現在状態へ束縛した変更影響候補とfocused check候補を返す。",
-            "apply_change_set": "複数file変更を一つのdurable transactionとして適用する。"
+            "apply_change_set": "複数file変更を一つのdurable transactionとして適用する。",
+            "workspace_wait": "cursor以後のfilesystem変更を消費せず、期限付きで待つ。"
         ]
         return MCPTool(
             name: tool.name,
@@ -461,6 +464,26 @@ enum ToolCatalog {
             )
         ),
         changeImpactTool,
+        tool(
+            "workspace_wait", "workspace変更を待機", "保持済みworkspace journalを消費せず、指定cursorより後の変更または期限まで待ちます。gap・期限切れcursorはfull scanへfallbackせず明示errorにし、request cancellationは待機だけを終了します。",
+            properties: [
+                "path": string("待機対象root。省略時は先頭許可root"),
+                "from_cursor": string("workspace_snapshot等が返した開始cursor"),
+                "timeout_ms": integer("待機上限milliseconds。0〜300000", minimum: 0, maximum: 300_000)
+            ],
+            required: ["from_cursor", "timeout_ms"], readOnly: true, idempotent: true,
+            outputSchema: objectOutput(
+                schemaVersion: "aishell.workspace-wait.v1",
+                required: ["schemaVersion", "status", "observedFrom", "observedThrough", "observationViewID", "retentionFloorSequence", "headSequence", "changedPaths"],
+                properties: [
+                    "status": enumType(["changed", "timed_out"]),
+                    "observedFrom": type("string"), "observedThrough": type("string"),
+                    "observationViewID": type("string"),
+                    "retentionFloorSequence": type("integer"), "headSequence": type("integer"),
+                    "changedPaths": type("array")
+                ]
+            )
+        ),
         tool(
             "apply_change_set", "複数fileを原子的に変更", "一つの許可root内のcreate、write、delete、renameをexpected SHAとworkspace cursorで固定し、durable transactionとして適用します。途中失敗を部分成功へ丸めず、完全diff artifactと更新後cursorを返します。",
             properties: [

@@ -27,15 +27,18 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         XCTAssertEqual(Array(try XCTUnwrap(expandedOutput.objectValue?["oneOf"]?.arrayValue).prefix(2)), baselineOutputVariants)
     }
 
-    func testExpandedCatalogAddsOnlyChangeImpactAndApplyChangeSetInContractOrder() throws {
+    func testExpandedCatalogAddsImplementedCapabilityToolsInContractOrder() throws {
         let expanded = try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1")
         XCTAssertEqual(expanded.map(\.name), [
             "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
-            "change_impact", "apply_change_set", "runtime_status", "runtime_open_manager"
+            "change_impact", "workspace_wait", "apply_change_set", "runtime_status", "runtime_open_manager"
         ])
-        XCTAssertEqual(try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1").count, 27)
+        XCTAssertEqual(try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1").count, 28)
         XCTAssertFalse(expanded.map(\.name).contains("run_observe"))
-        XCTAssertFalse(expanded.map(\.name).contains("workspace_wait"))
+        let wait = tool("workspace_wait", in: expanded)
+        XCTAssertTrue(wait.annotations.readOnlyHint)
+        XCTAssertTrue(wait.annotations.idempotentHint)
+        XCTAssertFalse(wait.annotations.destructiveHint)
         let impact = tool("change_impact", in: expanded)
         XCTAssertTrue(impact.annotations.readOnlyHint)
         XCTAssertTrue(impact.annotations.idempotentHint)
