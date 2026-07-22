@@ -511,6 +511,18 @@ public actor WorkspaceStateRuntime {
         path: String? = nil,
         fromCursor: String
     ) async throws -> WorkspaceDeltaObservation {
+        try await workspaceDeltaObservation(
+            path: path,
+            fromCursor: fromCursor,
+            deliveryGrace: .milliseconds(500)
+        )
+    }
+
+    func workspaceDeltaObservation(
+        path: String? = nil,
+        fromCursor: String,
+        deliveryGrace: Duration
+    ) async throws -> WorkspaceDeltaObservation {
         let resolver = try await activeResolver()
         let requested = try resolver.resolveExisting(path)
         guard try requested.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
@@ -522,8 +534,8 @@ public actor WorkspaceStateRuntime {
         if states[key] == nil {
             try await initialize(root: root, key: key, requestedCursor: fromCursor)
         }
-        if states[key]?.observer != nil {
-            try await Task.sleep(for: .milliseconds(500))
+        if states[key]?.observer != nil, deliveryGrace > .zero {
+            try await Task.sleep(for: deliveryGrace)
         }
         drainObserver(for: key)
         guard var state = states[key] else { throw AIShellError.invalidPath(root.path) }
@@ -574,7 +586,9 @@ public actor WorkspaceStateRuntime {
         let viewID = SHA256.hash(data: Data("\(state.rootIdentity)\u{0}\(fromCursor)\u{0}\(throughCursor)\u{0}\(changedDigest)".utf8))
             .map { String(format: "%02x", $0) }.joined()
 
-        try await persistCheckpoint(state)
+        if !retained.isEmpty {
+            try await persistCheckpoint(state)
+        }
         return WorkspaceDeltaObservation(
             effectiveRootIdentity: state.rootIdentity,
             effectiveRootPolicyDigest: owner.policyDigest,
