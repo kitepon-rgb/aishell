@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { captureManifest } from './capture-workspace-manifest.mjs';
 import { materializeGeneratedSeed } from './materialize-generated-seed.mjs';
 import {
@@ -14,6 +14,7 @@ import {
 import { canonicalJSONBytes, sha256Hex } from './production-v2-benchmark-adapter.mjs';
 
 const here = new URL('.', import.meta.url);
+const MCP_WIRE_TAP = fileURLToPath(new URL('phase3-mcp-wire-tap.mjs', here));
 const ARMS = new Set(['native', 'current-aishell-0.3.3', 'candidate']);
 
 function requireFunction(value, label) {
@@ -106,17 +107,48 @@ async function digestFile(file) {
   return sha256Hex(await readFile(file));
 }
 
-function validateProviderModelEvidence(value, bytes, providerTraceBytes) {
-  exactObjectKeys(value, ['schema', 'source', 'modelSnapshot', 'providerTraceSHA256'], 'provider model evidence');
-  if (value.schema !== 'aishell.provider-model-evidence.v1' || value.source !== 'codex-provider-metadata'
+function validateProviderModelEvidence(value, bytes, providerTraceBytes, providerSSEBytes) {
+  exactObjectKeys(value, ['schema', 'source', 'modelSnapshot', 'providerTraceSHA256', 'providerSSETraceSHA256'], 'provider model evidence');
+  if (value.schema !== 'aishell.provider-model-evidence.v1' || value.source !== 'codex-provider-sse'
     || typeof value.modelSnapshot !== 'string' || value.modelSnapshot.length === 0
-    || value.providerTraceSHA256 !== sha256Hex(providerTraceBytes)) {
+    || value.providerTraceSHA256 !== sha256Hex(providerTraceBytes)
+    || value.providerSSETraceSHA256 !== sha256Hex(providerSSEBytes)) {
     throw new Error('provider model evidence is not bound to trusted provider metadata');
   }
   if (!canonicalJSONBytes(value).equals(bytes)) {
     throw new Error('provider model evidence must be canonical JSON bytes');
   }
   return value;
+}
+
+function providerSSETrace(stderrBytes) {
+  const raw = Buffer.from(stderrBytes);
+  const marker = Buffer.from('Received message ');
+  const selected = [];
+  let start = 0;
+  for (let index = 0; index <= raw.length; index += 1) {
+    if (index !== raw.length && raw[index] !== 0x0a) continue;
+    let end = index;
+    if (end > start && raw[end - 1] === 0x0d) end -= 1;
+    const line = raw.subarray(start, end);
+    const markerOffset = line.indexOf(marker);
+    if (markerOffset >= 0) {
+      const eventBytes = line.subarray(markerOffset + marker.length);
+      try {
+        const event = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(eventBytes));
+        if (event?.type === 'response.created' || event?.type === 'response.completed') {
+          selected.push(Buffer.from(eventBytes), Buffer.from('\n'));
+        }
+      } catch { /* Non-JSON protocol diagnostics are not provider response evidence. */ }
+    }
+    start = index + 1;
+  }
+  return Buffer.concat(selected);
+}
+
+function diagnosticStderr(stderrBytes) {
+  const text = Buffer.from(stderrBytes).toString('utf8');
+  return Buffer.from(text.split('\n').filter((line) => !line.includes('tungstenite::protocol')).join('\n'));
 }
 
 async function loadFrozenTask(taskID) {
@@ -219,7 +251,7 @@ function defaultRunProcess(command, args, { cwd, env, timeoutMilliseconds }) {
   });
 }
 
-function codexArguments({ prompt, workspace, attempt, isolation, options, stateDirectory }) {
+function codexArguments({ prompt, workspace, attempt, isolation, options, stateDirectory, mcpWireDirectory }) {
   const args = [
     'exec', '--json', '--ephemeral', '--ignore-user-config', '--ignore-rules',
     '--skip-git-repo-check', '--color', 'never', ...options.sandboxArguments,
@@ -231,8 +263,9 @@ function codexArguments({ prompt, workspace, attempt, isolation, options, stateD
   if (attempt.arm !== 'native') {
     const binary = options.armBinaries[attempt.arm];
     const profile = attempt.arm === 'candidate' ? 'expanded-v1' : 'development';
-    args.push('--config', `mcp_servers.aishell.command=${tomlString(binary)}`);
-    args.push('--config', `mcp_servers.aishell.env={ AISHELL_STATE_DIRECTORY = ${tomlString(stateDirectory)}, AISHELL_TOOL_PROFILE = ${tomlString(profile)} }`);
+    args.push('--config', `mcp_servers.aishell.command=${tomlString(process.execPath)}`);
+    args.push('--config', `mcp_servers.aishell.args=${JSON.stringify([MCP_WIRE_TAP, binary])}`);
+    args.push('--config', `mcp_servers.aishell.env={ AISHELL_STATE_DIRECTORY = ${tomlString(stateDirectory)}, AISHELL_TOOL_PROFILE = ${tomlString(profile)}, AISHELL_PHASE3_MCP_WIRE_DIRECTORY = ${tomlString(mcpWireDirectory)} }`);
   }
   args.push(prompt);
   return args;
@@ -309,6 +342,7 @@ export function createPhase3CodexExecutor(rawOptions) {
     const runDirectory = path.join(options.outputDirectory, attempt.attemptID);
     const workspace = path.join(runDirectory, 'workspace');
     const stateDirectory = path.join(runDirectory, 'runtime-state');
+    const mcpWireDirectory = path.join(runDirectory, 'mcp-wire');
     await mkdir(options.outputDirectory, { recursive: true });
     await mkdir(runDirectory, { recursive: false });
     await mkdir(workspace, { recursive: false });
@@ -326,7 +360,7 @@ export function createPhase3CodexExecutor(rawOptions) {
     const baselineManifest = await captureManifest(workspace);
     await writeJSON(path.join(runDirectory, 'baseline-manifest.json'), baselineManifest);
     await writeJSON(path.join(stateDirectory, 'runtime.json'), {
-      allowedRootPaths: [workspace], isPaused: false, updatedAt: 'benchmark-attempt-start',
+      allowedRootPaths: [workspace], isPaused: false, updatedAt: '2001-01-01T00:00:00Z',
     });
 
     let mutationCount = 0;
@@ -365,24 +399,26 @@ export function createPhase3CodexExecutor(rawOptions) {
         throw new Error(`${attempt.arm} tool catalog digest differs from manifest`);
       }
     }
-    const args = codexArguments({ prompt, workspace, attempt, isolation, options, stateDirectory });
+    const args = codexArguments({ prompt, workspace, attempt, isolation, options, stateDirectory, mcpWireDirectory });
     await writeJSON(path.join(runDirectory, 'codex-invocation.json'), {
       command: options.codexCommand, args, cwd: workspace,
       armBinding, isolation,
     });
     const started = performance.now();
     const execution = await options.runProcess(options.codexCommand, args, {
-      cwd: workspace, env: { ...process.env, ...(options.environment ?? {}) },
+      cwd: workspace, env: { ...process.env, ...(options.environment ?? {}), RUST_LOG: 'tungstenite::protocol=trace' },
       timeoutMilliseconds: options.timeoutMilliseconds,
     });
     const wallMilliseconds = Math.round(performance.now() - started);
     const stdout = Buffer.from(execution.stdout ?? '');
     const stderr = Buffer.from(execution.stderr ?? '');
+    const providerSSEBytes = providerSSETrace(stderr);
     await writeFile(path.join(runDirectory, 'provider-events.jsonl'), stdout, { flag: 'wx' });
-    await writeFile(path.join(runDirectory, 'stderr.log'), stderr, { flag: 'wx' });
+    await writeFile(path.join(runDirectory, 'provider-sse.jsonl'), providerSSEBytes, { flag: 'wx' });
+    await writeFile(path.join(runDirectory, 'stderr.log'), diagnosticStderr(stderr), { flag: 'wx' });
     const rawProviderModelEvidence = await options.observeProviderModel(Object.freeze({
       providerTraceBytes: Buffer.from(stdout),
-      providerStderrBytes: Buffer.from(stderr),
+      providerSSEBytes: Buffer.from(providerSSEBytes),
     }));
     if (!Buffer.isBuffer(rawProviderModelEvidence) && !ArrayBuffer.isView(rawProviderModelEvidence)) {
       throw new Error('observeProviderModel must return trusted evidence bytes, not a requested-model echo');
@@ -395,7 +431,7 @@ export function createPhase3CodexExecutor(rawOptions) {
       throw new Error('provider model evidence must be UTF-8 JSON');
     }
     const providerModelEvidence = validateProviderModelEvidence(
-      providerModelEvidenceValue, providerModelEvidenceBytes, stdout,
+      providerModelEvidenceValue, providerModelEvidenceBytes, stdout, providerSSEBytes,
     );
     if (providerModelEvidence.modelSnapshot !== isolation.modelSnapshot) {
       throw new Error(`actual provider model differs from manifest: ${providerModelEvidence.modelSnapshot}`);
@@ -412,6 +448,7 @@ export function createPhase3CodexExecutor(rawOptions) {
       requestedModelSnapshot: isolation.modelSnapshot,
       actualProviderModelSnapshot: providerModelEvidence.modelSnapshot,
       providerModelEvidenceSHA256: sha256Hex(providerModelEvidenceBytes),
+      mcpWireTapSHA256: attempt.arm === 'native' ? null : await digestFile(MCP_WIRE_TAP),
     });
     const events = parseJSONLines(stdout);
     const finalAgent = agentResult(events, attempt.taskID);
@@ -421,6 +458,7 @@ export function createPhase3CodexExecutor(rawOptions) {
 
     const observed = await options.observeAttempt({
       attempt: structuredClone(attempt), workspace, stateDirectory, runDirectory,
+      mcpWireDirectory: attempt.arm === 'native' ? undefined : mcpWireDirectory,
       baselineManifest: structuredClone(baselineManifest),
       preAttemptManifest: structuredClone(preAttemptManifest),
       setup: structuredClone(setup), events: structuredClone(events),

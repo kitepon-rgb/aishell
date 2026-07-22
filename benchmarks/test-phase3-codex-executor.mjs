@@ -86,13 +86,21 @@ function providerEvents(taskID) {
 
 async function runProcess(command, args, context) {
   invocations.push({ command, args, context });
-  return { stdout: providerEvents(selected.native.taskID), stderr: Buffer.from('fixture stderr'), exitCode: 0, timedOut };
+  const stderr = Buffer.from([
+    `TRACE tungstenite::protocol: Received message ${JSON.stringify({ type: 'response.created', response: { model: configuration.modelSnapshot } })}`,
+    `TRACE tungstenite::protocol: Received message ${JSON.stringify({ type: 'response.completed', response: { model: configuration.modelSnapshot, usage: { input_tokens: 12, output_tokens: 5 } } })}`,
+    'fixture diagnostic',
+    '',
+  ].join('\n'));
+  return { stdout: providerEvents(selected.native.taskID), stderr, exitCode: 0, timedOut };
 }
 
-async function observeAttempt({ attempt, workspace, toolTrace, finalAgent }) {
+async function observeAttempt({ attempt, workspace, mcpWireDirectory, toolTrace, finalAgent }) {
   assert.equal(finalAgent.taskId, attempt.taskID);
   assert.equal(toolTrace.events.length, 1);
   assert.equal((await stat(workspace)).isDirectory(), true);
+  assert.equal(mcpWireDirectory === undefined, attempt.arm === 'native');
+  if (attempt.arm !== 'native') assert.equal(mcpWireDirectory.endsWith('/mcp-wire'), true);
   return {
     observerEvidence: { schema: 'fixture-observer.v1', attemptID: attempt.attemptID },
     adapterTraceBytes: attempt.arm === 'candidate' ? Buffer.from('{"fixture":"adapter"}') : null,
@@ -107,13 +115,14 @@ async function observeToolCatalog({ binary, profile, workspace, stateDirectory }
 }
 
 async function observeProviderModel(input) {
-  assert.deepEqual(Object.keys(input).sort(), ['providerStderrBytes', 'providerTraceBytes']);
+  assert.deepEqual(Object.keys(input).sort(), ['providerSSEBytes', 'providerTraceBytes']);
   const metadata = input.providerTraceBytes.toString('utf8').split('\n').filter(Boolean)
     .map(JSON.parse).find((event) => event.type === 'provider.metadata');
   if (typeof metadata?.model_snapshot !== 'string') throw new Error('provider model metadata unavailable');
   return canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-metadata',
+    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
     modelSnapshot: metadata.model_snapshot, providerTraceSHA256: sha256Hex(input.providerTraceBytes),
+    providerSSETraceSHA256: sha256Hex(input.providerSSEBytes),
   });
 }
 
@@ -175,6 +184,9 @@ for (const arm of ['native', 'current-aishell-0.3.3', 'candidate']) {
   assert.equal(bindings.actualProviderModelSnapshot, configuration.modelSnapshot);
   const modelEvidence = await readFile(path.join(outputDirectory, attempt.attemptID, 'provider-model-evidence.json'));
   assert.equal(JSON.parse(modelEvidence).modelSnapshot, configuration.modelSnapshot);
+  const providerSSE = (await readFile(path.join(outputDirectory, attempt.attemptID, 'provider-sse.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(providerSSE.map(({ type }) => type), ['response.created', 'response.completed']);
+  assert.equal(await readFile(path.join(outputDirectory, attempt.attemptID, 'stderr.log'), 'utf8'), 'fixture diagnostic\n');
 }
 
 assert.equal(invocations.length, 3);
@@ -190,6 +202,8 @@ assert.equal(nativeInvocation.args.includes('approval_policy="never"'), true);
 assert.equal(nativeInvocation.args.includes('sandbox_workspace_write.network_access=false'), true);
 assert.equal(nativeInvocation.args.some((value) => value.includes('mcp_servers.aishell')), false);
 assert.equal(currentInvocation.args.some((value) => value.includes(currentBinary)), true);
+assert.equal(currentInvocation.args.some((value) => value.includes('phase3-mcp-wire-tap.mjs')), true);
+assert.equal(currentInvocation.args.some((value) => value.includes('AISHELL_PHASE3_MCP_WIRE_DIRECTORY')), true);
 assert.equal(currentInvocation.args.some((value) => value.includes('AISHELL_TOOL_PROFILE = "development"')), true);
 assert.equal(candidateInvocation.args.some((value) => value.includes(candidateBinary)), true);
 assert.equal(candidateInvocation.args.some((value) => value.includes('AISHELL_TOOL_PROFILE = "expanded-v1"')), true);
@@ -197,6 +211,7 @@ for (const invocation of invocations) {
   assert.equal(invocation.args.includes(configuration.modelSnapshot), true);
   assert.equal(invocation.args.includes('model_reasoning_effort="high"'), true);
   assert.equal(invocation.args.includes('fixture_host_catalog=true'), true);
+  assert.equal(invocation.context.env.RUST_LOG, 'tungstenite::protocol=trace');
 }
 assert.equal(new Set(invocations.map(({ context }) => context.cwd)).size, 3, 'every arm must get a fresh workspace');
 
@@ -260,9 +275,10 @@ await assert.rejects(() => badCatalogExecutor({
 const actualModelAttempt = { ...selected.native, attemptID: `${selected.native.attemptID}-wrong-actual-model` };
 const wrongActualModelExecutor = createPhase3CodexExecutor(executorOptions({
   outputDirectory: path.join(root, 'wrong-actual-model'),
-  observeProviderModel: async ({ providerTraceBytes }) => canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-metadata',
+  observeProviderModel: async ({ providerTraceBytes, providerSSEBytes }) => canonicalJSONBytes({
+    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
     modelSnapshot: 'different-provider-model', providerTraceSHA256: sha256Hex(providerTraceBytes),
+    providerSSETraceSHA256: sha256Hex(providerSSEBytes),
   }),
 }));
 await assert.rejects(() => wrongActualModelExecutor({
@@ -293,9 +309,10 @@ await assert.rejects(() => requestedEchoExecutor({
 const unboundEvidenceAttempt = { ...selected.native, attemptID: `${selected.native.attemptID}-unbound-model-evidence` };
 const unboundEvidenceExecutor = createPhase3CodexExecutor(executorOptions({
   outputDirectory: path.join(root, 'unbound-model-evidence'),
-  observeProviderModel: async () => canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-metadata',
+  observeProviderModel: async ({ providerSSEBytes }) => canonicalJSONBytes({
+    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
     modelSnapshot: configuration.modelSnapshot, providerTraceSHA256: digest('different-provider-trace'),
+    providerSSETraceSHA256: sha256Hex(providerSSEBytes),
   }),
 }));
 await assert.rejects(() => unboundEvidenceExecutor({

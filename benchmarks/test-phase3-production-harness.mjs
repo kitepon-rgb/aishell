@@ -112,13 +112,14 @@ const callbacks = {
       adapterTraceBytes: null,
     };
   },
-  observeProviderModel: async ({ providerTraceBytes }) => {
+  observeProviderModel: async ({ providerTraceBytes, providerSSEBytes }) => {
     const events = providerTraceBytes.toString('utf8').split('\n').filter(Boolean).map(JSON.parse);
     const metadata = events.filter((event) => event.type === 'provider.metadata');
     if (metadata.length !== 1) throw new Error('fixture provider metadata unavailable');
     return canonicalJSONBytes({
-      schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-metadata',
+      schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
       modelSnapshot: metadata[0].model_snapshot, providerTraceSHA256: sha256Hex(providerTraceBytes),
+      providerSSETraceSHA256: sha256Hex(providerSSEBytes),
     });
   },
   runProcess: async () => { throw new Error('external model process must not run in this test'); },
@@ -188,10 +189,12 @@ const providerTrace = Buffer.from([
   JSON.stringify({ type: 'provider.metadata', model_snapshot: 'fixture-model' }),
   JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 } }),
 ].join('\n') + '\n');
-const modelEvidenceBytes = await harness.callbacks.observeProviderModel({ providerTraceBytes: providerTrace, providerStderrBytes: Buffer.alloc(0) });
+const providerSSE = Buffer.from('fixture SSE');
+const modelEvidenceBytes = await harness.callbacks.observeProviderModel({ providerTraceBytes: providerTrace, providerSSEBytes: providerSSE });
 assert.deepEqual(JSON.parse(modelEvidenceBytes), {
-  schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-metadata',
+  schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
   modelSnapshot: 'fixture-model', providerTraceSHA256: sha256Hex(providerTrace),
+  providerSSETraceSHA256: sha256Hex(providerSSE),
 });
 
 for (const missing of ['runSetupStep', 'captureTrustedSetup', 'exchangeMCP', 'collectAttemptEvidence', 'observeProviderModel', 'runProcess']) {

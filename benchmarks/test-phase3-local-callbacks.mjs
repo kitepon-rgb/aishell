@@ -241,6 +241,28 @@ assert.deepEqual(collected.result, { secondExecutionCount: 0, cacheHit: true, fa
 assert.equal(Buffer.isBuffer(collected.adapterTraceBytes), true);
 assert.equal(collected.toolTrace.events[0].action, 'execute');
 assert.equal(collected.metrics.toolCalls, 1);
+const mcpWireDirectory = path.join(root, 'mcp-wire');
+await mkdir(mcpWireDirectory);
+await writeFile(path.join(mcpWireDirectory, 'requests.bin'), Buffer.from(`${JSON.stringify({
+  jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'run_check', arguments: productionRequest },
+})}\n`));
+await writeFile(path.join(mcpWireDirectory, 'responses.bin'), Buffer.from(
+  `{"jsonrpc":"2.0","id":7,"result":{"content":[],"structuredContent":${productionResultBytes.toString('utf8')},"isError":false}}\n`,
+));
+const wireAgentEvents = [
+  { type: 'item.completed', item: {
+    type: 'mcp_tool_call', server: 'aishell', tool: 'run_check', arguments: productionRequest,
+    result: { content: [], structured_content: productionResult }, error: null, status: 'completed', id: '7',
+  } },
+  { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } },
+];
+const wireCollected = await collectAttemptEvidence({
+  attempt: candidateAttempt, workspace, stateDirectory, mcpWireDirectory, preAttemptManifest, baselineManifest,
+  benchmarkSetupEvidence, trustedProductionSetup: trusted, agentEvents: wireAgentEvents,
+  finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+});
+assert.deepEqual(wireCollected.result, collected.result);
+assert.equal(Buffer.isBuffer(wireCollected.adapterTraceBytes), true);
 await assert.rejects(() => collectAttemptEvidence({
   attempt: candidateAttempt, workspace, stateDirectory, preAttemptManifest, baselineManifest,
   benchmarkSetupEvidence, trustedProductionSetup: trusted,
@@ -255,16 +277,20 @@ await assert.rejects(() => collectAttemptEvidence({
   finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
 }), /invalid fields/u);
 
-const metadataBytes = canonicalJSONBytes({ model_snapshot: 'actual-model-snapshot' });
-const providerTrace = Buffer.from(`${JSON.stringify({
-  type: 'provider.metadata', metadata_bytes_base64: metadataBytes.toString('base64'),
-})}\n`);
-const modelEvidence = JSON.parse(await observeProviderModel({ providerTraceBytes: providerTrace }));
+const providerTrace = Buffer.from(`${JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } })}\n`);
+const providerSSE = Buffer.from([
+  '{"type":"response.created","response":{"model":"actual-model-snapshot"}}',
+  '{"type":"response.completed","response":{"model":"actual-model-snapshot","usage":{"input_tokens":1,"output_tokens":1}}}',
+  '',
+].join('\n'));
+const modelEvidence = JSON.parse(await observeProviderModel({ providerTraceBytes: providerTrace, providerSSEBytes: providerSSE }));
 assert.equal(modelEvidence.modelSnapshot, 'actual-model-snapshot');
 assert.equal(modelEvidence.providerTraceSHA256, sha256Hex(providerTrace));
+assert.equal(modelEvidence.providerSSETraceSHA256, sha256Hex(providerSSE));
 await assert.rejects(() => observeProviderModel({
   providerTraceBytes: Buffer.from(`${JSON.stringify({ type: 'thread.started', requested_model: 'echo-must-not-be-used' })}\n`),
-}), /actual provider metadata event is unavailable/u);
+  providerSSEBytes: Buffer.from(''),
+}), /actual provider model snapshot is unavailable/u);
 
 for (const [key, value] of Object.entries(previous)) {
   if (value === undefined) delete process.env[key];
@@ -272,5 +298,5 @@ for (const [key, value] of Object.entries(previous)) {
 }
 
 process.stdout.write(`${JSON.stringify({
-  schema: 'aishell.phase3_local_callbacks_self_test.v1', process: 'fake', mcp: 'fake', model: 'actual-metadata-only', status: 'valid',
+  schema: 'aishell.phase3_local_callbacks_self_test.v1', process: 'fake', mcp: 'fake', model: 'actual-provider-sse-only', status: 'valid',
 })}\n`);

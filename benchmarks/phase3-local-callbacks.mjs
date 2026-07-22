@@ -501,8 +501,149 @@ function parseExactJSON(value, rawBytes, label) {
   return parsed;
 }
 
+function splitExactJSONLines(rawBytes, label) {
+  const raw = bytes(rawBytes, label);
+  const records = [];
+  let start = 0;
+  for (let index = 0; index <= raw.length; index += 1) {
+    if (index !== raw.length && raw[index] !== 0x0a) continue;
+    let end = index;
+    if (end > start && raw[end - 1] === 0x0d) end -= 1;
+    if (end > start) {
+      const lineBytes = raw.subarray(start, end);
+      let value;
+      try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(lineBytes)); }
+      catch { throw new Error(`${label} contains invalid JSONL`); }
+      if (!plainObject(value)) throw new Error(`${label} JSONL record must be an object`);
+      records.push({ value, bytes: lineBytes });
+    }
+    start = index + 1;
+  }
+  return records;
+}
+
+function skipWhitespace(raw, offset) {
+  let index = offset;
+  while (index < raw.length && [0x20, 0x09, 0x0a, 0x0d].includes(raw[index])) index += 1;
+  return index;
+}
+
+function skipJSONString(raw, offset) {
+  if (raw[offset] !== 0x22) throw new Error('expected JSON string');
+  let index = offset + 1;
+  while (index < raw.length) {
+    if (raw[index] === 0x5c) { index += 2; continue; }
+    if (raw[index] === 0x22) return index + 1;
+    index += 1;
+  }
+  throw new Error('unterminated JSON string');
+}
+
+function skipJSONValue(raw, offset) {
+  const start = skipWhitespace(raw, offset);
+  if (raw[start] === 0x22) return skipJSONString(raw, start);
+  if (raw[start] === 0x7b || raw[start] === 0x5b) {
+    const open = raw[start];
+    const close = open === 0x7b ? 0x7d : 0x5d;
+    let depth = 1;
+    let index = start + 1;
+    while (index < raw.length) {
+      if (raw[index] === 0x22) { index = skipJSONString(raw, index); continue; }
+      if (raw[index] === open) depth += 1;
+      else if (raw[index] === close && --depth === 0) return index + 1;
+      index += 1;
+    }
+    throw new Error('unterminated JSON container');
+  }
+  let index = start;
+  while (index < raw.length && ![0x2c, 0x5d, 0x7d, 0x20, 0x09, 0x0a, 0x0d].includes(raw[index])) index += 1;
+  if (index === start) throw new Error('invalid JSON value');
+  return index;
+}
+
+function exactObjectMember(rawBytes, key, label) {
+  const raw = bytes(rawBytes, label);
+  let index = skipWhitespace(raw, 0);
+  if (raw[index] !== 0x7b) throw new Error(`${label} must be a JSON object`);
+  index = skipWhitespace(raw, index + 1);
+  while (index < raw.length && raw[index] !== 0x7d) {
+    const keyStart = index;
+    const keyEnd = skipJSONString(raw, keyStart);
+    let parsedKey;
+    try { parsedKey = JSON.parse(raw.subarray(keyStart, keyEnd).toString('utf8')); }
+    catch { throw new Error(`${label} has an invalid member name`); }
+    index = skipWhitespace(raw, keyEnd);
+    if (raw[index] !== 0x3a) throw new Error(`${label} has an invalid member separator`);
+    const valueStart = skipWhitespace(raw, index + 1);
+    const valueEnd = skipJSONValue(raw, valueStart);
+    if (parsedKey === key) return raw.subarray(valueStart, valueEnd);
+    index = skipWhitespace(raw, valueEnd);
+    if (raw[index] === 0x2c) index = skipWhitespace(raw, index + 1);
+    else if (raw[index] !== 0x7d) throw new Error(`${label} has an invalid object delimiter`);
+  }
+  throw new Error(`${label} is missing ${key}`);
+}
+
+async function exactWireToolCalls(directory) {
+  if (typeof directory !== 'string' || !path.isAbsolute(directory)) throw new Error('MCP wire directory is unavailable');
+  const [requestBytes, responseBytes] = await Promise.all([
+    readFile(path.join(directory, 'requests.bin')),
+    readFile(path.join(directory, 'responses.bin')),
+  ]);
+  const requests = splitExactJSONLines(requestBytes, 'MCP request wire');
+  const responses = splitExactJSONLines(responseBytes, 'MCP response wire');
+  const responseByID = new Map();
+  for (const response of responses) {
+    const id = JSON.stringify(response.value.id);
+    if (responseByID.has(id)) throw new Error('MCP response id is duplicated');
+    responseByID.set(id, response);
+  }
+  return requests.filter(({ value }) => value.method === 'tools/call').map((request, index) => {
+    const response = responseByID.get(JSON.stringify(request.value.id));
+    if (!response || response.value.error || !plainObject(response.value.result)) throw new Error(`MCP wire call ${index} failed`);
+    const wrapper = response.value.result;
+    if (wrapper.isError !== false || !plainObject(wrapper.structuredContent)) throw new Error(`MCP wire call ${index} returned an error`);
+    const resultObjectBytes = exactObjectMember(response.bytes, 'result', `MCP response ${index}`);
+    const resultBytes = exactObjectMember(resultObjectBytes, 'structuredContent', `MCP response ${index} result`);
+    parseExactJSON(wrapper.structuredContent, resultBytes, `MCP wire call ${index} structured result`);
+    const params = request.value.params;
+    if (!plainObject(params) || typeof params.name !== 'string' || !plainObject(params.arguments)) {
+      throw new Error(`MCP wire call ${index} request is invalid`);
+    }
+    return { tool: params.name, request: params.arguments, result: wrapper.structuredContent, resultBytes, wrapper };
+  });
+}
+
 function rawToolCalls(events) {
   return events.filter((event) => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call');
+}
+
+async function observedToolCalls(events, mcpWireDirectory) {
+  const hostCalls = rawToolCalls(events);
+  if (mcpWireDirectory === undefined) {
+    return hostCalls.map((event, index) => {
+      const item = event.item;
+      exactKeys(item, ['type', 'server', 'tool', 'arguments', 'result', 'result_bytes_base64', 'status'],
+        ['raw_pages', 'complete_artifact_base64'], `Codex MCP call ${index}`);
+      if (item.server !== 'aishell' || item.status !== 'completed' || !plainObject(item.arguments) || !plainObject(item.result)) {
+        throw new Error(`Codex MCP call ${index} is unsupported`);
+      }
+      const resultBytes = exactBase64(item.result_bytes_base64, `Codex MCP call ${index} result`);
+      parseExactJSON(item.result, resultBytes, `Codex MCP call ${index} result`);
+      return { tool: item.tool, request: item.arguments, result: item.result, resultBytes, item };
+    });
+  }
+  const wireCalls = await exactWireToolCalls(mcpWireDirectory);
+  if (hostCalls.length !== wireCalls.length) throw new Error('Codex MCP event/wire call count differs');
+  hostCalls.forEach((event, index) => {
+    const item = event.item;
+    const call = wireCalls[index];
+    if (item.server !== 'aishell' || item.status !== 'completed' || item.tool !== call.tool
+      || !canonicalJSONBytes(item.arguments).equals(canonicalJSONBytes(call.request))) {
+      throw new Error(`Codex MCP event/wire call ${index} differs`);
+    }
+  });
+  return wireCalls;
 }
 
 function observerMetrics(events, calls, attempt) {
@@ -526,49 +667,63 @@ function observerMetrics(events, calls, attempt) {
 /** Parse Codex JSONL/MCP results without accepting lossy strings or unknown call shapes. */
 export async function collectAttemptEvidence(input) {
   const { attempt, workspace, stateDirectory, preAttemptManifest, baselineManifest,
-    benchmarkSetupEvidence, trustedProductionSetup, agentEvents, finalAgent, execution } = input;
+    benchmarkSetupEvidence, trustedProductionSetup, agentEvents, finalAgent, execution, mcpWireDirectory } = input;
   if (!Array.isArray(agentEvents)) throw new Error('Codex agent events are missing');
-  const calls = rawToolCalls(agentEvents).map((event, index) => {
-    const item = event.item;
-    exactKeys(item, ['type', 'server', 'tool', 'arguments', 'result', 'result_bytes_base64', 'status'],
-      ['raw_pages', 'complete_artifact_base64'], `Codex MCP call ${index}`);
-    if (item.server !== 'aishell' || item.status !== 'completed' || !plainObject(item.arguments) || !plainObject(item.result)) {
-      throw new Error(`Codex MCP call ${index} is unsupported`);
-    }
-    const resultBytes = exactBase64(item.result_bytes_base64, `Codex MCP call ${index} result`);
-    parseExactJSON(item.result, resultBytes, `Codex MCP call ${index} result`);
-    return { tool: item.tool, request: item.arguments, result: item.result, resultBytes, item };
-  });
+  const calls = await observedToolCalls(agentEvents, mcpWireDirectory);
   const observerEvents = [];
   let adapterTraceBytes = null;
   let projectedResult = {};
   if (attempt.arm === 'candidate') {
-    if (calls.length !== 1) throw new Error('candidate attempt must contain exactly one exact AIShell result');
     const prepared = await prepareCandidateRequests({
       taskId: attempt.taskID, workspaceRoot: workspace, preAttemptManifest, baselineManifest,
       setupEvidence: benchmarkSetupEvidence, trustedProductionSetup,
     });
     const preparedCall = prepared.calls[0];
-    const call = calls[0];
+    const primaryCalls = calls.filter(({ tool }) => tool === preparedCall.tool);
+    if (primaryCalls.length === 0 || primaryCalls.length !== calls.length) {
+      throw new Error('candidate attempt contains missing or unrelated AIShell wire calls');
+    }
+    const call = primaryCalls[0];
     if (call.tool !== preparedCall.tool || !canonicalJSONBytes(call.request).equals(preparedCall.productionRequestBytes)) {
       throw new Error('candidate tool call differs from the production adapter request');
     }
     let recorded;
     let artifact = Buffer.alloc(0);
     if (call.tool === 'run_check') {
+      if (primaryCalls.length !== 1) throw new Error('candidate run_check attempt must contain exactly one result');
       recorded = recordCandidateProjection({
         preparedCall, trustedSetupEvidence: trustedProductionSetup[call.tool],
         productionResult: call.result, productionResultBytes: call.resultBytes,
       });
     } else {
-      if (!Array.isArray(call.item.raw_pages) || call.item.raw_pages.length === 0) throw new Error('change_impact exact raw pages are missing');
-      const pages = call.item.raw_pages.map((page, index) => {
-        exactKeys(page, ['result', 'result_bytes_base64'], ['requestToken'], `raw page ${index}`);
-        const resultBytes = exactBase64(page.result_bytes_base64, `raw page ${index}`);
-        parseExactJSON(page.result, resultBytes, `raw page ${index}`);
-        return { ...(Object.hasOwn(page, 'requestToken') ? { requestToken: page.requestToken } : {}), result: page.result, resultBytes };
-      });
-      artifact = exactBase64(call.item.complete_artifact_base64, 'complete change_impact artifact');
+      let pages;
+      if (mcpWireDirectory === undefined) {
+        if (!Array.isArray(call.item.raw_pages) || call.item.raw_pages.length === 0) throw new Error('change_impact exact raw pages are missing');
+        pages = call.item.raw_pages.map((page, index) => {
+          exactKeys(page, ['result', 'result_bytes_base64'], ['requestToken'], `raw page ${index}`);
+          const resultBytes = exactBase64(page.result_bytes_base64, `raw page ${index}`);
+          parseExactJSON(page.result, resultBytes, `raw page ${index}`);
+          return { ...(Object.hasOwn(page, 'requestToken') ? { requestToken: page.requestToken } : {}), result: page.result, resultBytes };
+        });
+        artifact = exactBase64(call.item.complete_artifact_base64, 'complete change_impact artifact');
+      } else {
+        pages = primaryCalls.map((page, index) => {
+          if (index > 0) {
+            const expectedToken = primaryCalls[index - 1].result.continuation;
+            if (typeof expectedToken !== 'string' || page.request.continuation !== expectedToken
+              || Object.keys(page.request).some((key) => !['continuation', 'byte_budget'].includes(key))) {
+              throw new Error(`change_impact wire page ${index} has an invalid continuation request`);
+            }
+          }
+          return { ...(index > 0 ? { requestToken: page.request.continuation } : {}), result: page.result, resultBytes: page.resultBytes };
+        });
+        const descriptor = call.result.artifact;
+        if (!validArtifact(descriptor)) throw new Error('change_impact wire artifact descriptor is invalid');
+        artifact = await readFile(path.join(stateDirectory, 'evidence', `${descriptor.handle}.data`));
+        if (artifact.length !== descriptor.sizeBytes || sha256Hex(artifact) !== descriptor.sha256) {
+          throw new Error('change_impact retained artifact differs from its wire descriptor');
+        }
+      }
       const projected = projectProductionV2Result({
         tool: call.tool, frozenRequest: preparedCall.frozenRequest,
         rawV2Pages: pages.map(({ result, requestToken }, index) => ({
@@ -629,22 +784,20 @@ export async function collectAttemptEvidence(input) {
 }
 
 /** Actual provider metadata bytes are mandatory; requested model configuration is never read. */
-export async function observeProviderModel({ providerTraceBytes }) {
+export async function observeProviderModel({ providerTraceBytes, providerSSEBytes }) {
   const trace = bytes(providerTraceBytes, 'provider trace');
-  const events = jsonLines(trace, 'provider trace');
-  const metadata = events.filter((event) => event.type === 'provider.metadata');
-  if (metadata.length !== 1) throw new Error('actual provider metadata event is unavailable');
-  exactKeys(metadata[0], ['type', 'metadata_bytes_base64'], [], 'provider metadata event');
-  const metadataBytes = exactBase64(metadata[0].metadata_bytes_base64, 'provider metadata');
-  let value;
-  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(metadataBytes)); }
-  catch { throw new Error('provider metadata bytes are invalid JSON'); }
-  exactKeys(value, ['model_snapshot'], [], 'provider metadata');
-  if (typeof value.model_snapshot !== 'string' || value.model_snapshot.length === 0) {
-    throw new Error('actual provider model snapshot is unavailable');
+  const sse = bytes(providerSSEBytes, 'provider SSE trace');
+  const responseEvents = jsonLines(sse, 'provider SSE trace');
+  if (responseEvents.some(({ type }) => type !== 'response.created' && type !== 'response.completed')) {
+    throw new Error('provider SSE trace contains unrelated events');
+  }
+  const completed = responseEvents.filter(({ type }) => type === 'response.completed');
+  const models = new Set(responseEvents.map(({ response }) => response?.model));
+  if (completed.length === 0 || models.size !== 1 || typeof [...models][0] !== 'string' || [...models][0].length === 0) {
+    throw new Error('actual provider model snapshot is unavailable or inconsistent');
   }
   return canonicalJSONBytes({
-    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-metadata',
-    modelSnapshot: value.model_snapshot, providerTraceSHA256: sha256Hex(trace),
+    schema: 'aishell.provider-model-evidence.v1', source: 'codex-provider-sse',
+    modelSnapshot: [...models][0], providerTraceSHA256: sha256Hex(trace), providerSSETraceSHA256: sha256Hex(sse),
   });
 }

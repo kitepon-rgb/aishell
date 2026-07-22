@@ -8,3 +8,4 @@
 - [AIShell npm配布判断](npm-distribution.md) — native MCPと明示的app launcherによる副作用なしのglobal install、0.3.1配布判断と実測（2026-07-19、確度: 高）
 - [FSEvents永続checkpointの連続性](fsevents-persistent-checkpoint-continuity.md) — volume UUID、event ID巻戻り、drop、scan中eventをfail-closedなwarm restore契約へ反映（2026-07-21、確度: 高）
 - [FSEvents device timestamp boundaryの実測制約](fsevents-device-boundary-observation.md) — timestamp検索の6秒超遅延と、UUID＋processed callback IDを永続cursorに使う判断（2026-07-21、確度: 高）
+- [Codex provider SSE観測](codex-provider-sse-observability.md) — requested modelを使わずprovider WebSocket受信frameからactual modelを証明し、MCP original wire bytesと分離して保持する（2026-07-22、確度: 高）

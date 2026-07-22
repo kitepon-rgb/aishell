@@ -2,7 +2,7 @@
 
 ## 結論
 
-Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。ただし、凍結比較条件を満たす実model runはpreflightで3つの外部／入力blockerが確認されたため未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
+Phase 3のproduction受入網と54 attempt実行基盤は実装・focused検証済み。初回preflightの3 blockerのうちactual provider modelとMCP original bytesは正規観測面を追加して解消した。ただし、凍結fixtureのproduction profile入力不足は残るため実model runは未実施であり、ACE-035およびPhase 3は未受入のまま維持する。
 
 requested model名、合成profile、canonical再serializationを証拠の代用にしない。
 
@@ -29,7 +29,8 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 - Phase 3の6 task × 3 arm × 3 repetition = 54 attemptを固定seed順で生成する。
 - provider usageはraw JSONLの凍結carrierから再抽出し、recordとのexact一致を要求する。欠損・未知形式・自己申告差異はrun全体をinvalidにする。
 - candidate adapterはfrozen request、trusted setup、original production result bytes、artifactからproduction adapterを再実行し、v2 requestとprojectionを意味的にもexact照合する。
-- executorは実binary SHA、MCP `initialize`/`tools/list` raw bytes、workspace bytes、prompt、sandbox、host catalog、actual provider model evidenceをattemptごとに照合・保存する。
+- executorは実binary SHA、MCP `initialize`/`tools/list` raw bytes、workspace bytes、prompt、sandbox、host catalog、actual provider model evidenceをattemptごとに照合・保存する。actual modelは秘密を含み得る全target traceを使わず、`RUST_LOG=tungstenite::protocol=trace`のprovider WebSocket受信frameにある`response.created/completed.response.model`が全eventで一致する場合だけ採用する。対象frame JSONだけをstderrからbyte抽出した専用JSONLとstdout provider traceの両SHA-256へ結合し、WebSocket trace行自体は通常stderr成果物へ保存しない。
+- Codexが起動するAIShell MCPの前段に透過wire tapを置き、request/response stdio bytesを変更せず保存する。structured resultはoriginal JSON-RPC response内のvalue byte rangeを抽出し、retained artifactはwire descriptorのhandle、size、SHA-256と照合する。
 - aggregatorはrunner-validな54 attemptとexternal oracle、observer metrics、executor evidenceをexact joinする。failed attempt tokenもnumeratorへ含め、zero successは`positive_infinity`、task solvedは3反復全成功とする。
 - current/candidate/native間のcorrectness regression gateを持つ。
 - oracle値はsetup DTO、prompt、request、manifest、traceから除外する。
@@ -57,10 +58,16 @@ requested model名、合成profile、canonical再serializationを証拠の代用
 
 fake process/MCPを使うself-testは実model成功を主張しない。
 
-## 実行blocker
+## 解消したpreflight blocker
 
-1. Codex CLI 0.144.6のpreflight JSONLは`thread.started`、`turn.started`、`item.completed`、`turn.completed.usage`を返したが、actual provider model snapshot metadataを返さなかった。requested `gpt-5.6-sol`はactual evidenceの代用にしない。
-2. 凍結freshness-cache/focused-pipeline fixtureはproject manifestを含まず、production ProjectProfileServiceがprofile/checkを生成できない。合成catalog/checkは禁止する。
-3. Codex JSONLがMCP structured resultのoriginal bytes、change-impact raw pages、complete artifactをlosslessに保持する保証がない。canonical再serializationは禁止する。
+1. Codex CLI 0.144.6のstdout JSONLにはactual provider modelがなかったが、provider WebSocket受信frameにactual `response.model`とusageが存在することを実測し、`response.created/completed`だけをbyte抽出した専用provider SSE JSONLへのbinding付きparserを追加した。requested `gpt-5.6-sol`は引き続き代用しない。
+2. Codex JSONLはMCP resultをhost objectへ変換するが、透過stdio tapでAIShellのoriginal JSON-RPC bytesを保持できることを実Codex＋実AIShellで確認した。canonical再serializationは使わない。
+3. 実probeでharnessの`runtime.json.updatedAt`が不正形式だったことも発見し、固定ISO 8601値へ修正した。
 
-いずれかが解決するまでは54 model attemptを開始しない。解消後はcandidate commitを再freezeし、1 attempt preflight、54 attempt、external oracle aggregationの順で実行する。
+## 残る実行blocker
+
+凍結freshness-cache/focused-pipeline fixtureはproject manifestを含まず、production ProjectProfileServiceがprofile/checkを生成できない。さらにmanifestを単純追加しても解消しない。production npm providerのcheckは`npm run <kind> --`であり、`exactFixtureCheck`が要求する`node check.mjs`とは一致しない。またcomplete input contractはtest-only injectionがないrelease経路では`ineligible`になる。合成catalog/checkは禁止する。
+
+解消には、cache eligibleなprofile checkとclosed relevant-input contractをproduction manifestから宣言・検証する製品契約を追加するか、production providerの実command／eligibilityに合わせて凍結benchmark契約を正式改訂するowner裁定が必要。fixtureへのmanifest追加だけで通過扱いにしない。
+
+この入力契約を正式に改訂するまでは54 model attemptを開始しない。解消後はcandidate commitを再freezeし、1 attempt preflight、54 attempt、external oracle aggregationの順で実行する。

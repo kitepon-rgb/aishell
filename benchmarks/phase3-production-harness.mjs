@@ -228,14 +228,14 @@ export function createPhase3ProductionHarness(options) {
   };
 
   const observeAttempt = async (input) => {
-    const { attempt, workspace, runDirectory, baselineManifest, preAttemptManifest, setup, events,
+    const { attempt, workspace, stateDirectory, runDirectory, mcpWireDirectory, baselineManifest, preAttemptManifest, setup, events,
       toolTrace, finalAgent, execution } = input;
     const setupState = setupStates.get(attempt.attemptID);
     if (!setupState || canonicalJSONBytes(setup).toString('hex') !== canonicalJSONBytes(setupState.benchmarkSetupEvidence).toString('hex')) {
       throw new Error(`attempt setup binding is missing: ${attempt.attemptID}`);
     }
     const raw = await collectAttemptEvidence(Object.freeze({
-      attempt: structuredClone(attempt), workspace, runDirectory,
+      attempt: structuredClone(attempt), workspace, stateDirectory, runDirectory, mcpWireDirectory,
       baselineManifest: structuredClone(baselineManifest), preAttemptManifest: structuredClone(preAttemptManifest),
       benchmarkSetupEvidence: structuredClone(setupState.benchmarkSetupEvidence),
       trustedProductionSetup: structuredClone(setupState.trustedProductionSetup),
