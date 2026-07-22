@@ -44,7 +44,8 @@ struct ObservationJournalCheckpoint: Codable, Equatable, Sendable {
     }
 }
 
-struct ObservationJournal: Sendable {
+/// root-scoped retained delta log。readはheadや他consumerのcursorを進めない。
+struct WorkspaceDeltaJournal: Sendable {
     private(set) var generation: String
     private(set) var sequence: UInt64
     private(set) var lastEventID: UInt64?
@@ -157,3 +158,6 @@ struct ObservationJournal: Sendable {
         events.removeAll { $0.sequence <= appliedSequence }
     }
 }
+
+/// v1 checkpoint fixtureと既存内部testのsource互換名。
+typealias ObservationJournal = WorkspaceDeltaJournal

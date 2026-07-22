@@ -4,6 +4,51 @@ import XCTest
 @testable import AIShellCore
 
 final class WorkspaceStateRuntimeTests: XCTestCase {
+    func testWorkspaceDeltaViewSurvivesSnapshotConsumerAndRestart() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("State.swift")
+        try "let value = 1\n".write(to: file, atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store)
+        let initial = try await runtime.snapshot()
+
+        try "let value = 2\n".write(to: file, atomically: false, encoding: .utf8)
+        await runtime.ingestObservedPaths([file.path])
+        let first = try await runtime.workspaceDeltaObservation(path: root.path, fromCursor: initial.cursor)
+        _ = try await runtime.snapshot(sinceCursor: initial.cursor)
+        let second = try await runtime.workspaceDeltaObservation(path: root.path, fromCursor: initial.cursor)
+
+        let restarted = WorkspaceStateRuntime(runtimeStore: store)
+        let replayed = try await restarted.workspaceDeltaObservation(path: root.path, fromCursor: initial.cursor)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(replayed, first)
+        XCTAssertEqual(replayed.changedPaths, ["State.swift"])
+        XCTAssertGreaterThan(replayed.retentionFloorSequence, 0)
+        XCTAssertGreaterThanOrEqual(replayed.headSequence, replayed.retentionFloorSequence)
+    }
+
+    func testEffectiveRootProjectCatalogSelectsDeepestOwnerDeterministically() throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let outer = fixture.base.appendingPathComponent("owner", isDirectory: true)
+        let inner = outer.appendingPathComponent("project", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        let catalog = EffectiveRootProjectCatalog(rootURLs: [outer, inner])
+
+        let selected = try catalog.resolveOwner(for: inner.appendingPathComponent("Sources"))
+        let reordered = try EffectiveRootProjectCatalog(rootURLs: [inner, outer])
+            .resolveOwner(for: inner.appendingPathComponent("Sources"))
+
+        XCTAssertEqual(selected.root.path, inner.path)
+        XCTAssertEqual(selected.policyDigest, reordered.policyDigest)
+        XCTAssertEqual(selected.rootIdentity, reordered.rootIdentity)
+    }
+
     func testSnapshotDoesNotConsumeSearchObservationInterval() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
@@ -138,7 +183,7 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         XCTAssertLessThanOrEqual(readCount, 2)
     }
 
-    func testWarmRestartContinuesCheckpointCursorAndExpiresOlderSequence() async throws {
+    func testWarmRestartContinuesCheckpointCursorAndRetainsOlderConsumerInterval() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }
         let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
@@ -156,14 +201,9 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         let continued = try await restoredRuntime.snapshot(sinceCursor: checkpointCursor)
         XCTAssertEqual(continued.cursor, checkpointCursor)
         XCTAssertTrue(continued.changes.isEmpty)
-        do {
-            _ = try await restoredRuntime.snapshot(sinceCursor: initial.cursor)
-            XCTFail("checkpoint圧縮点より古いcursorへ履歴を捏造しました。")
-        } catch {
-            guard case AIShellError.cursorExpired = error else {
-                return XCTFail("想定外のエラー: \(error)")
-            }
-        }
+        let replayed = try await restoredRuntime.snapshot(sinceCursor: initial.cursor)
+        XCTAssertEqual(replayed.cursor, checkpointCursor)
+        XCTAssertTrue(replayed.changes.contains { $0.path == "State.swift" && $0.kind == .modified })
     }
 
     func testCorruptPersistentCheckpointFailsClosed() async throws {

@@ -206,7 +206,8 @@ public actor WorkspaceStateRuntime {
                 state.prefetchedEntries.removeValue(forKey: relative)
             }
             states[key] = state
-            try await persistCheckpoint(state, discardingEventsThrough: processedSequence)
+            // delta consumerの進捗はretained journalのackではない。restart後のfan-out用に全区間を保持する。
+            try await persistCheckpoint(state)
             let changedEntries = changes.compactMap(\.entry)
             let remainingPaths = Set(pendingEvents.filter { $0.sequence > processedSequence }.map(\.path))
             let git = try gitStatus(root: root)
@@ -505,31 +506,18 @@ public actor WorkspaceStateRuntime {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// 検索consumer向けに、retained observation journalを進めず同じ区間を再生する。
-    /// `snapshot(sinceCursor:)`と異なりeventを破棄せず、複数consumerが同じviewを読める。
-    public func searchContextObservation(
+    /// search、snapshot、wait共通のretained observation view。同じ区間のreadはjournalを消費しない。
+    public func workspaceDeltaObservation(
         path: String? = nil,
-        fromCursor: String,
-        testPaths: Set<String> = [],
-        testClassification: String = "unavailable",
-        projectProfileDigest: String? = nil
-    ) async throws -> SearchContextEnvironment {
+        fromCursor: String
+    ) async throws -> WorkspaceDeltaObservation {
         let resolver = try await activeResolver()
         let requested = try resolver.resolveExisting(path)
         guard try requested.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
             throw AIShellError.invalidPath(requested.path)
         }
-        let canonicalRequested = requested.standardizedFileURL.path
-        guard let root = resolver.rootURLs
-            .filter({ canonicalRequested == $0.path || canonicalRequested.hasPrefix($0.path + "/") })
-            .sorted(by: {
-                let leftDepth = $0.pathComponents.count
-                let rightDepth = $1.pathComponents.count
-                if leftDepth != rightDepth { return leftDepth > rightDepth }
-                return Data($0.path.utf8).lexicographicallyPrecedes(Data($1.path.utf8))
-            }).first else {
-            throw AIShellError.outsideAllowedRoot(requested.path)
-        }
+        let owner = try EffectiveRootProjectCatalog(rootURLs: resolver.rootURLs).resolveOwner(for: requested)
+        let root = owner.root
         let key = root.path
         if states[key] == nil {
             try await initialize(root: root, key: key, requestedCursor: fromCursor)
@@ -539,6 +527,9 @@ public actor WorkspaceStateRuntime {
         }
         drainObserver(for: key)
         guard var state = states[key] else { throw AIShellError.invalidPath(root.path) }
+        guard state.rootIdentity == owner.rootIdentity else {
+            throw AIShellError.rescanRequired("workspace root identity changed")
+        }
         if let reason = state.journal.rescanReason { throw AIShellError.rescanRequired(reason) }
 
         let parsed = try parseCursor(fromCursor)
@@ -578,26 +569,45 @@ public actor WorkspaceStateRuntime {
             return SearchContextIndexedFile(path: entry.path, fileIdentity: entry.identity, contentSHA256: sha256)
         }.sorted { Data($0.path.utf8).lexicographicallyPrecedes(Data($1.path.utf8)) }
         let throughCursor = cursor(for: state)
-        let configuration = try await runtimeStore.loadConfiguration()
-        let policyDigest = SHA256.hash(data: Data(configuration.allowedRootPaths.sorted().joined(separator: "\u{0}").utf8))
-            .map { String(format: "%02x", $0) }.joined()
         let changedDigest = SHA256.hash(data: Data(changedPaths.sorted().joined(separator: "\u{0}").utf8))
             .map { String(format: "%02x", $0) }.joined()
         let viewID = SHA256.hash(data: Data("\(state.rootIdentity)\u{0}\(fromCursor)\u{0}\(throughCursor)\u{0}\(changedDigest)".utf8))
             .map { String(format: "%02x", $0) }.joined()
 
-        return SearchContextEnvironment(
+        try await persistCheckpoint(state)
+        return WorkspaceDeltaObservation(
             effectiveRootIdentity: state.rootIdentity,
-            effectiveRootPolicyDigest: policyDigest,
-            workspaceCursor: throughCursor,
+            effectiveRootPolicyDigest: owner.policyDigest,
             observedFrom: fromCursor,
             observedThrough: throughCursor,
             observationViewID: viewID,
+            retentionFloorSequence: state.journal.events.first?.sequence ?? state.journal.sequence,
+            headSequence: state.journal.sequence,
             changedPaths: changedPaths,
+            indexedFiles: indexedFiles
+        )
+    }
+
+    public func searchContextObservation(
+        path: String? = nil,
+        fromCursor: String,
+        testPaths: Set<String> = [],
+        testClassification: String = "unavailable",
+        projectProfileDigest: String? = nil
+    ) async throws -> SearchContextEnvironment {
+        let view = try await workspaceDeltaObservation(path: path, fromCursor: fromCursor)
+        return SearchContextEnvironment(
+            effectiveRootIdentity: view.effectiveRootIdentity,
+            effectiveRootPolicyDigest: view.effectiveRootPolicyDigest,
+            workspaceCursor: view.observedThrough,
+            observedFrom: view.observedFrom,
+            observedThrough: view.observedThrough,
+            observationViewID: view.observationViewID,
+            changedPaths: view.changedPaths,
             testPaths: testPaths,
             testClassification: testClassification,
             projectProfileDigest: projectProfileDigest,
-            indexedFiles: indexedFiles,
+            indexedFiles: view.indexedFiles,
             isFresh: true
         )
     }
@@ -1085,15 +1095,8 @@ public actor WorkspaceStateRuntime {
         "ws2:\(state.rootDigest):\(state.exclusionDigest):\(state.journal.generation):\(sequence ?? state.journal.sequence)"
     }
 
-    private func persistCheckpoint(
-        _ state: RootState,
-        discardingEventsThrough compressedSequence: UInt64? = nil
-    ) async throws {
+    private func persistCheckpoint(_ state: RootState) async throws {
         let now = Date()
-        let persistedEvents = state.journal.events.filter { event in
-            guard let compressedSequence else { return true }
-            return event.sequence > compressedSequence
-        }
         let checkpoint = WorkspaceCheckpoint(
             rootPath: Self.canonicalPath(state.root.path).path,
             rootIdentity: state.rootIdentity,
@@ -1103,7 +1106,7 @@ public actor WorkspaceStateRuntime {
             generation: state.journal.generation,
             lastEventID: state.journal.lastEventID,
             journalSequence: state.journal.sequence,
-            journalEvents: persistedEvents,
+            journalEvents: state.journal.events,
             entries: state.entries.values.map(Self.checkpointEntry),
             createdAt: now,
             lastAccessedAt: now
