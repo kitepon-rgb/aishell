@@ -456,6 +456,74 @@ final class ProjectProfileServiceTests: XCTestCase {
         }
     }
 
+    func testResolveExactCheckReattestsCatalogAndRejectsProfileOrCheckMismatch() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try writePackage(at: root, name: "sample", scripts: ["test": "node --test"])
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime", isDirectory: true))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let service = ProjectProfileService(runtimeStore: store, workspaceRuntime: runtime)
+        let snapshot = try await runtime.snapshot()
+        let catalog = try await service.catalog(for: snapshot)
+        let profile = try XCTUnwrap(catalog.profiles.first)
+        let check = try XCTUnwrap(profile.checks.first)
+
+        let resolved = try await service.resolveExactCheck(
+            projectID: profile.projectId,
+            profileDigest: profile.profileDigest,
+            checkID: check.checkId
+        )
+        XCTAssertEqual(resolved.profile.projectId, profile.projectId)
+        XCTAssertEqual(resolved.check.checkId, check.checkId)
+        XCTAssertEqual(
+            (resolved.catalogRoot as NSString).resolvingSymlinksInPath,
+            (root.path as NSString).resolvingSymlinksInPath
+        )
+
+        do {
+            _ = try await service.resolveExactCheck(
+                projectID: profile.projectId,
+                profileDigest: String(repeating: "0", count: 64),
+                checkID: check.checkId
+            )
+            XCTFail("profile digest mismatchを受理しました")
+        } catch {
+            guard case ProjectProfileResolutionError.profileDigestChanged = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        do {
+            _ = try await service.resolveExactCheck(
+                projectID: profile.projectId,
+                profileDigest: profile.profileDigest,
+                checkID: "missing-check"
+            )
+            XCTFail("unknown checkを受理しました")
+        } catch {
+            guard case ProjectProfileResolutionError.checkNotFound("missing-check") = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testProductionProvidersKeepExecutionButDeclareRelevantInputEffectsIneligible() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try writePackage(at: root, name: "sample", scripts: ["test": "node --test"])
+        let service = try await makeService(root: root, fixture: fixture)
+        let result = try await service.catalog(rootPath: root.path, observedCursor: cursor(1))
+        let check = try XCTUnwrap(result.profiles.first?.checks.first)
+
+        XCTAssertFalse(check.executable.isEmpty)
+        XCTAssertEqual(check.inputContract.completeness, .ineligible)
+        XCTAssertEqual(check.inputContract.effectCompleteness, .unprovenExternalEffects)
+        XCTAssertEqual(check.inputContract.provider, "npm")
+        XCTAssertTrue(check.inputContract.reason?.contains("effect完全性") == true)
+    }
+
     private func workspace(in fixture: TemporaryFixture) throws -> URL {
         let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

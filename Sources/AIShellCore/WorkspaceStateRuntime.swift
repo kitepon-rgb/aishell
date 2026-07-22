@@ -2,6 +2,26 @@ import CryptoKit
 import Darwin
 import Foundation
 
+public struct WorkspaceRelevantInputObservation: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let providerVersion: String
+    public let projectRoot: String
+    public let projectRootIdentity: String
+    public let workspaceCursor: String
+    public let leafCount: Int
+    public let completeness: String
+    public let merkleDigest: String
+}
+
+public enum WorkspaceRelevantInputObservationError: Error, Equatable, Sendable {
+    case contractIneligible(String)
+    case invalidContractPath(String)
+    case projectRootIdentityChanged
+    case workspaceCursorChanged
+    case symlinkEncountered(String)
+    case observationChanged
+}
+
 public actor WorkspaceStateRuntime {
     public struct KnownMutation: Equatable, Sendable {
         public let kind: WorkspaceChangeKind
@@ -39,6 +59,7 @@ public actor WorkspaceStateRuntime {
     private let initializationEventsForTests: [ObservedFileEvent]
     private let rebuildHookForTests: (@Sendable () throws -> [ObservedFileEvent])?
     private let eventStoreUUIDProvider: @Sendable (URL) throws -> String?
+    private let relevantInputObservationHookForTests: (@Sendable () throws -> Void)?
     private var states: [String: RootState] = [:]
     private let journalLimit: Int
     private let stateLimit = 8
@@ -55,6 +76,7 @@ public actor WorkspaceStateRuntime {
         self.startsFSEvents = startsFSEvents
         initializationEventsForTests = []
         rebuildHookForTests = nil
+        relevantInputObservationHookForTests = nil
         eventStoreUUIDProvider = Self.eventStoreUUID
         self.journalLimit = max(1, journalLimit)
     }
@@ -65,13 +87,15 @@ public actor WorkspaceStateRuntime {
         journalLimit: Int = 10_000,
         initializationEventsForTests: [ObservedFileEvent],
         rebuildHookForTests: (@Sendable () throws -> [ObservedFileEvent])? = nil,
-        eventStoreUUIDProviderForTests: (@Sendable (URL) throws -> String?)? = nil
+        eventStoreUUIDProviderForTests: (@Sendable (URL) throws -> String?)? = nil,
+        relevantInputObservationHookForTests: (@Sendable () throws -> Void)? = nil
     ) {
         self.runtimeStore = runtimeStore
         checkpointStore = WorkspaceCheckpointStore(baseDirectory: runtimeStore.baseDirectory)
         self.startsFSEvents = startsFSEvents
         self.initializationEventsForTests = initializationEventsForTests
         self.rebuildHookForTests = rebuildHookForTests
+        self.relevantInputObservationHookForTests = relevantInputObservationHookForTests
         eventStoreUUIDProvider = eventStoreUUIDProviderForTests ?? Self.eventStoreUUID
         self.journalLimit = max(1, journalLimit)
     }
@@ -287,6 +311,198 @@ public actor WorkspaceStateRuntime {
             }
         }
         return result
+    }
+
+    /// bounded snapshotとは別に、contractが宣言したclosureをDirect OSから完全再観測する。
+    /// 同じleaf集合を二度測り、root identity / retained cursorを含めて一致した時だけ返す。
+    public func observeRelevantInputs(
+        ownerRootPath: String,
+        projectRootPath: String,
+        expectedProjectRootIdentity: String,
+        expectedCursor: String,
+        contract: ProjectProfileCheckInputContract
+    ) async throws -> WorkspaceRelevantInputObservation {
+        guard contract.schemaVersion == "aishell.project-profile-check-input.v1",
+              contract.completeness == .complete,
+              contract.effectCompleteness == .projectRootClosed else {
+            throw WorkspaceRelevantInputObservationError.contractIneligible(
+                contract.reason ?? "input/effect completenessが証明されていません"
+            )
+        }
+        let resolver = try await activeResolver()
+        let ownerRoot = try resolver.resolveExisting(ownerRootPath)
+        let projectRoot = try resolver.resolveExisting(projectRootPath)
+        guard Self.contains(projectRoot.path, in: ownerRoot.path) else {
+            throw AIShellError.outsideAllowedRoot(projectRoot.path)
+        }
+        guard try Self.fileIdentity(projectRoot) == expectedProjectRootIdentity else {
+            throw WorkspaceRelevantInputObservationError.projectRootIdentityChanged
+        }
+        try attestRelevantInputCursor(ownerRoot: ownerRoot, expectedCursor: expectedCursor)
+
+        let first = try Self.measureRelevantInputs(projectRoot: projectRoot, contract: contract)
+        try relevantInputObservationHookForTests?()
+        drainObserver(for: ownerRoot.path)
+        guard try Self.fileIdentity(projectRoot) == expectedProjectRootIdentity else {
+            throw WorkspaceRelevantInputObservationError.projectRootIdentityChanged
+        }
+        try attestRelevantInputCursor(ownerRoot: ownerRoot, expectedCursor: expectedCursor)
+        let second = try Self.measureRelevantInputs(projectRoot: projectRoot, contract: contract)
+        guard first == second else {
+            throw WorkspaceRelevantInputObservationError.observationChanged
+        }
+        return WorkspaceRelevantInputObservation(
+            schemaVersion: "aishell.relevant-input-observation.v1",
+            providerVersion: "direct-os-merkle-v1",
+            projectRoot: projectRoot.path,
+            projectRootIdentity: expectedProjectRootIdentity,
+            workspaceCursor: expectedCursor,
+            leafCount: first.leafCount,
+            completeness: "complete",
+            merkleDigest: first.digest
+        )
+    }
+
+    private func attestRelevantInputCursor(ownerRoot: URL, expectedCursor: String) throws {
+        guard let state = states[ownerRoot.path] else {
+            throw AIShellError.rescanRequired("workspace observation stateがありません")
+        }
+        if let reason = state.journal.rescanReason { throw AIShellError.rescanRequired(reason) }
+        guard cursor(for: state) == expectedCursor else {
+            throw WorkspaceRelevantInputObservationError.workspaceCursorChanged
+        }
+    }
+
+    private struct RelevantInputMeasurement: Equatable {
+        let leafCount: Int
+        let digest: String
+    }
+
+    private static func measureRelevantInputs(
+        projectRoot: URL,
+        contract: ProjectProfileCheckInputContract
+    ) throws -> RelevantInputMeasurement {
+        var leaves: [String: Data] = [:]
+        for path in contract.includedRoots + contract.trackedPaths {
+            let relative = try validatedContractPath(path)
+            let candidate = relative.isEmpty ? projectRoot : projectRoot.appendingPathComponent(relative)
+            guard contains(candidate.standardizedFileURL.path, in: projectRoot.path) else {
+                throw WorkspaceRelevantInputObservationError.invalidContractPath(path)
+            }
+            try measureRelevantNode(candidate, relative: relative, projectRoot: projectRoot, leaves: &leaves)
+        }
+        let ordered = leaves.keys.sorted(by: canonicalLess).compactMap { leaves[$0] }
+        var aggregate = Data("aishell.relevant-input-merkle.v1".utf8)
+        for leaf in ordered { appendLengthPrefixed(leaf, to: &aggregate) }
+        return RelevantInputMeasurement(leafCount: ordered.count, digest: sha256(aggregate))
+    }
+
+    private static func measureRelevantNode(
+        _ url: URL,
+        relative: String,
+        projectRoot: URL,
+        leaves: inout [String: Data]
+    ) throws {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else {
+            leaves["missing:\(relative)"] = canonicalLeaf("missing", [relative])
+            return
+        }
+        let kind = info.st_mode & S_IFMT
+        guard kind != S_IFLNK else {
+            throw WorkspaceRelevantInputObservationError.symlinkEncountered(relative)
+        }
+        guard contains(url.standardizedFileURL.path, in: projectRoot.path) else {
+            throw AIShellError.outsideAllowedRoot(url.path)
+        }
+        let identity = "\(info.st_dev):\(info.st_ino)"
+        let mode = String(info.st_mode, radix: 8)
+        if kind == S_IFDIR {
+            let children = try FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: nil,
+                options: []
+            ).sorted { canonicalLess($0.lastPathComponent, $1.lastPathComponent) }
+            var members: [String] = []
+            for child in children {
+                var childInfo = stat()
+                guard lstat(child.path, &childInfo) == 0 else {
+                    throw WorkspaceRelevantInputObservationError.observationChanged
+                }
+                let childKind = childInfo.st_mode & S_IFMT
+                guard childKind != S_IFLNK else {
+                    let childRelative = relative.isEmpty ? child.lastPathComponent : relative + "/" + child.lastPathComponent
+                    throw WorkspaceRelevantInputObservationError.symlinkEncountered(childRelative)
+                }
+                members.append("\(child.lastPathComponent)\u{0}\(childKind)\u{0}\(childInfo.st_dev):\(childInfo.st_ino)")
+            }
+            leaves["directory:\(relative)"] = canonicalLeaf("directory", [relative, identity, mode] + members)
+            for child in children {
+                let childRelative = relative.isEmpty ? child.lastPathComponent : relative + "/" + child.lastPathComponent
+                try measureRelevantNode(child, relative: childRelative, projectRoot: projectRoot, leaves: &leaves)
+            }
+        } else if kind == S_IFREG {
+            let hash = try hashCompleteFile(url)
+            var after = stat()
+            guard lstat(url.path, &after) == 0,
+                  after.st_dev == info.st_dev,
+                  after.st_ino == info.st_ino,
+                  after.st_mode == info.st_mode,
+                  after.st_size == info.st_size,
+                  after.st_mtimespec.tv_sec == info.st_mtimespec.tv_sec,
+                  after.st_mtimespec.tv_nsec == info.st_mtimespec.tv_nsec else {
+                throw WorkspaceRelevantInputObservationError.observationChanged
+            }
+            leaves["file:\(relative)"] = canonicalLeaf("file", [relative, identity, mode, hash])
+        } else {
+            throw WorkspaceRelevantInputObservationError.invalidContractPath(relative)
+        }
+    }
+
+    private static func validatedContractPath(_ path: String) throws -> String {
+        if path.isEmpty || path == "." { return "" }
+        guard !path.hasPrefix("/") else {
+            throw WorkspaceRelevantInputObservationError.invalidContractPath(path)
+        }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard !components.contains(".."), !components.contains("."),
+              !components.contains(where: \.isEmpty), !path.contains("\u{0}") else {
+            throw WorkspaceRelevantInputObservationError.invalidContractPath(path)
+        }
+        return path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+
+    private static func canonicalLeaf(_ domain: String, _ fields: [String]) -> Data {
+        var data = Data("aishell.relevant-input-leaf.v1".utf8)
+        appendLengthPrefixed(Data(domain.utf8), to: &data)
+        for field in fields { appendLengthPrefixed(Data(field.utf8), to: &data) }
+        return Data(SHA256.hash(data: data))
+    }
+
+    private static func appendLengthPrefixed(_ value: Data, to data: inout Data) {
+        var length = UInt64(value.count).bigEndian
+        withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
+        data.append(value)
+    }
+
+    private static func hashCompleteFile(_ url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func canonicalLess(_ lhs: String, _ rhs: String) -> Bool {
+        Data(lhs.utf8).lexicographicallyPrecedes(Data(rhs.utf8))
+    }
+
+    private static func sha256(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// 検索consumer向けに、retained observation journalを進めず同じ区間を再生する。

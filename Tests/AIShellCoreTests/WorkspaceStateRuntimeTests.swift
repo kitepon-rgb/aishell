@@ -1,4 +1,5 @@
 import CoreServices
+import Darwin
 import XCTest
 @testable import AIShellCore
 
@@ -821,5 +822,193 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
                 }
             }
         }
+    }
+
+    func testRelevantInputObservationHashesLargeFilesMembershipAndMissingLeaves() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        let inputs = root.appendingPathComponent("Inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        let large = inputs.appendingPathComponent("large.bin")
+        try Data(repeating: 0x41, count: 5 * 1_024 * 1_024).write(to: large)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let snapshot = try await runtime.snapshot()
+        let contract = ProjectProfileCheckInputContract.complete(
+            provider: "fixture",
+            providerVersion: "fixture-v1",
+            includedRoots: ["Inputs"],
+            trackedPaths: ["optional.json"]
+        )
+
+        let first = try await runtime.observeRelevantInputs(
+            ownerRootPath: root.path,
+            projectRootPath: root.path,
+            expectedProjectRootIdentity: try rootIdentity(root),
+            expectedCursor: snapshot.cursor,
+            contract: contract
+        )
+        try Data(repeating: 0x42, count: 5 * 1_024 * 1_024).write(to: large)
+        let second = try await runtime.observeRelevantInputs(
+            ownerRootPath: root.path,
+            projectRootPath: root.path,
+            expectedProjectRootIdentity: try rootIdentity(root),
+            expectedCursor: snapshot.cursor,
+            contract: contract
+        )
+
+        XCTAssertEqual(first.leafCount, 3)
+        XCTAssertEqual(first.completeness, "complete")
+        XCTAssertNotEqual(first.merkleDigest, second.merkleDigest)
+    }
+
+    func testRelevantInputObservationDetectsMembershipAndMissingToPresentTransition() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        let inputs = root.appendingPathComponent("Inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let snapshot = try await runtime.snapshot()
+        let contract = ProjectProfileCheckInputContract.complete(
+            provider: "fixture",
+            providerVersion: "fixture-v1",
+            includedRoots: ["Inputs"],
+            trackedPaths: ["optional.json"]
+        )
+        let before = try await runtime.observeRelevantInputs(
+            ownerRootPath: root.path, projectRootPath: root.path,
+            expectedProjectRootIdentity: try rootIdentity(root), expectedCursor: snapshot.cursor,
+            contract: contract
+        )
+        try "member\n".write(to: inputs.appendingPathComponent("new.txt"), atomically: true, encoding: .utf8)
+        try "present\n".write(to: root.appendingPathComponent("optional.json"), atomically: true, encoding: .utf8)
+        let after = try await runtime.observeRelevantInputs(
+            ownerRootPath: root.path, projectRootPath: root.path,
+            expectedProjectRootIdentity: try rootIdentity(root), expectedCursor: snapshot.cursor,
+            contract: contract
+        )
+        XCTAssertEqual(before.leafCount, 2)
+        XCTAssertEqual(after.leafCount, 3)
+        XCTAssertNotEqual(before.merkleDigest, after.merkleDigest)
+    }
+
+    func testRelevantInputObservationRejectsSymlinkAndCursorDrift() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        let inputs = root.appendingPathComponent("Inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: inputs.appendingPathComponent("escape"),
+            withDestinationURL: fixture.base
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let snapshot = try await runtime.snapshot()
+        let contract = ProjectProfileCheckInputContract.complete(provider: "fixture", providerVersion: "fixture-v1", includedRoots: ["Inputs"])
+
+        do {
+            _ = try await runtime.observeRelevantInputs(
+                ownerRootPath: root.path, projectRootPath: root.path,
+                expectedProjectRootIdentity: try rootIdentity(root), expectedCursor: snapshot.cursor,
+                contract: contract
+            )
+            XCTFail("symlinkをcomplete closureへ含めました")
+        } catch {
+            guard case WorkspaceRelevantInputObservationError.symlinkEncountered("Inputs/escape") = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+        try FileManager.default.removeItem(at: inputs.appendingPathComponent("escape"))
+        do {
+            _ = try await runtime.observeRelevantInputs(
+                ownerRootPath: root.path, projectRootPath: root.path,
+                expectedProjectRootIdentity: try rootIdentity(root), expectedCursor: snapshot.cursor + "-drift",
+                contract: contract
+            )
+            XCTFail("cursor driftを受理しました")
+        } catch {
+            guard case WorkspaceRelevantInputObservationError.workspaceCursorChanged = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testRelevantInputObservationFailsWhenTreeChangesBetweenPasses() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        let inputs = root.appendingPathComponent("Inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        let file = inputs.appendingPathComponent("value.txt")
+        try "before\n".write(to: file, atomically: true, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(
+            runtimeStore: store,
+            startsFSEvents: false,
+            initializationEventsForTests: [],
+            relevantInputObservationHookForTests: {
+                try "after\n".write(to: file, atomically: true, encoding: .utf8)
+            }
+        )
+        let snapshot = try await runtime.snapshot()
+        do {
+            _ = try await runtime.observeRelevantInputs(
+                ownerRootPath: root.path, projectRootPath: root.path,
+                expectedProjectRootIdentity: try rootIdentity(root), expectedCursor: snapshot.cursor,
+                contract: .complete(provider: "fixture", providerVersion: "fixture-v1", includedRoots: ["Inputs"])
+            )
+            XCTFail("二重観測間の変更を受理しました")
+        } catch {
+            guard case WorkspaceRelevantInputObservationError.observationChanged = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    func testRelevantInputObservationFailsWhenRootIdentityChangesBetweenPasses() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        let displaced = fixture.base.appendingPathComponent("displaced", isDirectory: true)
+        let inputs = root.appendingPathComponent("Inputs", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputs, withIntermediateDirectories: true)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(
+            runtimeStore: store,
+            startsFSEvents: false,
+            initializationEventsForTests: [],
+            relevantInputObservationHookForTests: {
+                try FileManager.default.moveItem(at: root, to: displaced)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            }
+        )
+        let snapshot = try await runtime.snapshot()
+        do {
+            _ = try await runtime.observeRelevantInputs(
+                ownerRootPath: root.path, projectRootPath: root.path,
+                expectedProjectRootIdentity: try rootIdentity(root), expectedCursor: snapshot.cursor,
+                contract: .complete(provider: "fixture", providerVersion: "fixture-v1", includedRoots: ["Inputs"])
+            )
+            XCTFail("観測中のroot identity変更を受理しました")
+        } catch {
+            guard case WorkspaceRelevantInputObservationError.projectRootIdentityChanged = error else {
+                return XCTFail("想定外のエラー: \(error)")
+            }
+        }
+    }
+
+    private func rootIdentity(_ url: URL) throws -> String {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { throw AIShellError.invalidPath(url.path) }
+        return "\(info.st_dev):\(info.st_ino)"
     }
 }

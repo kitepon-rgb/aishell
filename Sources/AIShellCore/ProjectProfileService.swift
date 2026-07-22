@@ -38,6 +38,76 @@ public struct ProjectProfileTarget: Codable, Equatable, Sendable {
     public let provenance: ProjectProfileProvenance
 }
 
+public enum ProjectProfileCheckInputCompleteness: String, Codable, Equatable, Sendable {
+    case complete
+    case ineligible
+}
+
+public enum ProjectProfileCheckEffectCompleteness: String, Codable, Equatable, Sendable {
+    case projectRootClosed = "project_root_closed"
+    case unprovenExternalEffects = "unproven_external_effects"
+}
+
+/// checkの再利用可否を決めるversioned closed contract。
+/// `complete`はlisted rootとmissing pathがproject root内で閉じ、実行effectもroot内で閉じる場合だけ許す。
+public struct ProjectProfileCheckInputContract: Codable, Equatable, Sendable {
+    public let schemaVersion: String
+    public let completeness: ProjectProfileCheckInputCompleteness
+    public let provider: String
+    public let providerVersion: String
+    public let includedRoots: [String]
+    /// 現在はmissingでも将来の出現を検知すべき個別path。存在時は通常nodeとして測る。
+    public let trackedPaths: [String]
+    public let effectCompleteness: ProjectProfileCheckEffectCompleteness
+    public let reason: String?
+
+    public init(
+        schemaVersion: String = "aishell.project-profile-check-input.v1",
+        completeness: ProjectProfileCheckInputCompleteness,
+        provider: String,
+        providerVersion: String,
+        includedRoots: [String] = [],
+        trackedPaths: [String] = [],
+        effectCompleteness: ProjectProfileCheckEffectCompleteness,
+        reason: String? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.completeness = completeness
+        self.provider = provider
+        self.providerVersion = providerVersion
+        self.includedRoots = includedRoots
+        self.trackedPaths = trackedPaths
+        self.effectCompleteness = effectCompleteness
+        self.reason = reason
+    }
+
+    public static func complete(
+        provider: String,
+        providerVersion: String,
+        includedRoots: [String],
+        trackedPaths: [String] = []
+    ) -> Self {
+        Self(
+            completeness: .complete,
+            provider: provider,
+            providerVersion: providerVersion,
+            includedRoots: includedRoots,
+            trackedPaths: trackedPaths,
+            effectCompleteness: .projectRootClosed
+        )
+    }
+
+    public static func ineligible(provider: String, providerVersion: String, reason: String) -> Self {
+        Self(
+            completeness: .ineligible,
+            provider: provider,
+            providerVersion: providerVersion,
+            effectCompleteness: .unprovenExternalEffects,
+            reason: reason
+        )
+    }
+}
+
 public struct ProjectProfileCheck: Codable, Equatable, Sendable {
     public let checkId: String
     public let kind: String
@@ -47,6 +117,66 @@ public struct ProjectProfileCheck: Codable, Equatable, Sendable {
     public let workingDirectory: String
     public let environmentKeys: [String]
     public let provenance: ProjectProfileProvenance
+    public let inputContract: ProjectProfileCheckInputContract
+
+    public init(
+        checkId: String,
+        kind: String,
+        label: String,
+        executable: String,
+        arguments: [String],
+        workingDirectory: String,
+        environmentKeys: [String],
+        provenance: ProjectProfileProvenance,
+        inputContract: ProjectProfileCheckInputContract = .ineligible(
+            provider: "unspecified",
+            providerVersion: "unknown",
+            reason: "relevant input closureと実行effectの完全性が宣言されていません"
+        )
+    ) {
+        self.checkId = checkId
+        self.kind = kind
+        self.label = label
+        self.executable = executable
+        self.arguments = arguments
+        self.workingDirectory = workingDirectory
+        self.environmentKeys = environmentKeys
+        self.provenance = provenance
+        self.inputContract = inputContract
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case checkId, kind, label, executable, arguments, workingDirectory, environmentKeys, provenance, inputContract
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        checkId = try container.decode(String.self, forKey: .checkId)
+        kind = try container.decode(String.self, forKey: .kind)
+        label = try container.decode(String.self, forKey: .label)
+        executable = try container.decode(String.self, forKey: .executable)
+        arguments = try container.decode([String].self, forKey: .arguments)
+        workingDirectory = try container.decode(String.self, forKey: .workingDirectory)
+        environmentKeys = try container.decode([String].self, forKey: .environmentKeys)
+        provenance = try container.decode(ProjectProfileProvenance.self, forKey: .provenance)
+        inputContract = try container.decodeIfPresent(ProjectProfileCheckInputContract.self, forKey: .inputContract)
+            ?? .ineligible(provider: "legacy", providerVersion: "unknown", reason: "保存済みprofileにinput contractがありません")
+    }
+}
+
+public struct ProjectProfileCheckResolution: Equatable, Sendable {
+    public let catalogRoot: String
+    public let observedCursor: String
+    public let profile: ProjectProfile
+    public let check: ProjectProfileCheck
+}
+
+public enum ProjectProfileResolutionError: Error, Equatable, Sendable {
+    case projectNotFound(String)
+    case projectAmbiguous(String)
+    case profileDigestChanged(expected: String, actual: String)
+    case checkNotFound(String)
+    case checkAmbiguous(String)
 }
 
 public struct ProjectProfileToolchain: Codable, Equatable, Sendable {
@@ -220,6 +350,7 @@ public actor ProjectProfileService {
     private var cacheLoaded = false
     private var providerInvocationCounts: [String: Int] = [:]
     private var toolchainProbeCache: [String: ProjectProfileToolchain] = [:]
+    private var inputContractsForTests: [String: ProjectProfileCheckInputContract] = [:]
 
     private static let providers = [
         ProviderSpec(ecosystem: "swiftpm", manifest: "Package.swift", related: ["Package.resolved"], fullySupported: true),
@@ -384,6 +515,54 @@ public actor ProjectProfileService {
         )
     }
 
+    /// cacheはroot発見の索引にだけ使い、返すprofile/checkはfresh workspace snapshotから再構成する。
+    public func resolveExactCheck(
+        projectID: String,
+        profileDigest: String,
+        checkID: String,
+        sinceCursor: String? = nil
+    ) async throws -> ProjectProfileCheckResolution {
+        try loadCacheIfNeeded()
+        let candidates = cache.values.filter { $0.profile.projectId == projectID }
+        guard !candidates.isEmpty else { throw ProjectProfileResolutionError.projectNotFound(projectID) }
+        let ownerRoots = Set(candidates.map(\.ownerRootPath))
+        guard ownerRoots.count == 1, let ownerRoot = ownerRoots.first else {
+            throw ProjectProfileResolutionError.projectAmbiguous(projectID)
+        }
+        let observationBase = sinceCursor
+            ?? candidates.first(where: { $0.profile.profileDigest == profileDigest })?.profile.observedCursor
+            ?? candidates[0].profile.observedCursor
+        let snapshot = try await workspaceRuntime.snapshot(
+            path: ownerRoot,
+            sinceCursor: observationBase,
+            entryLimit: 1,
+            contextBudget: 0
+        )
+        let fresh = try await catalog(for: snapshot)
+        let profiles = fresh.profiles.filter { $0.projectId == projectID }
+        guard profiles.count == 1, let profile = profiles.first else {
+            if profiles.isEmpty { throw ProjectProfileResolutionError.projectNotFound(projectID) }
+            throw ProjectProfileResolutionError.projectAmbiguous(projectID)
+        }
+        guard profile.profileDigest == profileDigest else {
+            throw ProjectProfileResolutionError.profileDigestChanged(
+                expected: profileDigest,
+                actual: profile.profileDigest
+            )
+        }
+        let checks = profile.checks.filter { $0.checkId == checkID }
+        guard checks.count == 1, let check = checks.first else {
+            if checks.isEmpty { throw ProjectProfileResolutionError.checkNotFound(checkID) }
+            throw ProjectProfileResolutionError.checkAmbiguous(checkID)
+        }
+        return ProjectProfileCheckResolution(
+            catalogRoot: fresh.root,
+            observedCursor: fresh.observedCursor,
+            profile: profile,
+            check: check
+        )
+    }
+
     public func invalidateAll() throws {
         cache.removeAll()
         cacheLoaded = true
@@ -394,6 +573,14 @@ public actor ProjectProfileService {
 
     func providerInvocationCountForTests(_ ecosystem: String) -> Int {
         providerInvocationCounts[ecosystem, default: 0]
+    }
+
+    func setInputContractForTests(
+        ecosystem: String,
+        kind: String,
+        contract: ProjectProfileCheckInputContract
+    ) {
+        inputContractsForTests["\(ecosystem)\u{0}\(kind)"] = contract
     }
 
     private func loadCacheIfNeeded() throws {
@@ -817,7 +1004,14 @@ public actor ProjectProfileService {
             checkId: id, kind: kind, label: key,
             executable: executable, arguments: arguments,
             workingDirectory: candidate.projectRoot.path,
-            environmentKeys: environmentKeys, provenance: provenance
+            environmentKeys: environmentKeys,
+            provenance: provenance,
+            inputContract: inputContractsForTests["\(candidate.spec.ecosystem)\u{0}\(kind)"]
+                ?? .ineligible(
+                    provider: candidate.spec.ecosystem,
+                    providerVersion: providerVersion,
+                    reason: "providerはnetwork・project root外・生成物directoryへのeffect完全性を証明しません"
+                )
         )
     }
 
