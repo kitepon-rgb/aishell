@@ -30,11 +30,13 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
     func testExpandedCatalogAddsImplementedCapabilityToolsInContractOrder() throws {
         let expanded = try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1")
         XCTAssertEqual(expanded.map(\.name), [
-            "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
-            "change_impact", "run_observe", "workspace_wait", "apply_change_set",
+            "run_check", "run_observe", "artifact_read", "workspace_snapshot", "workspace_wait",
+            "read_context", "search_context", "change_impact", "apply_change_set",
             "runtime_status", "runtime_open_manager"
         ])
-        XCTAssertEqual(try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1").count, 29)
+        let full = try ToolCatalog.listedTools(profile: "full", capabilitySet: "expanded-v1")
+        XCTAssertEqual(full.count, 29)
+        XCTAssertEqual(Array(full.prefix(11).map(\.name)), expanded.map(\.name))
         let observe = tool("run_observe", in: expanded)
         XCTAssertFalse(observe.annotations.readOnlyHint)
         XCTAssertTrue(observe.annotations.destructiveHint)
@@ -46,6 +48,7 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         let impact = tool("change_impact", in: expanded)
         XCTAssertTrue(impact.annotations.readOnlyHint)
         XCTAssertTrue(impact.annotations.idempotentHint)
+        XCTAssertTrue(expanded.prefix(9).allSatisfy { $0.description.contains(".") })
         XCTAssertFalse(impact.annotations.destructiveHint)
     }
 

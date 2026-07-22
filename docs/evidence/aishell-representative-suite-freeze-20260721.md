@@ -23,6 +23,11 @@ ACE-002で、実装前の比較契約を次のファイルへ固定した。
 - request contract schema SHA-256: `b300beeb230fc0248fdb3f2e6adebaad42a5a212bc670658aedd3b5c915a75a9`
 - setup evidence schema SHA-256: `c3707cd9e451c1d676c8a4b96212c4b50bdf0c92a487661df189c41b66555317`
 - discovery probes SHA-256: `bf1c225e163599e4d9c088dc948a535401ea64fe89c34490a11851a17c1b8678`
+
+ACE-065では、値未指定だったcursor・file・edit bindingを自己完結させ、schema上必要な前処理callとrouting誤りを
+分離する受入規則へversioned amendmentした。現行probe SHA-256は
+`1f97231b52e837973ecefbad42c75422248e631083691a9d4b8e326f96597542`であり、上記Phase 0 freeze値は
+当時の履歴証拠として残す。
 - discovery prompt renderer SHA-256: `6e1240aa4a287714d158e39cf29eb2e2c07008b7654ddbdab2143e2eb3014f2f`
 - discovery evaluator SHA-256: `de840e0be0cd0d9b66abadf53698b80410a42560de64daa9939558a0bb0869ab`
 - validator: `node benchmarks/validate-representative-suite.mjs`

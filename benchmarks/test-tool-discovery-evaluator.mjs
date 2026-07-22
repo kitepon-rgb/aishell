@@ -16,10 +16,13 @@ for (const probe of contract.probes) {
   for (const tool of toolNames) assert.equal(rendered.includes(tool), false, `model inputへtool識別子を含めない: ${probe.id}/${tool}`);
 }
 assert.equal(evaluateDiscoveryProbe({probeId:'en-run-check',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[{tool:'run_check'}]}}).passed, true);
+assert.equal(evaluateDiscoveryProbe({probeId:'en-run-check',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[{tool:'workspace_snapshot'},{tool:'run_check'}]}}).passed, true);
+assert.equal(evaluateDiscoveryProbe({probeId:'en-run-check',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[{tool:'run_check'},{tool:'workspace_snapshot'}]}}).passed, false);
 assert.equal(evaluateDiscoveryProbe({probeId:'en-run-check',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[{tool:'run_check'},{tool:'run_check'}]}}).passed, false);
 assert.equal(evaluateDiscoveryProbe({probeId:'en-run-check',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[{tool:'artifact_read'}]}}).passed, false);
+assert.equal(evaluateDiscoveryProbe({probeId:'en-run-check',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[{tool:'artifact_read'},{tool:'run_check'}]}}).passed, false);
 assert.equal(evaluateDiscoveryProbe({probeId:'ja-no-call-control',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'ja-no-call-control',calls:[]}}).passed, true);
 assert.equal(evaluateDiscoveryProbe({probeId:'ja-no-call-control',armId:'candidate',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'ja-no-call-control',calls:[{tool:'workspace_snapshot'}]}}).passed, false);
 assert.throws(() => evaluateDiscoveryProbe({probeId:'en-run-check',armId:'native',trace:{schema:'aishell.tool-discovery-trace.v1',probeId:'en-run-check',calls:[]}}), /not applicable/u);
 
-process.stdout.write('{"schema":"aishell.tool_discovery_evaluator_self_test.v1","cases":6,"oracle_leakage":0,"status":"valid"}\n');
+process.stdout.write('{"schema":"aishell.tool_discovery_evaluator_self_test.v1","cases":9,"oracle_leakage":0,"status":"valid"}\n');

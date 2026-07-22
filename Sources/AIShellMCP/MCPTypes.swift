@@ -243,6 +243,11 @@ enum ToolCatalog {
     static let implementedExpandedToolNames: Set<String> = [
         "change_impact", "run_observe", "apply_change_set", "workspace_wait"
     ]
+    static let expandedDevelopmentToolOrder = [
+        "run_check", "run_observe", "artifact_read", "workspace_snapshot", "workspace_wait",
+        "read_context", "search_context", "change_impact", "apply_change_set"
+    ]
+    static let controlToolOrder = ["runtime_status", "runtime_open_manager"]
     static let controlToolNames: Set<String> = [
         "runtime_status", "runtime_open_manager"
     ]
@@ -255,29 +260,38 @@ enum ToolCatalog {
         case "expanded-v1": expanded = true
         case let value?: throw MCPStartupError.invalidCapabilitySet(value)
         }
-        let visibleNames = expanded
-            ? defaultToolNames.union(implementedExpandedToolNames)
-            : defaultToolNames
         let catalog = expanded ? expandedTools : tools
+        if expanded {
+            let byName = Dictionary(uniqueKeysWithValues: catalog.map { ($0.name, $0) })
+            let highDensity = expandedDevelopmentToolOrder + controlToolOrder
+            if profile == "full" || profile == "legacy" {
+                let fullOnly = tools.map(\.name).filter {
+                    !developmentToolNames.contains($0) && !controlToolNames.contains($0)
+                        && !implementedExpandedToolNames.contains($0)
+                }
+                return (highDensity + fullOnly).compactMap { byName[$0] }
+            }
+            return highDensity.compactMap { byName[$0].map(compactTool) }
+        }
         switch profile {
         case "full", "legacy":
-            return expanded ? catalog : catalog.filter { !implementedExpandedToolNames.contains($0.name) }
+            return catalog.filter { !implementedExpandedToolNames.contains($0.name) }
         default:
-            return catalog.filter { visibleNames.contains($0.name) }.map(compactTool)
+            return catalog.filter { defaultToolNames.contains($0.name) }.map(compactTool)
         }
     }
 
     private static func compactTool(_ tool: MCPTool) -> MCPTool {
         let descriptions = [
-            "run_check": "直接実行し、短い成否・診断と完全log handleを返す。",
-            "artifact_read": "artifactをrange、tail、pattern周辺でbudget読取する。",
-            "workspace_snapshot": "初回状態のbounded previewと埋込context、以後のFSEvents deltaを返す。",
-            "read_context": "複数fileを共有byte budgetとcontinuationで読む。",
-            "search_context": "rg workerで変更近接性付きbounded検索を行う。",
-            "change_impact": "OS現在状態へ束縛した変更影響候補とfocused check候補を返す。",
-            "run_observe": "managed runの状態・増分証拠・待機・取消を扱う。",
-            "apply_change_set": "複数file変更を一つのdurable transactionとして適用する。",
-            "workspace_wait": "cursor以後のfilesystem変更を消費せず、期限付きで待つ。"
+            "run_check": "大量診断を完全保持するrepository test/compiler/lintはshellでなくこれを使う。 Use this instead of shell for repository tests, compilers, or linters whose complete noisy diagnostics must be retained.",
+            "run_observe": "既存AIShell runの待機・増分診断・取消は新規実行やworkspace待機でなくこれを使う。 Use this to wait for, read incremental diagnostics from, or cancel an existing AIShell run; do not start a new run or wait on a workspace cursor.",
+            "artifact_read": "保持済みrun log/artifactの検索・比較・budget読取はsource file読取でなくこれを使う。 Use this to search, compare, or budget-read retained run logs and artifacts, not source files.",
+            "workspace_snapshot": "現在のworkspace、Git/branch差分、project commandの統合要約は個別検索でなくこれを使う。 Use this for one integrated summary of the current workspace, Git/branch differences, and project commands.",
+            "workspace_wait": "workspace cursor以後のfile変更待機はpollingやrun待機でなくこれを使う。 Use this to wait for file changes after a workspace cursor without polling; it does not observe a managed run.",
+            "read_context": "複数file/symbol rangeを一つの共有budgetとexpected SHAで読む時に使う。 Use this to read multiple files or symbol ranges under one shared byte budget with expected SHA guards.",
+            "search_context": "複数regex/固定文字列queryを変更file/test優先で一括検索する時に使う。 Use this to batch regex and fixed-string searches while prioritizing changed files and tests.",
+            "change_impact": "変更が影響するsymbol、dependency、testと根拠の解析は検索やsnapshotでなくこれを使う。 Use this to explain affected symbols, dependencies, tests, and evidence rather than merely searching or snapshotting.",
+            "apply_change_set": "expected SHA付きmulti-file編集をatomic適用し結果diffを得る時に使う。 Use this to atomically apply expected-SHA-guarded edits across multiple files and return the resulting diff."
         ]
         return MCPTool(
             name: tool.name,

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "aishell.tool-discovery-probes.v1",
-  "acceptance": {"applicableArm":"candidate","requiredPasses":20,"maximumMisroutes":0,"maximumUnnecessaryCalls":0},
+  "acceptance": {"applicableArm":"candidate","requiredPasses":20,"maximumMisroutes":0,"maximumUnnecessaryCalls":0,"supportingCalls":"allowed_before_expected"},
   "probes": [
     {"id":"en-run-check","language":"en","prompt":"Run the repository test and retain the complete noisy diagnostics.","expectedTool":"run_check","forbiddenTools":["run_observe","artifact_read"],"callRequired":true},
     {"id":"ja-run-check","language":"ja","prompt":"大量の診断を完全保存しながらrepository testを実行して。","expectedTool":"run_check","forbiddenTools":["run_observe","artifact_read"],"callRequired":true},
@@ -10,16 +10,16 @@
     {"id":"ja-artifact-read","language":"ja","prompt":"直近2回の保持logをroot error周辺で比較して。","expectedTool":"artifact_read","forbiddenTools":["read_context","run_observe"],"callRequired":true},
     {"id":"en-workspace-snapshot","language":"en","prompt":"Summarize the current workspace, Git diff, project commands, and branch worktree differences.","expectedTool":"workspace_snapshot","forbiddenTools":["workspace_wait","change_impact"],"callRequired":true},
     {"id":"ja-workspace-snapshot","language":"ja","prompt":"現在のworkspace、Git差分、project command、branch worktree差分をまとめて。","expectedTool":"workspace_snapshot","forbiddenTools":["workspace_wait","change_impact"],"callRequired":true},
-    {"id":"en-workspace-wait","language":"en","prompt":"Wait until files change after this workspace cursor without polling.","expectedTool":"workspace_wait","forbiddenTools":["workspace_snapshot","run_observe"],"callRequired":true},
-    {"id":"ja-workspace-wait","language":"ja","prompt":"このworkspace cursor以後にfileが変わるまでpollせず待って。","expectedTool":"workspace_wait","forbiddenTools":["workspace_snapshot","run_observe"],"callRequired":true},
-    {"id":"en-read-context","language":"en","prompt":"Read these files and symbol ranges under one shared byte budget.","expectedTool":"read_context","forbiddenTools":["search_context","artifact_read"],"callRequired":true},
-    {"id":"ja-read-context","language":"ja","prompt":"これらのfileとsymbol rangeを一つの共有byte budgetで読んで。","expectedTool":"read_context","forbiddenTools":["search_context","artifact_read"],"callRequired":true},
+    {"id":"en-workspace-wait","language":"en","prompt":"Wait for file changes after the valid workspace cursor already bound by the host, without polling; no new snapshot is needed.","expectedTool":"workspace_wait","forbiddenTools":["workspace_snapshot","run_observe"],"callRequired":true},
+    {"id":"ja-workspace-wait","language":"ja","prompt":"hostが既に束縛した有効なworkspace cursor以後にfileが変わるまでpollせず待って。新しいsnapshotは不要です。","expectedTool":"workspace_wait","forbiddenTools":["workspace_snapshot","run_observe"],"callRequired":true},
+    {"id":"en-read-context","language":"en","prompt":"Read Package.swift and the fixtureValue symbol range under one shared byte budget.","expectedTool":"read_context","forbiddenTools":["search_context","artifact_read"],"callRequired":true},
+    {"id":"ja-read-context","language":"ja","prompt":"Package.swiftとfixtureValueのsymbol rangeを一つの共有byte budgetで読んで。","expectedTool":"read_context","forbiddenTools":["search_context","artifact_read"],"callRequired":true},
     {"id":"en-search-context","language":"en","prompt":"Run these regex and fixed-string searches together, prioritizing changed files and tests.","expectedTool":"search_context","forbiddenTools":["read_context","change_impact"],"callRequired":true},
     {"id":"ja-search-context","language":"ja","prompt":"regexと固定文字列をまとめて検索し、変更fileとtestを優先して。","expectedTool":"search_context","forbiddenTools":["read_context","change_impact"],"callRequired":true},
     {"id":"en-change-impact","language":"en","prompt":"Explain which symbols, dependencies, and tests are affected by these changes and why.","expectedTool":"change_impact","forbiddenTools":["workspace_snapshot","search_context"],"callRequired":true},
     {"id":"ja-change-impact","language":"ja","prompt":"この変更が影響するsymbol、dependency、testと根拠を説明して。","expectedTool":"change_impact","forbiddenTools":["workspace_snapshot","search_context"],"callRequired":true},
-    {"id":"en-apply-change-set","language":"en","prompt":"Apply these SHA-guarded edits to three files atomically and return the resulting diff.","expectedTool":"apply_change_set","forbiddenTools":["read_context","workspace_snapshot"],"callRequired":true},
-    {"id":"ja-apply-change-set","language":"ja","prompt":"SHAで保護した3 fileの編集をatomicに適用し、結果diffを返して。","expectedTool":"apply_change_set","forbiddenTools":["read_context","workspace_snapshot"],"callRequired":true},
+    {"id":"en-apply-change-set","language":"en","prompt":"The host already bound three edit payloads and their expected SHA values. Apply them atomically and return the resulting diff without reading or snapshotting first.","expectedTool":"apply_change_set","forbiddenTools":["read_context","workspace_snapshot"],"callRequired":true},
+    {"id":"ja-apply-change-set","language":"ja","prompt":"hostが3 fileの編集payloadとexpected SHAを束縛済みです。先にreadやsnapshotをせずatomicに適用し、結果diffを返して。","expectedTool":"apply_change_set","forbiddenTools":["read_context","workspace_snapshot"],"callRequired":true},
     {"id":"en-no-call-control","language":"en","prompt":"Answer which file extension README.md uses; do not inspect the workspace because the filename is already provided.","expectedTool":null,"forbiddenTools":["run_check","run_observe","artifact_read","workspace_snapshot","workspace_wait","read_context","search_context","change_impact","apply_change_set"],"callRequired":false},
     {"id":"ja-no-call-control","language":"ja","prompt":"名前が提示済みのREADME.mdの拡張子だけ答えて。workspaceを調べる必要はありません。","expectedTool":null,"forbiddenTools":["run_check","run_observe","artifact_read","workspace_snapshot","workspace_wait","read_context","search_context","change_impact","apply_change_set"],"callRequired":false}
   ]

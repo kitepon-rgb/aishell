@@ -59,12 +59,14 @@ final class MCPTypesTests: XCTestCase {
         XCTAssertFalse(baselineFull.map(\.name).contains("apply_change_set"))
         XCTAssertFalse(baselineFull.map(\.name).contains("change_impact"))
         XCTAssertEqual(expandedDefault.map(\.name), [
-            "run_check", "artifact_read", "workspace_snapshot", "read_context", "search_context",
-            "change_impact", "run_observe", "workspace_wait", "apply_change_set",
+            "run_check", "run_observe", "artifact_read", "workspace_snapshot", "workspace_wait",
+            "read_context", "search_context", "change_impact", "apply_change_set",
             "runtime_status", "runtime_open_manager"
         ])
         XCTAssertEqual(expandedDefault.count, 11)
         XCTAssertEqual(expandedFull.count, 29)
+        XCTAssertEqual(Array(expandedFull.prefix(11).map(\.name)), expandedDefault.map(\.name))
+        XCTAssertEqual(Array(expandedDefault.prefix(9).map(\.name)), ToolCatalog.expandedDevelopmentToolOrder)
         XCTAssertEqual(expandedFull.filter { $0.name == "change_impact" }.count, 1)
         XCTAssertEqual(expandedFull.filter { $0.name == "apply_change_set" }.count, 1)
         XCTAssertEqual(expandedFull.filter { $0.name == "run_observe" }.count, 1)

@@ -41,6 +41,9 @@ final class MCPRunCheckV2WireTests: XCTestCase {
         XCTAssertEqual(structured["processesStarted"], .number(1))
         XCTAssertEqual(structured["cacheState"], .string("disabled"))
         XCTAssertEqual(structured["steps"]?.arrayValue?.first?.objectValue?["terminalState"], .string("passed"))
+        let summary = try XCTUnwrap(v2Result["content"]?.arrayValue?.first?.objectValue?["text"]?.stringValue)
+        XCTAssertTrue(summary.contains("passed=1 failed=0 complete_diagnostics_retained=true"))
+        XCTAssertTrue(summary.contains("artifact_read is unnecessary"))
     }
 
     func testDirectStartAndRunObserveReachManagedSidecarThroughPublicWire() async throws {
