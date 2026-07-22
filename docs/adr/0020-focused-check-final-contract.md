@@ -44,6 +44,12 @@ limitationsを束縛する。生成時刻とexpiryはidentityへ入れずadmissi
 profile、manifest、impact、set、selection、expiryを再照合する。`plannedCheckIDs`は`requestedCheckIDs`とbyte-for-byte同じordered
 arrayでなければならず、cache hit/miss、sync/startで変更しない。
 
+公開wireは二つの加算的bindingを持つ。`prepare_focused_set`はset digestとordered check IDsを受け、共有
+`FocusedCheckService`でselection digestを生成して実行する。`verify_focused_set`は既に得たselection digestも受け、
+同じ材料からの一致を再検証して実行する。前者は後者を置換せず、どちらもset/profile/cursor/manifestのcurrent性を
+process admission前に確認する。binding間のfield混在、focused invocationへのplain `prepare`、direct/profileへの
+focused bindingはclosed input違反として拒否する。
+
 ### Step DAG
 
 step IDとdescriptor digestをcontent-addressed化し、edgeは`depends_on`だけを許す。unknown endpoint、duplicate step/edge、self edge、
@@ -77,6 +83,7 @@ structural、freshness、provenance、cache admission errorは全てprocess 0件
 - step failureでdependentだけをskipし、全test fallbackを0にする。
 - 現行recommend `NOT_READY`とdirect v1をcutoverまでcharacterizationとして固定する。
 - MCP closed union、`additionalProperties: false`、成功/error structured fixtureを確認する。
+- recommendationから`prepare_focused_set`で同一runtime実行でき、返されたselection digestを`verify_focused_set`でも再照合できることを確認する。
 
 ## Consequences
 

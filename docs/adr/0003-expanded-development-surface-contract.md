@@ -27,6 +27,12 @@ tool順、責務、成功result schemaを次で固定する。
 
 `change_impact`のv2はADR 0012によるversioned amendmentであり、tool名、責務、公開順、feature gateは変えない。
 
+ACE-034の実装cutoverでは、`MCPServer`と`DevelopmentRuntimeService`が同じ`ProjectProfileService`、
+`FocusedCheckService`、`ChangeImpactService`を共有する。したがって`change_impact recommend`が発行したsetは、
+別registryへの複製やcaller捏造hashを挟まず、同じserver lifetimeの`run_check`から再照合できる。
+`start`はACE-044のmanaged lifecycle実装まで`RUN_CHECK_START_NOT_READY`・process 0で明示的に停止し、
+同期実行へfallbackしない。
+
 この後ろへ`runtime_status`、`runtime_open_manager`を固定順で置く。full profileだけが残る18 primitiveは
 その後ろへ次の現行順で置く。
 

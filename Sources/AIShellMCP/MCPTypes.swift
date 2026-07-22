@@ -66,6 +66,7 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
     enum Dispatch: Equatable, Sendable { case sync; case start(clientRunKey: String) }
     enum Selection: Equatable, Sendable {
         case preparedByCore
+        case prepareFocusedSet(focusedSetDigest: String)
         case focusedSet(focusedSetDigest: String, selectionDigest: String)
     }
     struct V2: Equatable, Sendable {
@@ -110,7 +111,8 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
         let dispatch = try Self.dispatch(dispatchObject, decoder: decoder)
         let selection = try Self.selection(selectionObject, decoder: decoder)
         switch (invocation, selection) {
-        case (.focusedSet, .focusedSet), (.direct, .preparedByCore), (.profileCheck, .preparedByCore): break
+        case (.focusedSet, .focusedSet), (.focusedSet, .prepareFocusedSet),
+             (.direct, .preparedByCore), (.profileCheck, .preparedByCore): break
         default: throw Self.invalid(decoder)
         }
         self = .v2(.init(
@@ -123,18 +125,23 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
         switch object["mode"]?.stringValue {
         case "direct":
             try exactKeys(object, allowed: ["mode", "executable", "arguments", "working_directory", "environment"])
-            guard let executable = object["executable"]?.stringValue, !executable.isEmpty else { throw invalid(decoder) }
-            return .direct(executable: executable, arguments: try strings(object["arguments"]), workingDirectory: try optionalString(object["working_directory"]), environment: try map(object["environment"]))
+            guard let executable = boundedNonEmptyString(object["executable"], maximum: 4_096) else { throw invalid(decoder) }
+            return .direct(
+                executable: executable,
+                arguments: try strings(object["arguments"], maximumItems: 4_096, maximumLength: 4_096, allowEmpty: false),
+                workingDirectory: try optionalString(object["working_directory"], maximum: 4_096),
+                environment: try map(object["environment"])
+            )
         case "profile_check":
             try exactKeys(object, allowed: ["mode", "project_id", "profile_digest", "check_id"])
-            guard let project = object["project_id"]?.stringValue, !project.isEmpty,
+            guard let project = boundedNonEmptyString(object["project_id"], maximum: 4_096),
                   let digest = object["profile_digest"]?.stringValue, isDigest(digest),
-                  let check = object["check_id"]?.stringValue, !check.isEmpty else { throw invalid(decoder) }
+                  let check = boundedNonEmptyString(object["check_id"], maximum: 4_096) else { throw invalid(decoder) }
             return .profileCheck(projectID: project, profileDigest: digest, checkID: check)
         case "focused_set":
             try exactKeys(object, allowed: ["mode", "focused_set_id", "ordered_check_ids"])
-            guard let id = object["focused_set_id"]?.stringValue, !id.isEmpty else { throw invalid(decoder) }
-            let ids = try strings(object["ordered_check_ids"])
+            guard let id = boundedNonEmptyString(object["focused_set_id"], maximum: 4_096) else { throw invalid(decoder) }
+            let ids = try strings(object["ordered_check_ids"], maximumItems: 4_096, maximumLength: 4_096, allowEmpty: false)
             guard !ids.isEmpty, Set(ids).count == ids.count else { throw invalid(decoder) }
             return .focusedSet(id: id, orderedCheckIDs: ids)
         default: throw invalid(decoder)
@@ -155,6 +162,10 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
     private static func selection(_ object: [String: JSONValue], decoder: Decoder) throws -> Selection {
         switch object["binding"]?.stringValue {
         case "prepare": try exactKeys(object, allowed: ["binding"]); return .preparedByCore
+        case "prepare_focused_set":
+            try exactKeys(object, allowed: ["binding", "focused_set_digest"])
+            guard let set = object["focused_set_digest"]?.stringValue, isDigest(set) else { throw invalid(decoder) }
+            return .prepareFocusedSet(focusedSetDigest: set)
         case "verify_focused_set":
             try exactKeys(object, allowed: ["binding", "focused_set_digest", "selection_digest"])
             guard let set = object["focused_set_digest"]?.stringValue, isDigest(set),
@@ -169,11 +180,23 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
             throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "unknown run_check field"))
         }
     }
-    private static func strings(_ value: JSONValue?) throws -> [String] {
+    private static func strings(
+        _ value: JSONValue?,
+        maximumItems: Int? = nil,
+        maximumLength: Int? = nil,
+        allowEmpty: Bool = true
+    ) throws -> [String] {
         guard let value else { return [] }
         guard let values = value.arrayValue else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string array required")) }
         let strings = values.compactMap(\.stringValue)
-        guard strings.count == values.count else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string array required")) }
+        guard strings.count == values.count,
+              maximumItems.map({ strings.count <= $0 }) ?? true,
+              strings.allSatisfy({ string in
+                  (allowEmpty || !string.isEmpty)
+                      && (maximumLength.map { string.count <= $0 } ?? true)
+              }) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bounded string array required"))
+        }
         return strings
     }
     private static func map(_ value: JSONValue?) throws -> [String: String] {
@@ -183,9 +206,12 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
         guard strings.count == values.count else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "string map required")) }
         return strings
     }
-    private static func optionalString(_ value: JSONValue?) throws -> String? {
+    private static func optionalString(_ value: JSONValue?, maximum: Int? = nil) throws -> String? {
         guard let value else { return nil }
-        guard let string = value.stringValue, !string.isEmpty else { throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "non-empty string required")) }
+        guard let string = value.stringValue, !string.isEmpty,
+              maximum.map({ string.count <= $0 }) ?? true else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "bounded non-empty string required"))
+        }
         return string
     }
     private static func optionalNumber(_ value: JSONValue?, minimum: Double, maximum: Double?) throws -> Double? {
@@ -196,7 +222,14 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
         return number
     }
     private static func isDigest(_ value: String) -> Bool {
-        value.utf8.count == 64 && value.allSatisfy { $0.isNumber || ("a"..."f").contains(String($0)) }
+        value.utf8.count == 64 && value.utf8.allSatisfy {
+            (UInt8(ascii: "0")...UInt8(ascii: "9")).contains($0)
+                || (UInt8(ascii: "a")...UInt8(ascii: "f")).contains($0)
+        }
+    }
+    private static func boundedNonEmptyString(_ value: JSONValue?, maximum: Int) -> String? {
+        guard let string = value?.stringValue, !string.isEmpty, string.count <= maximum else { return nil }
+        return string
     }
     private static func invalid(_ decoder: Decoder) -> DecodingError {
         .dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "invalid closed run_check request"))
@@ -709,23 +742,36 @@ enum ToolCatalog {
     private static let preparedSelectionSchema = closedObject(
         required: ["binding"], properties: ["binding": constString("prepare")]
     )
-    private static let focusedSelectionSchema = closedObject(
-        required: ["binding", "focused_set_digest", "selection_digest"],
-        properties: [
-            "binding": constString("verify_focused_set"),
-            "focused_set_digest": sha256Schema,
-            "selection_digest": sha256Schema
-        ]
-    )
+    private static let focusedSelectionSchema = JSONValue.object(["oneOf": .array([
+        closedObject(
+            required: ["binding", "focused_set_digest"],
+            properties: [
+                "binding": constString("prepare_focused_set"),
+                "focused_set_digest": sha256Schema
+            ]
+        ),
+        closedObject(
+            required: ["binding", "focused_set_digest", "selection_digest"],
+            properties: [
+                "binding": constString("verify_focused_set"),
+                "focused_set_digest": sha256Schema,
+                "selection_digest": sha256Schema
+            ]
+        )
+    ])])
 
-    private static func runCheckV2Variant(invocation: JSONValue, selection: JSONValue) -> JSONValue {
+    private static func runCheckV2Variant(
+        invocation: JSONValue,
+        selection: JSONValue,
+        cache: JSONValue = enumType(["off", "prefer", "only", "refresh"])
+    ) -> JSONValue {
         closedObject(
             required: ["schema", "invocation", "dispatch", "cache", "execution_policy", "selection"],
             properties: [
                 "schema": constString("aishell.run-check.v2"),
                 "invocation": invocation,
                 "dispatch": dispatchSchema,
-                "cache": enumType(["off", "prefer", "only", "refresh"]),
+                "cache": cache,
                 "execution_policy": executionPolicySchema,
                 "selection": selection
             ]
@@ -736,7 +782,7 @@ enum ToolCatalog {
         .object([
         "oneOf": .array([
             legacy,
-            runCheckV2Variant(invocation: directInvocationSchema, selection: preparedSelectionSchema),
+            runCheckV2Variant(invocation: directInvocationSchema, selection: preparedSelectionSchema, cache: constString("off")),
             runCheckV2Variant(invocation: profileInvocationSchema, selection: preparedSelectionSchema),
             runCheckV2Variant(invocation: focusedInvocationSchema, selection: focusedSelectionSchema)
         ])

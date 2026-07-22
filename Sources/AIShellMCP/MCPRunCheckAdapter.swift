@@ -33,6 +33,7 @@ enum MCPRunCheckAdapter {
         /// `prepare` は Core の canonical selection API が digest を生成するまで保持する。
         enum Selection: Equatable, Sendable {
             case prepare
+            case prepareFocusedSet(focusedSetDigest: String)
             case focusedSet(focusedSetDigest: String, selectionDigest: String)
         }
 
@@ -91,6 +92,7 @@ enum MCPRunCheckAdapter {
             guard let cache = RunCheckInvocationPlan.CachePolicy(rawValue: v2.cache) else { throw Error.invalidArguments }
             let selection: V2RunCheckRequest.Selection = switch v2.selection {
             case .preparedByCore: .prepare
+            case let .prepareFocusedSet(set): .prepareFocusedSet(focusedSetDigest: set)
             case let .focusedSet(set, digest): .focusedSet(focusedSetDigest: set, selectionDigest: digest)
             }
             if case .direct = invocation, cache != .off { throw Error.invalidArguments }

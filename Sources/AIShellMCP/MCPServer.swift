@@ -8,19 +8,21 @@ final class MCPServer {
     private let capabilitySet: String?
     private lazy var files = NativeFileService(store: store)
     private lazy var processes = NativeProcessService(store: store)
-    private lazy var development = DevelopmentRuntimeService(runtimeStore: store)
+    private let development: DevelopmentRuntimeService
     private var changeSetServices: [String: ApplyChangeSetService] = [:]
 
     init(
         runtimeStore: RuntimeStore = RuntimeStore(),
         toolProfile: String? = nil,
-        capabilitySet: String? = ProcessInfo.processInfo.environment["AISHELL_CAPABILITY_SET"]
+        capabilitySet: String? = ProcessInfo.processInfo.environment["AISHELL_CAPABILITY_SET"],
+        developmentRuntime: DevelopmentRuntimeService? = nil
     ) {
         store = runtimeStore
         self.toolProfile = toolProfile
             ?? ProcessInfo.processInfo.environment["AISHELL_TOOL_PROFILE"]
             ?? "development"
         self.capabilitySet = capabilitySet
+        development = developmentRuntime ?? DevelopmentRuntimeService(runtimeStore: runtimeStore)
     }
 
     func run() async {
@@ -139,10 +141,11 @@ final class MCPServer {
                     "type": .string("text"),
                     "text": .string("\(stableError.code): \(stableError.message)")
                 ])]),
-                "structuredContent": .object([
-                    "schemaVersion": .string("aishell.error.v1"),
-                    "error": structuredError(error, stable: stableError)
-                ]),
+                "structuredContent": structuredFailure(
+                    name: name,
+                    error: error,
+                    stable: stableError
+                ),
                 "isError": .bool(true)
             ]))
         }
@@ -155,23 +158,60 @@ final class MCPServer {
     private func invoke(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
         switch name {
         case "run_check":
-            try validateKeys(arguments, allowed: [
-                "executable", "arguments", "working_directory", "environment",
-                "timeout_seconds", "retention_seconds"
-            ])
-            return try await .from(development.runCheck(
-                executable: requiredString("executable", in: arguments),
-                arguments: try stringArray("arguments", in: arguments),
-                workingDirectory: try strictOptionalString("working_directory", in: arguments),
-                environment: try stringMap("environment", in: arguments),
-                timeoutSeconds: try boundedDouble(
-                    "timeout_seconds", in: arguments, default: 120, minimum: 0.1, maximum: 3_600
-                ),
-                retentionSeconds: try boundedDouble(
-                    "retention_seconds", in: arguments,
-                    default: EvidenceStore.defaultRetentionSeconds, minimum: 1, maximum: 604_800
-                )
-            ))
+            switch try MCPRunCheckAdapter.runCheck(arguments: arguments) {
+            case .legacy(let legacy):
+                return try await .from(development.runCheck(
+                    executable: legacy.executable,
+                    arguments: legacy.arguments,
+                    workingDirectory: legacy.workingDirectory,
+                    environment: legacy.environment,
+                    timeoutSeconds: legacy.timeoutSeconds,
+                    retentionSeconds: legacy.retentionSeconds
+                ))
+            case .v2(let request):
+                switch request.selection {
+                case .prepare:
+                    let plan = try RunCheckInvocationPlan.prepare(.init(
+                        invocation: request.invocation,
+                        dispatch: request.dispatch,
+                        cachePolicy: request.cachePolicy,
+                        executionPolicy: request.executionPolicy
+                    ))
+                    return try await .from(development.runCheck(plan: plan))
+                case .prepareFocusedSet(let setDigest):
+                    return try await .from(development.runFocusedCheck(
+                        invocation: request.invocation,
+                        dispatch: request.dispatch,
+                        cachePolicy: request.cachePolicy,
+                        executionPolicy: request.executionPolicy,
+                        focusedSetDigest: setDigest
+                    ))
+                case .focusedSet(let setDigest, let selectionDigest):
+                    return try await .from(development.runFocusedCheck(
+                        invocation: request.invocation,
+                        dispatch: request.dispatch,
+                        cachePolicy: request.cachePolicy,
+                        executionPolicy: request.executionPolicy,
+                        focusedSetDigest: setDigest,
+                        expectedSelectionDigest: selectionDigest
+                    ))
+                }
+            }
+        case "change_impact":
+            switch try MCPRunCheckAdapter.changeImpact(arguments: arguments) {
+            case .analyze(let request):
+                return try await .from(development.analyzeChangeImpact(request))
+            case .recommend(let request):
+                return try await .from(development.recommendChangeImpact(request))
+            case .continuation(let continuation):
+                switch try await development.continueChangeImpact(
+                    continuation: continuation.token,
+                    byteBudget: continuation.byteBudget
+                ) {
+                case .analyze(let result): return try .from(result)
+                case .recommend(let result): return try .from(result)
+                }
+            }
         case "artifact_read":
             try validateKeys(arguments, allowed: [
                 "handle", "mode", "offset", "length", "tail_lines", "pattern",
@@ -829,6 +869,34 @@ final class MCPServer {
     }
 
     func stableError(_ error: Error) -> (code: String, message: String) {
+        if let error = error as? MCPRunCheckAdapter.Error {
+            return ("INVALID_ARGUMENT", String(describing: error))
+        }
+        if let error = error as? RunCheckInvocationPlan.Error {
+            return (error.code, String(describing: error))
+        }
+        if let error = error as? RunCheckPipelineError {
+            return (error.code, String(describing: error))
+        }
+        if let error = error as? ChangeImpactError {
+            let code: String = switch error {
+            case .invalidOperation: "CHANGE_IMPACT_INVALID_OPERATION"
+            case .notReady: "CHANGE_IMPACT_NOT_READY"
+            case .invalidRequest: "INVALID_ARGUMENT"
+            case .requestTooLarge: "REQUEST_TOO_LARGE"
+            case .contentChanged: "CONTENT_CHANGED"
+            case .requiredProviderNotFresh: "CHANGE_IMPACT_PROVIDER_NOT_FRESH"
+            case .providerFailure: "CHANGE_IMPACT_PROVIDER_FAILED"
+            case .resultItemTooLarge: "RESULT_ITEM_TOO_LARGE"
+            case .byteBudgetTooSmall: "BYTE_BUDGET_TOO_SMALL"
+            case .invalidContinuation: "INVALID_CONTINUATION"
+            case .invalidContinuationRequest: "INVALID_CONTINUATION_REQUEST"
+            case .continuationExpired: "CONTINUATION_EXPIRED"
+            case .evidenceIDCollision: "EVIDENCE_ID_COLLISION"
+            case .recommendationJoinFailed: "RECOMMENDATION_JOIN_FAILED"
+            }
+            return (code, String(describing: error))
+        }
         if let error = error as? ApplyChangeSetError {
             let code: String
             switch error.code {
@@ -950,9 +1018,50 @@ final class MCPServer {
         return .object(object)
     }
 
+    private func structuredFailure(
+        name: String,
+        error: Error,
+        stable: (code: String, message: String)
+    ) -> JSONValue {
+        guard name == "run_check", let pipeline = error as? RunCheckPipelineError else {
+            return .object([
+                "schemaVersion": .string("aishell.error.v1"),
+                "error": structuredError(error, stable: stable)
+            ])
+        }
+        let evidence: [CheckFreshnessCache.LookupEvidence]
+        if case .cacheMiss(_, let values) = pipeline { evidence = values } else { evidence = [] }
+        return .object([
+            "schemaVersion": .string("aishell.run-check.v2"),
+            "error": .object([
+                "code": .string(stable.code),
+                "message": .string(stable.message),
+                "processesStarted": .number(Double(pipeline.processesStarted)),
+                "lookupEvidence": .array(evidence.map { value in
+                    .object([
+                        "stepID": .string(value.stepID),
+                        "status": .string(value.status.rawValue),
+                        "ineligibilityReason": value.ineligibilityReason
+                            .map { .string($0.rawValue) } ?? .null
+                    ])
+                })
+            ])
+        ])
+    }
+
     private func resultText(name: String, result: JSONValue) throws -> String {
         if name == "run_check", let summary = result.objectValue?["summary"]?.stringValue {
             return summary
+        }
+        if name == "run_check", let object = result.objectValue,
+           let state = object["cacheState"]?.stringValue,
+           let processes = object["processesStarted"]?.intValue {
+            return "run_check: cache=\(state) processes=\(processes)"
+        }
+        if name == "change_impact", let object = result.objectValue {
+            let operation = object["operation"]?.stringValue ?? "unknown"
+            let hasMore = object["hasMore"]?.boolValue ?? false
+            return "change_impact: operation=\(operation) has_more=\(hasMore)"
         }
         if name == "artifact_read", let object = result.objectValue {
             if let text = object["text"]?.stringValue { return text }

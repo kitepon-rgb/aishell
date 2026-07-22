@@ -49,6 +49,7 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
             ["executable": "swift", "arguments": ["test"]],
             v2(invocation: ["mode": "direct", "executable": "swift"], cache: "off", selection: ["binding": "prepare"]),
             v2(invocation: ["mode": "profile_check", "project_id": "p", "profile_digest": digest, "check_id": "c"], cache: "prefer", selection: ["binding": "prepare"]),
+            v2(invocation: ["mode": "focused_set", "focused_set_id": "set", "ordered_check_ids": ["a"]], cache: "refresh", selection: ["binding": "prepare_focused_set", "focused_set_digest": digest]),
             v2(invocation: ["mode": "focused_set", "focused_set_id": "set", "ordered_check_ids": ["a", "b"]], cache: "only", selection: ["binding": "verify_focused_set", "focused_set_digest": digest, "selection_digest": digest])
         ]
         for value in values { XCTAssertTrue(SchemaProbe.matches(schema, value: value), "\(value)") }
@@ -56,6 +57,9 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         var mixed = values[1]
         mixed["executable"] = "swift"
         XCTAssertFalse(SchemaProbe.matches(schema, value: mixed))
+        var directCacheMismatch = values[1]
+        directCacheMismatch["cache"] = "prefer"
+        XCTAssertFalse(SchemaProbe.matches(schema, value: directCacheMismatch))
         var unknown = values[2]
         unknown["future"] = true
         XCTAssertFalse(SchemaProbe.matches(schema, value: unknown))
@@ -74,6 +78,17 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         var badDispatch = v2(invocation: ["mode": "direct", "executable": "swift"], cache: "off", selection: ["binding": "prepare"])
         badDispatch["dispatch"] = ["mode": "sync", "client_run_key": "not-allowed"]
         XCTAssertFalse(SchemaProbe.matches(schema, value: badDispatch))
+        let mixedFocusedSelection = v2(
+            invocation: ["mode": "focused_set", "focused_set_id": "set", "ordered_check_ids": ["one"]],
+            cache: "refresh",
+            selection: ["binding": "prepare_focused_set", "focused_set_digest": digest, "selection_digest": digest]
+        )
+        XCTAssertFalse(SchemaProbe.matches(schema, value: mixedFocusedSelection))
+        XCTAssertFalse(SchemaProbe.matches(schema, value: v2(
+            invocation: ["mode": "focused_set", "focused_set_id": "set", "ordered_check_ids": ["one"]],
+            cache: "refresh",
+            selection: ["binding": "prepare_focused_set"]
+        )))
     }
 
     func testProfileSelectionRequiresCorePreparationRatherThanCallerDigest() throws {

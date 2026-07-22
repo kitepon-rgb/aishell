@@ -80,6 +80,128 @@ final class DevelopmentRuntimeServiceTests: XCTestCase {
 }
 
 final class RunCheckPipelineIntegrationTests: XCTestCase {
+    func testPublicProfileAndFocusedRunCheckResolveFromOwnedDirectOSState() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try """
+        {"name":"runtime-public-path","version":"1.0.0","scripts":{"test":"node --version"}}
+        """.write(
+            to: root.appendingPathComponent("package.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let workspace = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+        let evidence = EvidenceStore(baseDirectory: fixture.base.appendingPathComponent("evidence"))
+        let focused = FocusedCheckService()
+        let profiles = ProjectProfileService(
+            runtimeStore: store,
+            workspaceRuntime: workspace,
+            evidenceStore: evidence
+        )
+        let service = DevelopmentRuntimeService(
+            runtimeStore: store,
+            evidenceStore: evidence,
+            workspaceRuntime: workspace,
+            focusedChecks: focused,
+            freshnessCache: .inMemory(),
+            projectProfiles: profiles
+        )
+        let snapshot = try await workspace.snapshot(path: root.path, contextBudget: 0)
+        let catalog = try await profiles.catalog(for: snapshot)
+        let profile = try XCTUnwrap(catalog.profiles.first)
+        let check = try XCTUnwrap(profile.checks.first(where: { $0.kind == "test" }))
+        let profilePlan = try RunCheckInvocationPlan.prepare(.init(
+            invocation: .profileCheck(.init(
+                projectID: profile.projectId,
+                profileDigest: profile.profileDigest,
+                checkID: check.checkId
+            )),
+            dispatch: .sync,
+            cachePolicy: .off,
+            executionPolicy: .init(timeoutMilliseconds: 5_000, retentionSeconds: 3_600)
+        ))
+
+        let profileResult = try await service.runCheck(plan: profilePlan)
+        XCTAssertEqual(profileResult.processesStarted, 1)
+        XCTAssertEqual(profileResult.requestedCheckIDs, [check.checkId])
+        XCTAssertEqual(profileResult.steps.first?.terminalState, .passed)
+
+        let cursorParts = catalog.observedCursor.split(separator: ":", omittingEmptySubsequences: false)
+        let generation = try XCTUnwrap(cursorParts.count == 5 ? String(cursorParts[3]) : nil)
+        let manifest = try XCTUnwrap(profile.manifests.first)
+        let impactDigest = SHA256.hash(data: Data("impact-artifact".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let descriptorDigest = SHA256.hash(data: Data("focused-descriptor".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        let set = try await focused.compile(.init(
+            rootIdentity: profile.projectRootIdentity,
+            generation: generation,
+            cursor: catalog.observedCursor,
+            profileDigest: profile.profileDigest,
+            manifestIdentity: manifest.identity,
+            impactArtifactDigest: impactDigest,
+            candidates: [.init(
+                profileCheckID: check.checkId,
+                profileDigest: profile.profileDigest,
+                selector: .profileCheck(id: check.checkId),
+                steps: [.init(id: "focused-test", descriptorDigest: descriptorDigest)],
+                evidence: [.init(
+                    id: "focused-evidence",
+                    provenance: .init(
+                        providerID: "test",
+                        providerVersion: "1",
+                        artifactDigest: impactDigest,
+                        freshness: "fresh"
+                    )
+                )]
+            )],
+            expiresAt: .distantFuture
+        ))
+        let admission = FocusedCheckService.Admission(
+            rootIdentity: profile.projectRootIdentity,
+            generation: generation,
+            cursor: catalog.observedCursor,
+            profileDigest: profile.profileDigest,
+            manifestIdentity: manifest.identity,
+            impactArtifactDigest: impactDigest
+        )
+        let candidateID = try XCTUnwrap(set.candidates.first?.focusedCheckID)
+        let selection = try await focused.resolve(
+            focusedSetID: set.id,
+            focusedSetDigest: set.digest,
+            requestedCheckIDs: [candidateID],
+            admission: admission
+        )
+        let focusedPlan = try RunCheckInvocationPlan.compile(.v2(.init(
+            invocation: .focusedSet(.init(setID: set.id, orderedCheckIDs: [candidateID])),
+            dispatch: .sync,
+            cachePolicy: .off,
+            executionPolicy: .init(timeoutMilliseconds: 5_000, retentionSeconds: 3_600),
+            selectionDigest: selection.selectionDigest
+        )))
+
+        let focusedResult = try await service.runCheck(
+            plan: focusedPlan,
+            focusedSetDigest: set.digest
+        )
+        XCTAssertEqual(focusedResult.processesStarted, 1)
+        XCTAssertEqual(focusedResult.requestedCheckIDs, [candidateID])
+        XCTAssertEqual(focusedResult.plannedCheckIDs, [candidateID])
+        XCTAssertEqual(focusedResult.steps.map { $0.stepID }, ["focused-test"])
+
+        try await profiles.invalidateAll()
+        await assertPipelineError({
+            try await service.runCheck(plan: focusedPlan, focusedSetDigest: set.digest)
+        }) {
+            XCTAssertEqual($0.code, "RUN_CHECK_SELECTION_STALE")
+            XCTAssertEqual($0.processesStarted, 0)
+        }
+    }
+
     func testLegacyV1StillReturnsOriginalSummaryAndArtifact() async throws {
         let fixture = try await PipelineFixture()
         defer { fixture.cleanup() }

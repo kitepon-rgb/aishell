@@ -25,6 +25,9 @@ final class MCPRunCheckAdapterTests: XCTestCase {
         let focused = try runCheck(invocation: ["mode": .string("focused_set"), "focused_set_id": .string("set"), "ordered_check_ids": .array([.string("a"), .string("b")])], cache: "only", selection: ["binding": .string("verify_focused_set"), "focused_set_digest": .string(digest), "selection_digest": .string(digest)])
         guard case let .v2(focusedV2) = focused, case let .focusedSet(set, selection) = focusedV2.selection else { return XCTFail("focusedのdigestを保持していない") }
         XCTAssertEqual(set, digest); XCTAssertEqual(selection, digest)
+        let preparedFocused = try runCheck(invocation: ["mode": .string("focused_set"), "focused_set_id": .string("set"), "ordered_check_ids": .array([.string("a")])], cache: "refresh", selection: ["binding": .string("prepare_focused_set"), "focused_set_digest": .string(digest)])
+        guard case let .v2(preparedFocusedV2) = preparedFocused, case let .prepareFocusedSet(set) = preparedFocusedV2.selection else { return XCTFail("focused preparation intentを保持していない") }
+        XCTAssertEqual(set, digest)
     }
 
     func testRunCheckRejectsClosedWireViolationsAtRuntime() throws {
@@ -34,6 +37,12 @@ final class MCPRunCheckAdapterTests: XCTestCase {
         request = v2(invocation: ["mode": .string("direct"), "executable": .string("swift"), "unknown": .bool(true)], cache: "off", selection: ["binding": .string("prepare")])
         XCTAssertThrowsError(try MCPRunCheckAdapter.runCheck(arguments: request))
         request = v2(invocation: ["mode": .string("direct"), "executable": .string("swift")], cache: "prefer", selection: ["binding": .string("prepare")])
+        XCTAssertThrowsError(try MCPRunCheckAdapter.runCheck(arguments: request))
+        request = v2(invocation: ["mode": .string("focused_set"), "focused_set_id": .string("set"), "ordered_check_ids": .array([.string("x")])], cache: "refresh", selection: ["binding": .string("prepare_focused_set"), "focused_set_digest": .string(digest), "selection_digest": .string(digest)])
+        XCTAssertThrowsError(try MCPRunCheckAdapter.runCheck(arguments: request))
+        request = v2(invocation: ["mode": .string("profile_check"), "project_id": .string("p"), "profile_digest": .string(String(repeating: "١", count: 32)), "check_id": .string("unit")], cache: "off", selection: ["binding": .string("prepare")])
+        XCTAssertThrowsError(try MCPRunCheckAdapter.runCheck(arguments: request))
+        request = v2(invocation: ["mode": .string("direct"), "executable": .string(String(repeating: "x", count: 4_097))], cache: "off", selection: ["binding": .string("prepare")])
         XCTAssertThrowsError(try MCPRunCheckAdapter.runCheck(arguments: request))
     }
 

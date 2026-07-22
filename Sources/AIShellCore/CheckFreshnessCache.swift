@@ -9,7 +9,7 @@ public actor CheckFreshnessCache {
         case passed, failed, timedOut = "timed_out", cancelled, signaled, launchFailed = "launch_failed", artifactFailed = "artifact_failed"
         fileprivate var isCacheable: Bool { self == .passed || self == .failed }
     }
-    public enum State: String, Sendable { case disabled, hit, missExecuted = "miss_executed", refreshExecuted = "refresh_executed", ineligible }
+    public enum State: String, Codable, Sendable { case disabled, hit, missExecuted = "miss_executed", refreshExecuted = "refresh_executed", ineligible }
     public enum IneligibilityReason: String, Codable, Equatable, Sendable { case bindingUnavailable = "binding_unavailable", bindingIncomplete = "binding_incomplete", unsupported = "unsupported" }
     public enum Binding: Equatable, Sendable {
         case eligible(digest: String)

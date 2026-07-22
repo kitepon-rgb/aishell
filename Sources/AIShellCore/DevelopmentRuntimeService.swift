@@ -8,13 +8,18 @@ public actor DevelopmentRuntimeService {
     private let contextCompiler: ContextCompilerService
     private let focusedChecks: FocusedCheckService
     private let freshnessCache: CheckFreshnessCache
+    private let projectProfiles: ProjectProfileService
+    private let runCheckResolution: RunCheckResolutionService
+    private let changeImpactService: ChangeImpactService
 
     public init(
         runtimeStore: RuntimeStore = RuntimeStore(),
         evidenceStore: EvidenceStore? = nil,
         workspaceRuntime: WorkspaceStateRuntime? = nil,
         focusedChecks: FocusedCheckService? = nil,
-        freshnessCache: CheckFreshnessCache? = nil
+        freshnessCache: CheckFreshnessCache? = nil,
+        projectProfiles: ProjectProfileService? = nil,
+        changeImpactService: ChangeImpactService? = nil
     ) {
         processes = NativeProcessService(store: runtimeStore)
         self.evidenceStore = evidenceStore ?? EvidenceStore(
@@ -22,15 +27,153 @@ public actor DevelopmentRuntimeService {
         )
         let workspace = workspaceRuntime ?? WorkspaceStateRuntime(runtimeStore: runtimeStore)
         self.workspaceRuntime = workspace
-        contextCompiler = ContextCompilerService(
+        let focused = focusedChecks ?? FocusedCheckService()
+        self.focusedChecks = focused
+        let profiles = projectProfiles ?? ProjectProfileService(
             runtimeStore: runtimeStore,
             workspaceRuntime: workspace,
             evidenceStore: self.evidenceStore
         )
-        self.focusedChecks = focusedChecks ?? FocusedCheckService()
+        self.projectProfiles = profiles
+        runCheckResolution = RunCheckResolutionService(
+            projectProfiles: profiles,
+            workspaceRuntime: workspace
+        )
+        self.changeImpactService = changeImpactService ?? ChangeImpactService(
+            runtimeStore: runtimeStore,
+            workspaceRuntime: workspace,
+            evidenceStore: self.evidenceStore,
+            focusedCheckService: focused
+        )
+        contextCompiler = ContextCompilerService(
+            runtimeStore: runtimeStore,
+            workspaceRuntime: workspace,
+            evidenceStore: self.evidenceStore,
+            projectProfileService: profiles
+        )
         self.freshnessCache = freshnessCache ?? CheckFreshnessCache(
             storeDirectory: runtimeStore.baseDirectory.appendingPathComponent("check-freshness-cache", isDirectory: true)
         )
+    }
+
+    /// 公開run_check用入口。caller supplied catalogや再観測closureを受けず、
+    /// AIShellが所有するProjectProfile/Direct OS/focused registryから実行contextを作る。
+    public func runCheck(
+        plan: RunCheckInvocationPlan,
+        focusedSetDigest: String? = nil,
+        environment: [String: String] = [:]
+    ) async throws -> RunCheckPipelineResult {
+        guard case .sync = plan.dispatch else {
+            throw RunCheckPipelineError.dispatchNotReady(processesStarted: 0)
+        }
+        let resolution: RunCheckResolutionContext
+        do {
+            resolution = try await currentResolutionContext(
+                for: plan,
+                focusedSetDigest: focusedSetDigest,
+                environment: environment
+            )
+        } catch let error as RunCheckPipelineError {
+            throw error
+        } catch is ProjectProfileResolutionError {
+            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+        } catch let error as AIShellError {
+            if case .contentChanged = error {
+                throw RunCheckPipelineError.contentChanged(processesStarted: 0)
+            }
+            throw error
+        }
+        return try await runCheck(plan: plan, resolution: resolution)
+    }
+
+    /// recommendが返したimmutable setからcallerが選んだID列のselection digestをCoreで
+    /// 生成する公開入口。既存のverify_focused_set経路はexpected digestを渡して維持する。
+    public func runFocusedCheck(
+        invocation: RunCheckInvocationPlan.Invocation,
+        dispatch: RunCheckInvocationPlan.Dispatch,
+        cachePolicy: RunCheckInvocationPlan.CachePolicy,
+        executionPolicy: RunCheckInvocationPlan.ExecutionPolicy,
+        focusedSetDigest: String,
+        expectedSelectionDigest: String? = nil
+    ) async throws -> RunCheckPipelineResult {
+        guard case .sync = dispatch else {
+            throw RunCheckPipelineError.dispatchNotReady(processesStarted: 0)
+        }
+        guard case .focusedSet(let requested) = invocation else {
+            throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+        }
+        let prepared: FocusedCheckService.PreparedSetReceipt
+        do {
+            prepared = try await focusedChecks.prepare(
+                focusedSetID: requested.setID,
+                focusedSetDigest: focusedSetDigest
+            )
+        } catch {
+            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+        }
+        let exact: ProjectProfileResolution
+        do {
+            exact = try await projectProfiles.resolveExactProfile(
+                profileDigest: prepared.profileDigest,
+                sinceCursor: prepared.cursor
+            )
+        } catch is ProjectProfileResolutionError {
+            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+        } catch let error as AIShellError {
+            if case .contentChanged = error {
+                throw RunCheckPipelineError.contentChanged(processesStarted: 0)
+            }
+            throw error
+        }
+        guard exact.observedCursor == prepared.cursor,
+              exact.profile.projectRootIdentity == prepared.rootIdentity,
+              let manifest = exact.profile.manifests.first(where: {
+                  $0.identity == prepared.manifestIdentity
+              }) else {
+            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+        }
+        let admission = FocusedCheckService.Admission(
+            rootIdentity: exact.profile.projectRootIdentity,
+            generation: try workspaceGeneration(from: exact.observedCursor),
+            cursor: exact.observedCursor,
+            profileDigest: exact.profile.profileDigest,
+            manifestIdentity: manifest.identity,
+            impactArtifactDigest: prepared.impactArtifactDigest
+        )
+        let selection: FocusedCheckService.Selection
+        do {
+            if let expectedSelectionDigest {
+                selection = try await focusedChecks.resolve(
+                    focusedSetID: requested.setID,
+                    focusedSetDigest: focusedSetDigest,
+                    requestedCheckIDs: requested.orderedCheckIDs,
+                    expectedSelectionDigest: expectedSelectionDigest,
+                    admission: admission
+                )
+            } else {
+                selection = try await focusedChecks.resolve(
+                    focusedSetID: requested.setID,
+                    focusedSetDigest: focusedSetDigest,
+                    requestedCheckIDs: requested.orderedCheckIDs,
+                    admission: admission
+                )
+            }
+        } catch let error as FocusedCheckService.Error {
+            switch error {
+            case .invocationInvalid:
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            case .selectionStale:
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+        }
+        let plan = try RunCheckInvocationPlan.compile(.v2(.init(
+            invocation: invocation,
+            dispatch: dispatch,
+            cachePolicy: cachePolicy,
+            executionPolicy: executionPolicy,
+            selectionDigest: selection.selectionDigest
+        )))
+        return try await runCheck(plan: plan, focusedSetDigest: focusedSetDigest)
     }
 
     public func runCheck(
@@ -117,9 +260,14 @@ public actor DevelopmentRuntimeService {
                 },
                 validateBindingAfterExecution: { steps in
                     guard steps.count == resolved.steps.count else { return false }
-                    return zip(steps, resolved.steps).allSatisfy {
-                        $0.id == $1.stepID && $0.binding == $1.binding && $1.reobserveBinding() == $0.binding
+                    for (cached, execution) in zip(steps, resolved.steps) {
+                        guard cached.id == execution.stepID,
+                              cached.binding == execution.binding,
+                              await execution.reobserveBinding() == cached.binding else {
+                            return false
+                        }
                     }
+                    return true
                 },
                 verifyArtifact: { artifact in
                     if artifact.expiresAt <= Date() { return .expired }
@@ -137,7 +285,7 @@ public actor DevelopmentRuntimeService {
                 }
             )
             return RunCheckPipelineResult(
-                schemaVersion: "aishell.run-check-pipeline.v1",
+                schemaVersion: "aishell.run-check.v2",
                 planDigest: plan.digest,
                 selectionDigest: resolved.selectionDigest,
                 requestedCheckIDs: resolved.requestedCheckIDs,
@@ -213,7 +361,7 @@ public actor DevelopmentRuntimeService {
         let workingDirectory: String?
         let environment: [String: String]
         let binding: CheckFreshnessCache.Binding
-        let reobserveBinding: @Sendable () -> CheckFreshnessCache.Binding
+        let reobserveBinding: @Sendable () async -> CheckFreshnessCache.Binding
     }
 
     private struct ResolvedInvocation: Sendable {
@@ -221,6 +369,153 @@ public actor DevelopmentRuntimeService {
         let plannedCheckIDs: [String]
         let selectionDigest: String
         let steps: [ResolvedExecutionStep]
+    }
+
+    private func currentResolutionContext(
+        for plan: RunCheckInvocationPlan,
+        focusedSetDigest: String?,
+        environment: [String: String]
+    ) async throws -> RunCheckResolutionContext {
+        switch plan.invocation {
+        case .direct:
+            guard focusedSetDigest == nil else {
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+            return RunCheckResolutionContext(
+                profileCatalog: .init(
+                    schemaVersion: "aishell.project-profile-catalog.v1",
+                    root: "",
+                    observedCursor: "",
+                    profiles: [],
+                    computedProfiles: 0,
+                    cachedProfiles: 0
+                ),
+                environment: environment
+            )
+
+        case .profileCheck(let requested):
+            guard focusedSetDigest == nil else {
+                throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+            }
+            let exact = try await projectProfiles.resolveExactCheck(
+                projectID: requested.projectID,
+                profileDigest: requested.profileDigest,
+                checkID: requested.checkID
+            )
+            let receipt = try await runCheckResolution.resolve(.init(
+                projectID: requested.projectID,
+                profileDigest: requested.profileDigest,
+                checkID: requested.checkID
+            ))
+            return RunCheckResolutionContext(
+                profileCatalog: catalog(from: exact),
+                environment: environment,
+                relevantInputsByCheckID: [requested.checkID: relevantInputBinding(receipt)]
+            )
+
+        case .focusedSet(let requested):
+            guard let focusedSetDigest else {
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+            let prepared: FocusedCheckService.PreparedSetReceipt
+            do {
+                prepared = try await focusedChecks.prepare(
+                    focusedSetID: requested.setID,
+                    focusedSetDigest: focusedSetDigest
+                )
+            } catch {
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+            let exact = try await projectProfiles.resolveExactProfile(
+                profileDigest: prepared.profileDigest,
+                sinceCursor: prepared.cursor
+            )
+            guard exact.observedCursor == prepared.cursor,
+                  exact.profile.projectRootIdentity == prepared.rootIdentity,
+                  let manifest = exact.profile.manifests.first(where: {
+                      $0.identity == prepared.manifestIdentity
+                  }) else {
+                throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+            }
+            let admission = FocusedCheckService.Admission(
+                rootIdentity: exact.profile.projectRootIdentity,
+                generation: try workspaceGeneration(from: exact.observedCursor),
+                cursor: exact.observedCursor,
+                profileDigest: exact.profile.profileDigest,
+                manifestIdentity: manifest.identity,
+                impactArtifactDigest: prepared.impactArtifactDigest
+            )
+            let selection: FocusedCheckService.Selection
+            do {
+                selection = try await focusedChecks.resolve(
+                    focusedSetID: requested.setID,
+                    focusedSetDigest: focusedSetDigest,
+                    requestedCheckIDs: requested.orderedCheckIDs,
+                    expectedSelectionDigest: plan.selectionDigest,
+                    admission: admission
+                )
+            } catch let error as FocusedCheckService.Error {
+                switch error {
+                case .invocationInvalid:
+                    throw RunCheckPipelineError.invocationInvalid(processesStarted: 0)
+                case .selectionStale:
+                    throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+                }
+            }
+            var relevant: [String: RunCheckRelevantInputBinding] = [:]
+            for checkID in Set(selection.resolvedCandidates.map(\.profileCheckID)).sorted() {
+                let receipt = try await runCheckResolution.resolve(.init(
+                    projectID: exact.profile.projectId,
+                    profileDigest: exact.profile.profileDigest,
+                    checkID: checkID
+                ))
+                relevant[checkID] = relevantInputBinding(receipt)
+            }
+            return RunCheckResolutionContext(
+                profileCatalog: .init(
+                    schemaVersion: "aishell.project-profile-catalog.v1",
+                    root: exact.catalogRoot,
+                    observedCursor: exact.observedCursor,
+                    profiles: [exact.profile],
+                    computedProfiles: 1,
+                    cachedProfiles: 0
+                ),
+                focusedAdmission: admission,
+                environment: environment,
+                relevantInputsByCheckID: relevant
+            )
+        }
+    }
+
+    private func catalog(from resolution: ProjectProfileCheckResolution) -> ProjectProfileCatalogResult {
+        .init(
+            schemaVersion: "aishell.project-profile-catalog.v1",
+            root: resolution.catalogRoot,
+            observedCursor: resolution.observedCursor,
+            profiles: [resolution.profile],
+            computedProfiles: 1,
+            cachedProfiles: 0
+        )
+    }
+
+    private func relevantInputBinding(
+        _ receipt: RunCheckRelevantInputReceipt
+    ) -> RunCheckRelevantInputBinding {
+        RunCheckRelevantInputBinding(
+            digest: receipt.bindingDigest,
+            reobserveDigest: { [runCheckResolution] in
+                try await runCheckResolution.reobserve(receipt).bindingDigest
+            }
+        )
+    }
+
+    private func workspaceGeneration(from cursor: String) throws -> String {
+        let parts = cursor.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 5, parts[0] == "ws2", !parts[3].isEmpty,
+              UInt64(parts[4]) != nil else {
+            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
+        }
+        return String(parts[3])
     }
 
     private func resolve(
@@ -389,9 +684,6 @@ public actor DevelopmentRuntimeService {
         }
 
         let effectiveEnvironment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
-        for key in descriptor.environmentKeys where effectiveEnvironment[key] == nil {
-            throw RunCheckPipelineError.selectionStale(processesStarted: 0)
-        }
         let binding = try Self.freshnessBinding(
             descriptor: descriptor,
             arguments: arguments,
@@ -423,7 +715,7 @@ public actor DevelopmentRuntimeService {
                     profile: capturedProfile,
                     environment: capturedEnvironment,
                     catalogRoot: capturedCatalogRoot,
-                    relevantInputDigest: capturedRelevantInput?.reobserveDigest(),
+                    relevantInputDigest: try? await capturedRelevantInput?.reobserveDigest(),
                     executionPolicy: capturedPolicy
                 )) ?? .ineligible(reason: .bindingUnavailable)
             }
@@ -486,8 +778,8 @@ public actor DevelopmentRuntimeService {
             }
             fields += ["toolchain", toolchain.identity, toolchain.sha256, toolchain.evidenceSHA256, toolchain.version]
         }
-        for key in environment.keys.sorted() {
-            fields += ["environment", key, "set:\(environment[key]!)"]
+        for key in descriptor.environmentKeys.sorted() {
+            fields += ["environment", key, environment[key].map { "set:\($0)" } ?? "absent"]
         }
         return .eligible(digest: digest(fields))
     }
@@ -648,6 +940,52 @@ public actor DevelopmentRuntimeService {
         try await contextCompiler.searchContextV2(request: request, continuation: continuation)
     }
 
+    public func analyzeChangeImpact(_ request: ChangeImpactRequest) async throws -> ChangeImpactResult {
+        try await changeImpactService.analyze(request)
+    }
+
+    /// recommend初回のcatalogはcallerから受けず、共有ProjectProfileServiceのfresh exact
+    /// resolutionから構成する。continuationは共通opaque入口へ渡す。
+    public func recommendChangeImpact(
+        _ request: ChangeImpactRecommendationRequest
+    ) async throws -> ChangeImpactRecommendationResult {
+        guard request.continuation == nil,
+              let impactRequest = request.impactRequest,
+              let projectID = request.projectID,
+              let profileDigest = request.profileDigest else {
+            throw ChangeImpactError.invalidContinuationRequest
+        }
+        let exact = try await projectProfiles.resolveExactProfile(profileDigest: profileDigest)
+        guard exact.profile.projectId == projectID else {
+            throw ChangeImpactError.recommendationJoinFailed("project/profile identity mismatch")
+        }
+        let catalog = ProjectProfileCatalogResult(
+            schemaVersion: "aishell.project-profile-catalog.v1",
+            root: exact.catalogRoot,
+            observedCursor: exact.observedCursor,
+            profiles: [exact.profile],
+            computedProfiles: 1,
+            cachedProfiles: 0
+        )
+        return try await changeImpactService.recommend(.init(
+            impactRequest: impactRequest,
+            projectID: projectID,
+            profileDigest: profileDigest,
+            catalog: catalog,
+            byteBudget: request.byteBudget
+        ))
+    }
+
+    public func continueChangeImpact(
+        continuation: String,
+        byteBudget: Int? = nil
+    ) async throws -> ChangeImpactContinuationResult {
+        try await changeImpactService.continueImpact(
+            continuation: continuation,
+            byteBudget: byteBudget
+        )
+    }
+
     private func primaryDiagnostic(for execution: RetainedProcessExecution) async throws -> String? {
         let stderrSamples = try await artifactSamples(execution.stderrArtifact)
         let stdoutSamples = try await artifactSamples(execution.stdoutArtifact)
@@ -689,10 +1027,13 @@ public actor DevelopmentRuntimeService {
 }
 
 public struct RunCheckRelevantInputBinding: Sendable {
-    public let digest: String
-    public let reobserveDigest: @Sendable () -> String?
+    public let digest: String?
+    public let reobserveDigest: @Sendable () async throws -> String?
 
-    public init(digest: String, reobserveDigest: @escaping @Sendable () -> String?) {
+    public init(
+        digest: String?,
+        reobserveDigest: @escaping @Sendable () async throws -> String?
+    ) {
         self.digest = digest
         self.reobserveDigest = reobserveDigest
     }
@@ -720,7 +1061,7 @@ public struct RunCheckResolutionContext: Sendable {
     }
 }
 
-public struct RunCheckPipelineStepResult: Sendable {
+public struct RunCheckPipelineStepResult: Encodable, Sendable {
     public let stepID: String
     public let terminalState: CheckFreshnessCache.TerminalState
     public let sourceRunID: String
@@ -740,7 +1081,7 @@ public struct RunCheckPipelineStepResult: Sendable {
     }
 }
 
-public struct RunCheckPipelineResult: Sendable {
+public struct RunCheckPipelineResult: Encodable, Sendable {
     public let schemaVersion: String
     public let planDigest: String
     public let selectionDigest: String

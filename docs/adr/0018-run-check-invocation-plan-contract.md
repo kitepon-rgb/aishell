@@ -90,6 +90,22 @@ invalid provenanceはadmission前に拒否し、process起動0件を証拠化す
 
 禁止組合せを別modeへ変換せず、error時のprocess countを明示する。
 
+### 7. ACE-034公開runtime cutover
+
+公開`run_check`はcallerからprofile catalog、relevant-input digest、再観測closureを受け取らない。
+`DevelopmentRuntimeService`が共有`ProjectProfileService`とDirect OS observationからexact profile/check、
+environmentの宣言済みkey、relevant-input receiptを解決し、実行後も同じauthorityで再観測する。
+環境変数の未設定は値の省略としてcanonical bindingへ含め、hostに存在しない`DEVELOPER_DIR`や`SDKROOT`を
+一律staleにしない。
+
+公開schemaも合法性matrixと同じく`direct`のcacheを`off`へ閉じる。v2のidentifier、argument、ordered IDは
+schemaの4,096上限をruntime decodeでも検証し、SHA-256はASCII lowercase hexだけを受理する。
+profile、cursor、manifest、focused setのdriftは`RUN_CHECK_SELECTION_STALE`、観測中の内容変更は
+`CONTENT_CHANGED`へ変換し、いずれもprocess 0で返す。未知の内部障害をstaleへ丸めない。
+
+`change_impact`のanalyze/recommend/continuationも同じ`DevelopmentRuntimeService`所有serviceへ結線する。
+continuation tokenは複数registryのprefix推測で選ばず、exact membershipが一意な場合だけ一度消費する。
+
 ## Verification contract
 
 - 24直積をtable-drivenで固定し、18合法/6拒否を確認する。
@@ -100,6 +116,8 @@ invalid provenanceはadmission前に拒否し、process起動0件を証拠化す
 - sync/startのrequested/planned IDs、step DAG、cache evidence、terminal plan digestを一致させる。
 - stale selection、corruption、unknown/duplicate ID、run key conflictをexact typed errorで固定する。
 - MCP input schemaのclosed union、`additionalProperties: false`、成功/失敗structured fixtureを確認する。
+- schema/runtime双方でdirect + non-off cache、非ASCII digest、上限超過inputを拒否する。
+- public profile/focused実行がcaller supplied catalogなしで成功し、profile/cursor driftがprocess 0のtyped staleになることを確認する。
 - 既存direct runの成功、失敗、timeout、primary diagnostic、完全stdout/stderr artifactを非回帰にする。
 
 ## Consequences
