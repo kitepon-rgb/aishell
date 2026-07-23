@@ -5,6 +5,8 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { evaluateAttempt } from './evaluate-capability-oracle.mjs';
+import { observedToolCalls, observerMetrics } from './phase3-local-callbacks.mjs';
 import { createRepresentativeLocalCallbacks } from './representative-local-callbacks.mjs';
 import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
 import {
@@ -53,6 +55,21 @@ export function mergeRecoveredRecords(sourceRecords, recoveredRecords) {
   return sourceRecords.map((record) => replacements.get(record.sequence) ?? record);
 }
 
+export function addRecoveryCheckpointRecords(recoveredBySequence, targetBySequence, records) {
+  if (!(recoveredBySequence instanceof Map) || !(targetBySequence instanceof Map) || !Array.isArray(records)) {
+    throw new Error('recovery checkpoint inputs are invalid');
+  }
+  for (const record of records) {
+    const target = targetBySequence.get(record?.sequence);
+    if (!target || record.attemptID !== target.attemptID || recoveredBySequence.has(record.sequence)
+      || record.timedOut !== false || !plainObject(record.usage)) {
+      throw new Error('recovery checkpoint record is invalid or duplicated');
+    }
+    recoveredBySequence.set(record.sequence, record);
+  }
+  return recoveredBySequence;
+}
+
 async function readJSON(file) {
   return JSON.parse(await readFile(file, 'utf8'));
 }
@@ -72,9 +89,9 @@ async function optionalJSON(file, fallback) {
 }
 
 async function main() {
-  const [sourceRunArgument, targetConfigurationArgument] = process.argv.slice(2);
+  const [sourceRunArgument, targetConfigurationArgument, seedConfigurationArgument] = process.argv.slice(2);
   if (!sourceRunArgument || !targetConfigurationArgument) {
-    throw new Error('usage: recover-representative-timeouts.mjs <source-run-directory> <target-configuration.json>');
+    throw new Error('usage: recover-representative-timeouts.mjs <source-run-directory> <target-configuration.json> [seed-recovery-configuration.json]');
   }
   const sourceRunDirectory = path.resolve(sourceRunArgument);
   const targetConfigurationPath = path.resolve(targetConfigurationArgument);
@@ -105,12 +122,52 @@ async function main() {
     || !Array.isArray(recoveryCheckpoint.recoveredRecords)) throw new Error('recovery checkpoint is invalid');
   const targetBySequence = new Map(timeoutRecords.map((record) => [record.sequence, record]));
   const recoveredBySequence = new Map();
+  const recoveredEvidenceDirectoryBySequence = new Map();
+  let seededRecoveryCount = 0;
   for (const record of recoveryCheckpoint.recoveredRecords) {
     const target = targetBySequence.get(record?.sequence);
     if (!target || record.attemptID !== target.attemptID || recoveredBySequence.has(record.sequence)) {
       throw new Error('recovery checkpoint does not match timeout targets');
     }
     recoveredBySequence.set(record.sequence, record);
+    recoveredEvidenceDirectoryBySequence.set(record.sequence, targetConfiguration.executorOptions.outputDirectory);
+  }
+  if (seedConfigurationArgument) {
+    const seedConfigurationPath = path.resolve(seedConfigurationArgument);
+    const seedConfiguration = await readJSON(seedConfigurationPath);
+    const seedManifest = await buildRepresentativeAttemptManifest(seedConfiguration.runConfiguration);
+    if (!canonicalJSONBytes(seedManifest).equals(canonicalJSONBytes(targetManifest))) {
+      throw new Error('seed recovery manifest differs from target run');
+    }
+    const seedRunDirectory = path.resolve(path.dirname(seedConfigurationPath), seedConfiguration.runDirectory);
+    const seedCheckpoint = await readJSON(path.join(seedRunDirectory, 'recovery-checkpoint.json'));
+    if (seedCheckpoint?.schema !== 'aishell.representative-timeout-recovery-checkpoint.v1'
+      || !Array.isArray(seedCheckpoint.recoveredRecords)) throw new Error('seed recovery checkpoint is invalid');
+    addRecoveryCheckpointRecords(recoveredBySequence, targetBySequence, seedCheckpoint.recoveredRecords);
+    for (const record of seedCheckpoint.recoveredRecords) {
+      recoveredEvidenceDirectoryBySequence.set(record.sequence, seedConfiguration.executorOptions.outputDirectory);
+      seededRecoveryCount += 1;
+    }
+    await atomicJSON(recoveryCheckpointFile, {
+      schema: 'aishell.representative-timeout-recovery-checkpoint.v1',
+      recoveredRecords: [...recoveredBySequence.values()].sort((a, b) => a.sequence - b.sequence),
+    });
+  }
+
+  const priorOracleRecords = new Map(sourceCheckpoint.oracleRecords.map((record) => [record.sequence, record]));
+  const priorMetricRecords = new Map(sourceCheckpoint.metricRecords.map((record) => [record.sequence, record]));
+  for (const record of recoveredBySequence.values()) {
+    const attempt = targetManifest.attempts[record.sequence - 1];
+    const evidenceRoot = recoveredEvidenceDirectoryBySequence.get(record.sequence);
+    const attemptDirectory = path.join(evidenceRoot, record.attemptID);
+    const actual = await readJSON(path.join(attemptDirectory, 'observer-evidence.json'));
+    const oracle = await evaluateAttempt({ taskId: attempt.taskID, armId: attempt.arm, actual });
+    const events = (await readFile(path.join(attemptDirectory, 'provider-events.jsonl'), 'utf8'))
+      .split('\n').filter(Boolean).map(JSON.parse);
+    const calls = await observedToolCalls(events,
+      attempt.arm === 'native' ? undefined : path.join(attemptDirectory, 'mcp-wire'));
+    priorOracleRecords.set(record.sequence, { sequence: record.sequence, result: oracle });
+    priorMetricRecords.set(record.sequence, { sequence: record.sequence, metrics: observerMetrics(events, calls, attempt) });
   }
 
   const local = createRepresentativeLocalCallbacks({ armBinaries: targetConfiguration.executorOptions.armBinaries });
@@ -125,8 +182,8 @@ async function main() {
     collectAttemptEvidence: local.collectRepresentativeAttemptEvidence,
     observeProviderModel: local.observeProviderModel,
     runProcess: local.runProcess,
-    priorOracleRecords: sourceCheckpoint.oracleRecords,
-    priorMetricRecords: sourceCheckpoint.metricRecords,
+    priorOracleRecords: [...priorOracleRecords.values()].sort((a, b) => a.sequence - b.sequence),
+    priorMetricRecords: [...priorMetricRecords.values()].sort((a, b) => a.sequence - b.sequence),
   });
   for (const target of timeoutRecords) {
     if (recoveredBySequence.has(target.sequence)) continue;
@@ -168,6 +225,7 @@ async function main() {
     sourceTimeoutMilliseconds: sourceTimeout,
     targetTimeoutMilliseconds: targetTimeout,
     reusedRecordCount: records.length - timeoutRecords.length,
+    seededRecoveryCount,
     recoveredSequences: timeoutRecords.map(({ sequence }) => sequence),
     resultStatus: outcome.result.status,
   });

@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  addRecoveryCheckpointRecords,
   mergeRecoveredRecords,
   selectTimeoutRecoveryRecords,
 } from './recover-representative-timeouts.mjs';
@@ -18,4 +19,9 @@ const recovered = [complete(2), complete(4)];
 assert.deepEqual(mergeRecoveredRecords(source, recovered), [complete(1), complete(2), complete(3), complete(4)]);
 await assert.rejects(async () => mergeRecoveredRecords(source, [complete(2)]), /incomplete/u);
 await assert.rejects(async () => selectTimeoutRecoveryRecords([complete(1), { ...timeout(2), usage: {} }]), /complete usage/u);
+const targets = new Map([timeout(2), timeout(4)].map((record) => [record.sequence, record]));
+const seeded = addRecoveryCheckpointRecords(new Map(), targets, [complete(2)]);
+assert.deepEqual([...seeded.values()], [complete(2)]);
+assert.throws(() => addRecoveryCheckpointRecords(seeded, targets, [complete(2)]), /duplicated/u);
+assert.throws(() => addRecoveryCheckpointRecords(new Map(), targets, [{ ...complete(4), usage: null }]), /invalid/u);
 process.stdout.write('{"schema":"aishell.representative-timeout-recovery-self-test.v1","status":"valid"}\n');
