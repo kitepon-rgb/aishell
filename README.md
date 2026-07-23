@@ -44,7 +44,15 @@ The default profile exposes five high-density development tools plus two always-
 | `runtime_status` | Allowed-root, pause, worktree, and next-action state, including while paused or unconfigured |
 | `runtime_open_manager` | Open the manager app to add roots or resume AI operations |
 
-Set `AISHELL_CAPABILITY_SET=expanded-v1` on the MCP server process to opt in to the candidate surface. In that mode, `run_check` can start a managed run, `run_observe` can read or wait for it independently of the originating MCP request, `artifact_read` adds closed `search`, `next`, and `compare` actions, and `search_context action=semantic` reports explicit `fresh`, `stale`, `indexing`, or `unavailable` provider state. `change_impact` also registers depfile, SwiftPM build-manifest, and SourceKit providers in the production runtime. Cross-run artifact operations require an explicit project path and reject live, expired, legacy-unbound, or different-project evidence instead of silently falling back to partial logs.
+Set `AISHELL_CAPABILITY_SET=expanded-v1` on the MCP server process to opt in to the candidate surface. It exposes nine high-density development tools plus the two recovery controls. The added tools are `run_observe`, `workspace_wait`, `change_impact`, and `apply_change_set`; existing tools gain closed managed-run, artifact query, semantic search, project-profile, and Git branch/worktree modes. Cross-run artifact operations require an explicit project path and reject live, expired, legacy-unbound, or different-project evidence instead of silently falling back to partial logs.
+
+For Codex, register the expanded surface explicitly:
+
+```sh
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- /opt/homebrew/bin/aishell-mcp
+```
+
+Unknown or empty `AISHELL_CAPABILITY_SET` and `AISHELL_TOOL_PROFILE` values fail startup with typed errors; they never fall back to another profile.
 
 ## Why AIShell
 
@@ -116,10 +124,11 @@ Remove the registration with:
 codex mcp remove aishell
 ```
 
-The compatibility profile retains all 25 tools. The default seven are the five development tools plus the two recovery controls; full mode adds the remaining legacy primitives:
+Without the expanded capability, the compatibility profile retains all 25 tools. The default seven are the five development tools plus the two recovery controls; full mode adds the remaining legacy primitives. With `expanded-v1`, development exposes 11 tools and full exposes 29:
 
 ```sh
 AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp
+AISHELL_CAPABILITY_SET=expanded-v1 AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp
 ```
 
 The full profile includes file listing and reads, atomic SHA-256-guarded updates, copy/move/rename/Trash, direct process execution, app discovery and launch, runtime status, and manager activation.

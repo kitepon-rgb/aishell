@@ -44,6 +44,20 @@ summaryから省略された証拠だけartifact_readで読んで。
 | `runtime_status` | 未設定・停止中も含む許可root、停止、worktree、次操作の状態取得 |
 | `runtime_open_manager` | root追加またはAI操作再開のため管理アプリを開く |
 
+MCP serverへ`AISHELL_CAPABILITY_SET=expanded-v1`を設定すると、candidate surfaceへ明示opt-inできる。
+高密度development 9本と復旧control 2本を公開し、`run_observe`、`workspace_wait`、
+`change_impact`、`apply_change_set`を追加する。既存toolにもmanaged run、artifact query、
+semantic search、project profile、Git branch/worktree modeが加わる。
+
+Codexでは次のように登録する。
+
+```sh
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- /opt/homebrew/bin/aishell-mcp
+```
+
+未知値または空の`AISHELL_CAPABILITY_SET`と`AISHELL_TOOL_PROFILE`はtyped errorでstartup停止し、
+別profileへ黙ってfallbackしない。
+
 ## なぜAIShellか
 
 statelessな連携では、モデルがworkspaceを何度もscanし、command出力から状態を再構成しやすい。AIShellは状態を持つOS側の仕事をモデルより下へ置き、後続turnが全再scanではなくdeltaと一次証拠を要求できるようにする。
@@ -114,10 +128,13 @@ codex mcp get aishell
 codex mcp remove aishell
 ```
 
-互換用full profileは全25 toolを提供する。既定7本は5本のdevelopment toolと2本の復旧control toolで、full modeは残りのlegacy primitiveも公開する。
+expanded capability未指定時の互換用full profileは全25 toolを提供する。既定7本は5本の
+development toolと2本の復旧control toolで、full modeは残りのlegacy primitiveも公開する。
+`expanded-v1`ではdevelopment 11本、full 29本を公開する。
 
 ```sh
 AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp
+AISHELL_CAPABILITY_SET=expanded-v1 AISHELL_TOOL_PROFILE=full /opt/homebrew/bin/aishell-mcp
 ```
 
 full profileにはfile一覧・read、SHA-256競合検出付きatomic update、copy/move/rename/Trash、直接process実行、app discovery/launch、runtime status、管理アプリの前面化が含まれる。

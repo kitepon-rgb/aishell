@@ -12,7 +12,7 @@ const packageMetadata = JSON.parse(
 );
 
 assert.equal(packageMetadata.name, "@quolu/aishell");
-assert.equal(packageMetadata.version, "0.3.3");
+assert.equal(packageMetadata.version, "0.3.4");
 assert.deepEqual(packageMetadata.os, ["darwin"]);
 assert.deepEqual(packageMetadata.cpu, ["arm64"]);
 assert.equal(
@@ -34,7 +34,7 @@ assert.match(
 );
 assert.match(
   infoPlist,
-  /<key>CFBundleVersion<\/key>\s*<string>7<\/string>/
+  /<key>CFBundleVersion<\/key>\s*<string>8<\/string>/
 );
 
 console.log("npm package metadata and payload are consistent.");
