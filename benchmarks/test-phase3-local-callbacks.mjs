@@ -396,6 +396,17 @@ const wireCollected = await collectAttemptEvidence({
   benchmarkSetupEvidence, trustedProductionSetup: trusted, agentEvents: wireAgentEvents,
   finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
 });
+const wireWithDiscoveryCollected = await collectAttemptEvidence({
+  attempt: candidateAttempt, workspace, stateDirectory, mcpWireDirectory, preAttemptManifest, baselineManifest,
+  benchmarkSetupEvidence, trustedProductionSetup: trusted,
+  agentEvents: [{ type: 'item.completed', item: {
+    id: 'external-1', type: 'mcp_tool_call', server: 'codex', tool: 'list_mcp_resources', arguments: {},
+    result: externalMCPResult, error: null, status: 'completed',
+  } }, ...wireAgentEvents],
+  finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
+});
+assert.deepEqual(wireWithDiscoveryCollected.result, wireCollected.result);
+assert.equal(wireWithDiscoveryCollected.metrics.toolCalls, 2);
 const rejectedBeforeTransportEvents = [
   { type: 'item.completed', item: {
     id: 'rejected-1', type: 'mcp_tool_call', server: 'aishell', tool: 'workspace_snapshot', arguments: { path: '.' },

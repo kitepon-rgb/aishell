@@ -662,6 +662,22 @@ function rawToolCalls(events) {
   return events.filter((event) => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call');
 }
 
+const CODEX_INTERNAL_DISCOVERY_TOOLS = new Set(['list_mcp_resource_templates', 'list_mcp_resources']);
+
+function codexInternalDiscoveryCall(item, index) {
+  if (item.server !== 'codex' || !CODEX_INTERNAL_DISCOVERY_TOOLS.has(item.tool)
+    || item.status !== 'completed' || !plainObject(item.arguments) || !plainObject(item.result)
+    || item.error !== null) {
+    throw new Error(`Codex MCP event ${index} is unsupported`);
+  }
+  const result = plainObject(item.result.structured_content) ? item.result.structured_content : item.result;
+  return {
+    provider: item.server, tool: item.tool, request: item.arguments, result,
+    resultBytes: canonicalJSONBytes(result), item, requestBytes: canonicalJSONBytes(item.arguments),
+    isError: false, status: 'succeeded',
+  };
+}
+
 export async function observedToolCalls(events, mcpWireDirectory) {
   const hostCalls = rawToolCalls(events);
   if (mcpWireDirectory === undefined) {
@@ -708,7 +724,8 @@ export async function observedToolCalls(events, mcpWireDirectory) {
     const item = event.item;
     exactKeys(item, ['id', 'type', 'server', 'tool', 'arguments', 'result', 'error', 'status'], [],
       `Codex MCP event ${index}`);
-    if (item.server !== 'aishell' || typeof item.tool !== 'string' || !plainObject(item.arguments)) {
+    if (item.server !== 'aishell') return codexInternalDiscoveryCall(item, index);
+    if (typeof item.tool !== 'string' || !plainObject(item.arguments)) {
       throw new Error(`Codex MCP event ${index} is unsupported`);
     }
     const call = wireCalls[wireIndex];
