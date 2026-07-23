@@ -112,6 +112,7 @@ public struct ProjectProfileCheck: Codable, Equatable, Sendable {
     public let checkId: String
     public let kind: String
     public let label: String
+    public let displayCommand: String
     public let executable: String
     public let arguments: [String]
     public let workingDirectory: String
@@ -123,6 +124,7 @@ public struct ProjectProfileCheck: Codable, Equatable, Sendable {
         checkId: String,
         kind: String,
         label: String,
+        displayCommand: String? = nil,
         executable: String,
         arguments: [String],
         workingDirectory: String,
@@ -137,6 +139,7 @@ public struct ProjectProfileCheck: Codable, Equatable, Sendable {
         self.checkId = checkId
         self.kind = kind
         self.label = label
+        self.displayCommand = displayCommand ?? ([URL(fileURLWithPath: executable).lastPathComponent] + arguments).joined(separator: " ")
         self.executable = executable
         self.arguments = arguments
         self.workingDirectory = workingDirectory
@@ -146,7 +149,7 @@ public struct ProjectProfileCheck: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case checkId, kind, label, executable, arguments, workingDirectory, environmentKeys, provenance, inputContract
+        case checkId, kind, label, displayCommand, executable, arguments, workingDirectory, environmentKeys, provenance, inputContract
     }
 
     public init(from decoder: Decoder) throws {
@@ -156,6 +159,8 @@ public struct ProjectProfileCheck: Codable, Equatable, Sendable {
         label = try container.decode(String.self, forKey: .label)
         executable = try container.decode(String.self, forKey: .executable)
         arguments = try container.decode([String].self, forKey: .arguments)
+        displayCommand = try container.decodeIfPresent(String.self, forKey: .displayCommand)
+            ?? ([URL(fileURLWithPath: executable).lastPathComponent] + arguments).joined(separator: " ")
         workingDirectory = try container.decode(String.self, forKey: .workingDirectory)
         environmentKeys = try container.decode([String].self, forKey: .environmentKeys)
         provenance = try container.decode(ProjectProfileProvenance.self, forKey: .provenance)
@@ -1006,6 +1011,7 @@ public actor ProjectProfileService {
                 return try makeCheck(
                     candidate: candidate, kind: kind, key: kind,
                     executable: declared.executable.path, arguments: declared.arguments,
+                    displayCommand: ([declared.executable.lastPathComponent] + declared.arguments).joined(separator: " "),
                     provenance: provenance, environmentKeys: declared.environmentKeys,
                     inputContract: declared.inputContract
                 )
@@ -1013,7 +1019,8 @@ public actor ProjectProfileService {
             guard scripts[kind] is String else { return nil }
             return try makeCheck(
                 candidate: candidate, kind: kind, key: kind,
-                executable: npm.path, arguments: ["run", kind, "--"], provenance: provenance
+                executable: npm.path, arguments: ["run", kind, "--"],
+                displayCommand: kind == "test" ? "npm test" : "npm run \(kind)", provenance: provenance
             )
         }
         return ([target], checks, [nodeToolchain, toolchain])
@@ -1146,7 +1153,8 @@ public actor ProjectProfileService {
         }
         let toolchain = try await probeToolchain(name: "swift", executable: swift, versionArguments: ["--version"])
         let checks = try ["build", "test"].map {
-            try makeCheck(candidate: candidate, kind: $0, key: $0, executable: swift.path, arguments: [$0], provenance: provenance)
+            try makeCheck(candidate: candidate, kind: $0, key: $0, executable: swift.path, arguments: [$0],
+                          displayCommand: "swift \($0)", provenance: provenance)
         }
         return (targets, checks, [toolchain], providerEvidence)
     }
@@ -1157,6 +1165,7 @@ public actor ProjectProfileService {
         key: String,
         executable: String,
         arguments: [String],
+        displayCommand: String? = nil,
         provenance: ProjectProfileProvenance,
         environmentKeys declaredEnvironmentKeys: [String]? = nil,
         inputContract: ProjectProfileCheckInputContract? = nil
@@ -1167,6 +1176,7 @@ public actor ProjectProfileService {
         ])
         return ProjectProfileCheck(
             checkId: id, kind: kind, label: key,
+            displayCommand: displayCommand,
             executable: executable, arguments: arguments,
             workingDirectory: candidate.projectRoot.path,
             environmentKeys: declaredEnvironmentKeys ?? environmentKeys,

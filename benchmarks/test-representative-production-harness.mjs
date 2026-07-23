@@ -6,7 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { captureManifest } from './capture-workspace-manifest.mjs';
-import { collectRepresentativeAttemptEvidence } from './representative-local-callbacks.mjs';
+import {
+  collectRepresentativeAttemptEvidence,
+  selectRepresentativeCapabilityCall,
+} from './representative-local-callbacks.mjs';
 import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'aishell-representative-harness-'));
@@ -27,6 +30,12 @@ try {
   });
   assert.equal(typeof harness.run, 'function');
   assert.equal(typeof harness.executor, 'function');
+  const errors = [
+    { isError: true, result: { error: { code: 'CURSOR_EXPIRED' } } },
+    { isError: true, result: { error: { code: 'RESCAN_REQUIRED' } } },
+  ];
+  assert.equal(selectRepresentativeCapabilityCall(errors, 'RESCAN_REQUIRED'), errors[1]);
+  assert.equal(selectRepresentativeCapabilityCall(errors, 'STALE_CONTENT'), null);
 
   const workspace = path.join(temporary, 'workspace');
   await mkdir(path.join(workspace, 'src'), { recursive: true });

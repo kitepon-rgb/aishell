@@ -44,6 +44,8 @@ final class GitContextProviderTests: XCTestCase {
 
         let (pagedProvider, _, _) = try fixture.provider(suffix: "paged")
         var page = try await pagedProvider.context(request: .init(byteBudget: 1, includePatch: false), comparisonBinding: binding)
+        XCTAssertEqual(page.byteBudget, 1)
+        XCTAssertLessThanOrEqual(page.returnedBytes, page.byteBudget)
         XCTAssertTrue(page.changes.isEmpty)
         XCTAssertTrue(page.hasMore)
         var collected: [GitDiffChange] = []

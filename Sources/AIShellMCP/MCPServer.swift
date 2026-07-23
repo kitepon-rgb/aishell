@@ -1157,7 +1157,7 @@ final class MCPServer: @unchecked Sendable {
             let code: String
             switch error.code {
             case .invalidArgument: code = "INVALID_ARGUMENT"
-            case .contentChanged: code = "CONTENT_CHANGED"
+            case .contentChanged: code = "STALE_CONTENT"
             case .expectedAbsenceViolated: code = "EXPECTED_ABSENCE_VIOLATED"
             case .workspaceChanged: code = "WORKSPACE_CHANGED"
             case .rootMismatch: code = "ROOT_MISMATCH"

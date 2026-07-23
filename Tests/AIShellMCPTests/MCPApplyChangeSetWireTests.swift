@@ -209,6 +209,10 @@ final class MCPApplyChangeSetWireTests: XCTestCase {
     func testApplyChangeSetErrorsKeepStableCodes() {
         let server = MCPServer()
         XCTAssertEqual(
+            server.stableError(ApplyChangeSetError(.contentChanged)).code,
+            "STALE_CONTENT"
+        )
+        XCTAssertEqual(
             server.stableError(ApplyChangeSetError(.changeSetRecoveryRequired)).code,
             "CHANGE_SET_RECOVERY_REQUIRED"
         )

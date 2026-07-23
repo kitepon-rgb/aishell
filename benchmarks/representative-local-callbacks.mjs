@@ -31,6 +31,13 @@ const EXECUTION = JSON.parse(await readFile(new URL('representative-execution-co
 const SUITE = JSON.parse(await readFile(new URL('representative-suite.v1.json', import.meta.url), 'utf8'));
 const CATALOG = JSON.parse(await readFile(new URL('capability-fixtures.v1.json', import.meta.url), 'utf8'));
 
+export function selectRepresentativeCapabilityCall(candidates, expectedError = undefined) {
+  if (!Array.isArray(candidates)) throw new TypeError('candidate calls must be an array');
+  return expectedError
+    ? candidates.find(({ isError, result }) => isError && result?.error?.code === expectedError) ?? null
+    : candidates.find(({ isError }) => !isError) ?? null;
+}
+
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -101,7 +108,7 @@ export async function collectRepresentativeAttemptEvidence(input) {
   if (attempt.arm === 'candidate') {
     for (const required of contract.requiredCalls) {
       const candidates = calls.filter(({ tool }) => tool === required.tool);
-      const call = expectedError ? candidates.find(({ isError }) => isError) : candidates.find(({ isError }) => !isError);
+      const call = selectRepresentativeCapabilityCall(candidates, expectedError);
       if (!call) continue;
       const result = projectedCandidateResult(
         call, EXECUTION.candidateResultSchemaByTool[required.tool], finalAgent, expectedError,

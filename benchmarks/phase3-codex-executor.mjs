@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { readFile, mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -28,6 +29,16 @@ function requireAbsolutePath(value, label) {
     throw new Error(`${label} must be an absolute path`);
   }
   return path.normalize(value);
+}
+
+function enclosingGitWorktree(directory) {
+  let current = path.resolve(directory);
+  while (true) {
+    if (existsSync(path.join(current, '.git'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
 }
 
 function tomlString(value) {
@@ -292,6 +303,10 @@ async function validateBindings(attempt, armBinding, options) {
 function normalizeOptions(options) {
   if (!options || typeof options !== 'object') throw new Error('executor options are required');
   const outputDirectory = requireAbsolutePath(options.outputDirectory, 'outputDirectory');
+  const enclosingRepository = enclosingGitWorktree(outputDirectory);
+  if (enclosingRepository !== null) {
+    throw new Error(`outputDirectory must be outside every Git worktree for arm-symmetric isolation: ${enclosingRepository}`);
+  }
   const codexCommand = options.codexCommand ?? 'codex';
   if (typeof codexCommand !== 'string' || codexCommand.length === 0) throw new Error('codexCommand is invalid');
   const armBinaries = {

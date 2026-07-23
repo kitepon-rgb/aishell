@@ -22,6 +22,10 @@ final class ProjectProfileServiceTests: XCTestCase {
         XCTAssertEqual(initial.status, .complete)
         XCTAssertEqual(initial.freshness, .freshComputed)
         XCTAssertEqual(Set(initial.checks.map(\.kind)), ["build", "test", "lint"])
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: initial.checks.map { ($0.kind, $0.displayCommand) }),
+            ["build": "npm run build", "test": "npm test", "lint": "npm run lint"]
+        )
         XCTAssertEqual(Set(initial.toolchains.map(\.name)), ["node", "npm"])
         XCTAssertTrue(initial.checks.allSatisfy { $0.arguments.last == "--" })
         XCTAssertTrue(initial.targets.allSatisfy { $0.provenance.kind == "manifest" })
@@ -196,6 +200,7 @@ final class ProjectProfileServiceTests: XCTestCase {
         XCTAssertEqual(profile.status, .complete)
         XCTAssertEqual(Set(profile.targets.map(\.name)), ["ProfileFixture", "ProfileFixtureTests"])
         XCTAssertEqual(Set(profile.checks.map(\.kind)), ["build", "test"])
+        XCTAssertEqual(Set(profile.checks.map(\.displayCommand)), ["swift build", "swift test"])
         XCTAssertTrue(profile.checks.allSatisfy { !$0.executable.contains(" ") && $0.arguments.count == 1 })
         XCTAssertEqual(profile.toolchains.map(\.name), ["swift"])
         XCTAssertTrue(profile.toolchains.allSatisfy { !$0.evidenceSHA256.isEmpty && $0.exitStatus == 0 })

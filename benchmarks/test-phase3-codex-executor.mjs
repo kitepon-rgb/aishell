@@ -166,6 +166,9 @@ assert.throws(() => createPhase3CodexExecutor(executorOptions({
 assert.throws(() => createPhase3CodexExecutor(executorOptions({
   sandboxConfiguration: { approvalPolicy: 'bypass', filesystem: 'workspace-write', network: false },
 })), /no exact Codex argv mapping/u);
+assert.throws(() => createPhase3CodexExecutor(executorOptions({
+  outputDirectory: path.resolve(new URL('..', import.meta.url).pathname, 'nested-benchmark-output'),
+})), /outside every Git worktree/u);
 
 const executor = createPhase3CodexExecutor({
   outputDirectory,

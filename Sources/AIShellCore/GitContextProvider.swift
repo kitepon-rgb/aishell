@@ -188,6 +188,7 @@ public struct GitDiffContextResult: Codable, Equatable, Sendable {
     public let layerCounts: [String: Int]
     public let changes: [GitDiffChange]
     public let patches: [GitDiffPatch]
+    public let byteBudget: Int
     public let returnedBytes: Int
     public let omittedBytes: Int
     public let hasMore: Bool
@@ -370,7 +371,8 @@ public actor GitContextProvider {
             dirtyState: isDirty(pre) ? "dirty" : "clean",
             workspaceCursor: postBinding.workspaceCursor, gitStateDigest: stateDigest,
             layerCounts: Dictionary(grouping: collected.changes, by: { $0.layer.rawValue }).mapValues(\.count),
-            changes: [], patches: [], returnedBytes: 0, omittedBytes: 0, hasMore: !items.isEmpty,
+            changes: [], patches: [], byteBudget: request.byteBudget,
+            returnedBytes: 0, omittedBytes: 0, hasMore: !items.isEmpty,
             continuation: nil, artifact: descriptor, worktreeEvidenceDigest: evidenceDigest
         )
         let snapshotID = UUID().uuidString.lowercased()
@@ -446,7 +448,8 @@ public actor GitContextProvider {
             indexTreeSHA: t.indexTreeSHA, indexState: t.indexState, dirtyState: t.dirtyState,
             workspaceCursor: t.workspaceCursor,
             gitStateDigest: t.gitStateDigest, layerCounts: t.layerCounts, changes: changes, patches: patches,
-            returnedBytes: used, omittedBytes: omitted, hasMore: continuation != nil, continuation: continuation,
+            byteBudget: budget, returnedBytes: used, omittedBytes: omitted,
+            hasMore: continuation != nil, continuation: continuation,
             artifact: t.artifact, worktreeEvidenceDigest: t.worktreeEvidenceDigest
         )
     }

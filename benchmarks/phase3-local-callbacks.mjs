@@ -35,7 +35,8 @@ export function representativeTelemetryEvidence(calls, attempt) {
   return {
     maxFullRescans: results.reduce((sum, result) => sum + (result.fullRescans ?? 0), 0),
     silentFallbacks: results.some((result) => result.fallbackUsed === true) ? 1 : 0,
-    profileCacheHit: profiles.some((profile) => ['hit', 'warm'].includes(profile.cacheState ?? profile.cache_state)),
+    profileCacheHit: profiles.some((profile) => ['hit', 'warm'].includes(profile.cacheState ?? profile.cache_state)
+      || profile.freshness === 'fresh_cached'),
     silentTruncations: results.some((result) => (result.omittedBytes ?? 0) > 0 && !result.hasMore && !result.continuation) ? 1 : 0,
     secondExecutionCount: results.reduce((sum, result) => sum + (result.processesStarted ?? 0), 0),
     cacheHit: results.some((result) => result.cacheState === 'hit' || result.cacheHit === true),

@@ -98,7 +98,12 @@ function projectToolResult(expected, raw, exemptKeys) {
     else if (key === 'rawEvidenceRetained') projected[key] = (raw.artifacts ?? []).length > 0 && raw.artifacts.every(({handle}) => typeof handle === 'string');
     else if (key === 'deduplicated') projected[key] = new Set((raw.matches ?? []).map(canonical)).size === (raw.matches ?? []).length;
     else if (key === 'provenanceRequired') projected[key] = typeof raw.provenance === 'string' && raw.provenance.length > 0;
-    else if (key === 'budgeted') projected[key] = Number.isFinite(raw.returnedBytes) && Number.isFinite(raw.byteBudget) && raw.returnedBytes <= raw.byteBudget;
+    else if (key === 'budgeted') {
+      const budgeted = typeof raw.budgeted === 'boolean' ? raw.budgeted : raw.gitDiff ?? raw;
+      projected[key] = typeof budgeted === 'boolean' ? budgeted
+        : Number.isFinite(budgeted.returnedBytes) && Number.isFinite(budgeted.byteBudget)
+          && budgeted.returnedBytes <= budgeted.byteBudget;
+    }
     else projected[key] = raw[key];
   }
   return projected;
@@ -264,7 +269,12 @@ export async function observeAttempt({ taskId, armId, workspace, baselineFile, p
     } else {
       if (key === 'deduplicated') assertions[key] = new Set(structured.matches ?? []).size === (structured.matches ?? []).length;
       else if (key === 'provenanceRequired') assertions[key] = typeof structured.provenance === 'string' && structured.provenance.length > 0;
-      else if (key === 'budgeted') assertions[key] = Number.isFinite(structured.returnedBytes) && Number.isFinite(structured.byteBudget) && structured.returnedBytes <= structured.byteBudget;
+      else if (key === 'budgeted') {
+        const budgeted = typeof structured.budgeted === 'boolean' ? structured.budgeted : structured.gitDiff ?? structured;
+        assertions[key] = typeof budgeted === 'boolean' ? budgeted
+          : Number.isFinite(budgeted.returnedBytes) && Number.isFinite(budgeted.byteBudget)
+            && budgeted.returnedBytes <= budgeted.byteBudget;
+      }
       else assertions[key] = structured[key];
     }
     observationSources[key] = source;
