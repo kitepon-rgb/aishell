@@ -11,6 +11,7 @@ import {
   selectRepresentativeCapabilityCall,
 } from './representative-local-callbacks.mjs';
 import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
+import { selectProbeAttempts } from './probe-representative-production.mjs';
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'aishell-representative-harness-'));
 try {
@@ -30,6 +31,17 @@ try {
   });
   assert.equal(typeof harness.run, 'function');
   assert.equal(typeof harness.executor, 'function');
+  const probeManifest = { attempts: [
+    { sequence: 1, taskID: 'task-a', arm: 'candidate', repetition: 1 },
+    { sequence: 2, taskID: 'task-a', arm: 'native', repetition: 1 },
+  ] };
+  assert.deepEqual(selectProbeAttempts(probeManifest, [
+    { taskID: 'task-a', arm: 'candidate', repetition: 1 },
+  ]).map(({ sequence }) => sequence), [1]);
+  assert.throws(() => selectProbeAttempts(probeManifest, [
+    { taskID: 'task-a', arm: 'candidate', repetition: 1 },
+    { taskID: 'task-a', arm: 'candidate', repetition: 1 },
+  ]), /duplicated/u);
   const errors = [
     { isError: true, result: { error: { code: 'CURSOR_EXPIRED' } } },
     { isError: true, result: { error: { code: 'RESCAN_REQUIRED' } } },
