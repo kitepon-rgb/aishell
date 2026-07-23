@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { createRepresentativeLocalCallbacks } from './representative-local-callbacks.mjs';
+import { ensureRepresentativeBinaryBindings } from './representative-binary-bindings.mjs';
 import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
 import {
   buildRepresentativeAttemptManifest,
@@ -66,9 +67,15 @@ if (next && await exists(path.join(configuration.executorOptions.outputDirectory
   throw new Error(`next attempt directory already exists without a completed checkpoint: ${next.attemptID}`);
 }
 
-const local = createRepresentativeLocalCallbacks({ armBinaries: configuration.executorOptions.armBinaries });
+const frozenArmBinaries = await ensureRepresentativeBinaryBindings({
+  manifest,
+  armBinaries: configuration.executorOptions.armBinaries,
+  bindingsDirectory: path.join(runDirectory, 'bindings'),
+});
+const executorOptions = { ...configuration.executorOptions, armBinaries: frozenArmBinaries };
+const local = createRepresentativeLocalCallbacks({ armBinaries: frozenArmBinaries });
 const harness = createRepresentativeProductionHarness({
-  executorOptions: configuration.executorOptions,
+  executorOptions,
   prepareSetup: local.prepareSetup,
   materializePrompt: local.materializePrompt,
   beforeAgentAttempt: local.beforeAgentAttempt,
