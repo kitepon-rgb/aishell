@@ -45,6 +45,18 @@ await assert.rejects(() => runRepresentativeAttempts({
   executeAttempt: async () => { throw new Error('must not execute'); },
 }), /frozen prefix/u);
 
+const completedPrefix = manifest.attempts.slice(0, 48).map(({ attemptID }) => ({ attemptID }));
+const resumedCalls = [];
+await assert.rejects(() => runRepresentativeAttempts({
+  manifest,
+  priorRecords: completedPrefix,
+  executeAttempt: async ({ attempt }) => {
+    resumedCalls.push(attempt.attemptID);
+    throw new Error('resume sentinel stop');
+  },
+}), /resume sentinel stop/u);
+assert.deepEqual(resumedCalls, [manifest.attempts[48].attemptID]);
+
 await assert.rejects(() => runRepresentativeAttempts({
   manifest,
   executeAttempt: async ({ attempt }) => {
