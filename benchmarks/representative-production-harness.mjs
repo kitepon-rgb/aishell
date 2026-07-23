@@ -38,6 +38,21 @@ async function frozenInputs() {
   return { suite, catalog, execution };
 }
 
+export function invalidAgentOracle(attempt, finalAgent) {
+  if (finalAgent?.schema === 'aishell.agent-benchmark-report.v1'
+    && finalAgent.taskId === attempt.taskID
+    && finalAgent.assertions && typeof finalAgent.assertions === 'object'
+    && !Array.isArray(finalAgent.assertions)) return null;
+  const reason = typeof finalAgent?.reason === 'string' ? finalAgent.reason : 'invalid_agent_report';
+  return {
+    schema: 'aishell.capability-oracle-result.v1',
+    taskId: attempt.taskID,
+    arm: attempt.arm,
+    solved: false,
+    failures: [`agent report: ${reason}`],
+  };
+}
+
 export function createRepresentativeProductionHarness(options) {
   const prepareSetup = requiredFunction(options.prepareSetup, 'prepareSetup');
   const materializeLocalPrompt = requiredFunction(options.materializePrompt, 'materializePrompt');
@@ -140,14 +155,24 @@ export function createRepresentativeProductionHarness(options) {
       setupEvidence: state.benchmarkSetupEvidence, ...frozen,
     });
     await exclusiveJSON(files.request, requestContract);
-    const observerEvidence = await observeCapabilityAttempt({
-      taskId: attempt.taskID, armId: attempt.arm, workspace,
-      baselineFile: files.baseline, preAttemptFile: files.preAttempt, setupEvidenceFile: files.setup,
-      requestContractFile: files.request, resultFile: files.result, processFile: files.process,
-      artifactStore: raw.artifactStore, telemetryFile: files.telemetry, traceFile: files.trace,
-      toolTraceFile: files.toolTrace, agentReportFile: files.agentReport,
-    });
-    const oracle = await evaluateAttempt({ taskId: attempt.taskID, armId: attempt.arm, actual: observerEvidence });
+    const invalidOracle = invalidAgentOracle(attempt, finalAgent);
+    const observerEvidence = invalidOracle === null
+      ? await observeCapabilityAttempt({
+        taskId: attempt.taskID, armId: attempt.arm, workspace,
+        baselineFile: files.baseline, preAttemptFile: files.preAttempt, setupEvidenceFile: files.setup,
+        requestContractFile: files.request, resultFile: files.result, processFile: files.process,
+        artifactStore: raw.artifactStore, telemetryFile: files.telemetry, traceFile: files.trace,
+        toolTraceFile: files.toolTrace, agentReportFile: files.agentReport,
+      })
+      : {
+        schema: 'aishell.invalid-agent-observation.v1',
+        producer: 'aishell-benchmark-observer.v1',
+        taskId: attempt.taskID,
+        armId: attempt.arm,
+        reason: finalAgent.reason ?? 'invalid_agent_report',
+      };
+    const oracle = invalidOracle
+      ?? await evaluateAttempt({ taskId: attempt.taskID, armId: attempt.arm, actual: observerEvidence });
     oracleRecords.set(attempt.sequence, { sequence: attempt.sequence, result: oracle });
     metricRecords.set(attempt.sequence, { sequence: attempt.sequence, metrics: raw.metrics });
     setupStates.delete(attempt.attemptID);

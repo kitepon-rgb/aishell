@@ -479,6 +479,11 @@ export function createPhase3CodexExecutor(rawOptions) {
       execution: structuredClone(execution),
     }));
     const wallMilliseconds = Math.round(performance.now() - started);
+    await writeJSON(path.join(runDirectory, 'execution-result.json'), {
+      exitCode: execution.exitCode,
+      timedOut: Boolean(execution.timedOut),
+      wallMilliseconds,
+    });
     const stdout = Buffer.from(execution.stdout ?? '');
     const stderr = Buffer.from(execution.stderr ?? '');
     const providerSSEBytes = providerSSETrace(stderr);

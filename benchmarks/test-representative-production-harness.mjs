@@ -11,7 +11,10 @@ import {
   materializeRepresentativePrompt,
   selectRepresentativeCapabilityCall,
 } from './representative-local-callbacks.mjs';
-import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
+import {
+  createRepresentativeProductionHarness,
+  invalidAgentOracle,
+} from './representative-production-harness.mjs';
 import { selectProbeAttempts } from './probe-representative-production.mjs';
 import { renderRepresentativePrompt } from './render-representative-prompt.mjs';
 
@@ -92,6 +95,37 @@ try {
   assert.deepEqual(evidence.result.apply, [['src/a.txt', 'A2\n'], ['src/b.txt', 'B2\n']]);
   assert.equal(evidence.adapterTraceBytes, null);
   assert.deepEqual(evidence.toolTrace.events, []);
+  const invalidEvidence = await collectRepresentativeAttemptEvidence({
+    attempt: {
+      attemptID: 'invalid-agent-unit', taskID: 'bilingual-workflow-japanese', arm: 'native', repetition: 1,
+    },
+    workspace,
+    stateDirectory: path.join(temporary, 'invalid-state'),
+    baselineManifest: baseline,
+    preAttemptManifest: baseline,
+    benchmarkSetupEvidence: {
+      schema: 'aishell.benchmark-setup-evidence.v1', taskId: 'bilingual-workflow-japanese',
+      workspaceRoot: workspace, preStateDigest: baseline.digest,
+    },
+    agentEvents: [],
+    finalAgent: {
+      schema: 'aishell.invalid-agent-result.v1', taskId: 'bilingual-workflow-japanese',
+      reason: 'final_agent_message_is_not_json',
+    },
+    execution: { exitCode: 0, timedOut: false, wallMilliseconds: 1 },
+    artifactStore: path.join(temporary, 'invalid-artifacts'),
+  });
+  assert.deepEqual(invalidEvidence.result, {});
+  assert.deepEqual(invalidAgentOracle(
+    { taskID: 'bilingual-workflow-japanese', arm: 'native' },
+    { schema: 'aishell.invalid-agent-result.v1', reason: 'final_agent_message_is_not_json' },
+  ), {
+    schema: 'aishell.capability-oracle-result.v1',
+    taskId: 'bilingual-workflow-japanese',
+    arm: 'native',
+    solved: false,
+    failures: ['agent report: final_agent_message_is_not_json'],
+  });
   process.stdout.write('representative production harness tests passed\n');
 } finally {
   await rm(temporary, { recursive: true, force: true });

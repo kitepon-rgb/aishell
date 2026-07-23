@@ -937,7 +937,7 @@ export async function collectAttemptEvidence(input) {
     }
     projectedResult = Object.assign({}, ...calls.filter(({ isError }) => !isError).map(({ result }) => result));
   }
-  if (!plainObject(finalAgent?.assertions)) throw new Error('final agent assertions are unavailable');
+  const finalAssertions = plainObject(finalAgent?.assertions) ? finalAgent.assertions : {};
   const observedTelemetry = representativeTelemetryEvidence(calls, attempt);
   const telemetry = attempt.arm === 'candidate' ? {
     ...observedTelemetry,
@@ -947,7 +947,7 @@ export async function collectAttemptEvidence(input) {
     falseFresh: Number.isInteger(projectedResult.falseFresh) ? projectedResult.falseFresh : observedTelemetry.falseFresh,
   } : observedTelemetry;
   return {
-    result: Object.keys(projectedResult).length === 0 ? structuredClone(finalAgent.assertions) : projectedResult,
+    result: Object.keys(projectedResult).length === 0 ? structuredClone(finalAssertions) : projectedResult,
     process: {
       agentExitCode: execution.exitCode,
       agentTimedOut: execution.timedOut,
