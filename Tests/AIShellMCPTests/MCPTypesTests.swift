@@ -104,6 +104,25 @@ final class MCPTypesTests: XCTestCase {
         XCTAssertTrue(response.error?.message.contains("INVALID_CAPABILITY_SET") == true)
     }
 
+    func testInvalidToolProfileIsTypedStartupFailureWithoutFallback() async throws {
+        for profile in ["future", ""] {
+            XCTAssertThrowsError(try ToolCatalog.listedTools(profile: profile)) { error in
+                XCTAssertEqual(error as? MCPStartupError, .invalidToolProfile(profile))
+                XCTAssertTrue(error.localizedDescription.contains("INVALID_TOOL_PROFILE"))
+            }
+        }
+        let server = MCPServer(toolProfile: "future")
+        XCTAssertThrowsError(try server.validateStartup()) { error in
+            XCTAssertEqual(error as? MCPStartupError, .invalidToolProfile("future"))
+        }
+        let response = await server.callTool(id: .number(2), params: .object([
+            "name": .string("runtime_status"), "arguments": .object([:])
+        ]))
+        XCTAssertNil(response.result)
+        XCTAssertEqual(response.error?.code, -32000)
+        XCTAssertTrue(response.error?.message.contains("INVALID_TOOL_PROFILE") == true)
+    }
+
     func testDefaultServerCannotCallExpandedTool() async {
         let response = await MCPServer(capabilitySet: nil).callTool(
             id: .number(2),

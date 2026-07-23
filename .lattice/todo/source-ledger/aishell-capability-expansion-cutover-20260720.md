@@ -38,7 +38,7 @@ Revision: a8fdf2365f7f3568dba93f60458c766bb0a8e3330de1e8bf7d4edd0cff1c39e6
 - [ ] ACE-063 workspace_snapshotへworktree/branch比較modeを追加し、root identity、base、dirty state、budget付きdiffを返す。
 - [ ] ACE-064 lexical、semantic、dependency adapterのablationとstale-after-edit検証を行い、改善しない経路は利用可能でもdefault routingへ入れない。
 - [ ] ACE-065 default 9/full 29 tool profile、schema、instructions、日英tool discovery、互換性を統合しPhase 6を受け入れる。
-- [ ] ACE-070 native、現行0.3.2、拡張candidateを30 task以上×事前登録反復で比較し、全試行token、成功率、wall、tool adoptionを集計する。
+- ACE-070の工程状態はLattice正本へ移転済み。
 - [ ] ACE-071 baseline成功taskを落とさずtokens per solved task 30%以上削減、p50非悪化、p95悪化10%以内、silent fallback 0をproduct gateとする。
 - [ ] ACE-072 Phase maintenanceを一回だけ処理し、関連test、swift test、package-app、MCP wire fixture、最終独立監査を通す。
-- [ ] ACE-073 README、MCP instructions、RAG、release notes、公開schemaを同期し、Phase Decision ADRとControl finalization証拠を残す。
+- ACE-073の工程状態はLattice正本へ移転済み。

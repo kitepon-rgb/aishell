@@ -272,6 +272,10 @@ enum ToolCatalog {
     static let defaultToolNames = developmentToolNames.union(controlToolNames)
 
     static func listedTools(profile: String?, capabilitySet: String? = nil) throws -> [MCPTool] {
+        switch profile {
+        case nil, "development", "full", "legacy": break
+        case let value?: throw MCPStartupError.invalidToolProfile(value)
+        }
         let expanded: Bool
         switch capabilitySet {
         case nil: expanded = false
@@ -1506,10 +1510,13 @@ enum ToolCatalog {
 }
 
 enum MCPStartupError: LocalizedError, Equatable {
+    case invalidToolProfile(String)
     case invalidCapabilitySet(String)
 
     var errorDescription: String? {
         switch self {
+        case let .invalidToolProfile(value):
+            "INVALID_TOOL_PROFILE: AISHELL_TOOL_PROFILEはdevelopment、full、legacyだけを受理します: \(value)"
         case let .invalidCapabilitySet(value):
             "INVALID_CAPABILITY_SET: AISHELL_CAPABILITY_SETは未指定またはexpanded-v1だけを受理します: \(value)"
         }
