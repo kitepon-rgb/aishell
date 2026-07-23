@@ -11,6 +11,7 @@ import {
   candidateAdapterTraceBytes,
   exactByteBinding,
   extractProviderModelsFromSSETrace,
+  extractProviderUsageFromSSETrace,
   extractProviderUsageFromTrace,
   normalizeProviderUsage,
   oracleFreeFixtureMaterial,
@@ -191,6 +192,31 @@ const exactProviderSSE = exactByteBinding(Buffer.from([
   '',
 ].join('\n')));
 const providerModels = extractProviderModelsFromSSETrace(Buffer.from(exactProviderSSE.base64, 'base64'));
+for (const terminalType of ['response.failed', 'response.incomplete']) {
+  const failedSSE = Buffer.from([
+    JSON.stringify({ type: 'response.created', response: { id: 'failed', model: configuration.modelSnapshot } }),
+    JSON.stringify({ type: terminalType, response: { id: 'failed', model: configuration.modelSnapshot } }),
+    '',
+  ].join('\n'));
+  assert.throws(() => extractProviderModelsFromSSETrace(failedSSE), /did not complete/u);
+}
+const abandonedSSE = Buffer.concat([
+  Buffer.from(exactProviderSSE.base64, 'base64'),
+  Buffer.from(`${JSON.stringify({
+    type: 'response.created',
+    response: {
+      id: 'abandoned', model: configuration.modelSnapshot, status: 'in_progress',
+      usage: null, error: null, incomplete_details: null,
+    },
+  })}\n`),
+]);
+assert.deepEqual(extractProviderModelsFromSSETrace(abandonedSSE), providerModels);
+assert.deepEqual(extractProviderUsageFromSSETrace(abandonedSSE),
+  extractProviderUsageFromSSETrace(Buffer.from(exactProviderSSE.base64, 'base64')));
+assert.throws(() => extractProviderModelsFromSSETrace(Buffer.from(`${JSON.stringify({
+  type: 'response.created',
+  response: { id: 'not-inert', model: configuration.modelSnapshot, status: 'in_progress', usage: { input_tokens: 1 } },
+})}\n${Buffer.from(exactProviderSSE.base64, 'base64').toString('utf8')}`)), /not inert/u);
 assert.deepEqual(extractProviderUsageFromTrace(Buffer.from(exactProviderTrace.base64, 'base64')), {
   format: 'codex-exec-jsonl.v1',
   usage: {

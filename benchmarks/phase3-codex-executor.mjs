@@ -143,7 +143,7 @@ function providerSSETrace(stderrBytes) {
       const eventBytes = line.subarray(markerOffset + marker.length);
       try {
         const event = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(eventBytes));
-        if (event?.type === 'response.created' || event?.type === 'response.completed') {
+        if (['response.created', 'response.completed', 'response.failed', 'response.incomplete'].includes(event?.type)) {
           selected.push(Buffer.from(eventBytes), Buffer.from('\n'));
         }
       } catch { /* Non-JSON protocol diagnostics are not provider response evidence. */ }

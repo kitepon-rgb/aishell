@@ -617,25 +617,38 @@ function pairedProviderResponses(providerSSEBytes) {
   const events = text.split('\n').filter(Boolean).map((line, index) => {
     try {
       const event = JSON.parse(line);
-      if (!plainObject(event) || !['response.created', 'response.completed'].includes(event.type)
+      if (!plainObject(event) || !['response.created', 'response.completed', 'response.failed', 'response.incomplete'].includes(event.type)
         || !plainObject(event.response) || typeof event.response.id !== 'string'
         || typeof event.response.model !== 'string' || event.response.model.length === 0) throw new Error();
       return event;
     } catch { throw new Error(`provider SSE trace line ${index + 1} is invalid`); }
   });
   const created = new Map();
-  const completed = new Map();
+  const terminal = new Map();
   for (const event of events) {
-    const target = event.type === 'response.created' ? created : completed;
-    if (target.has(event.response.id)) throw new Error(`provider SSE ${event.type} id is duplicated`);
-    target.set(event.response.id, event.response);
+    if (event.type === 'response.created') {
+      if (created.has(event.response.id)) throw new Error(`provider SSE ${event.type} id is duplicated`);
+      created.set(event.response.id, event.response);
+    } else {
+      if (terminal.has(event.response.id)) throw new Error(`provider SSE terminal id is duplicated`);
+      terminal.set(event.response.id, { type: event.type, response: event.response });
+    }
   }
-  if (completed.size === 0 || created.size !== completed.size) throw new Error('provider SSE response pairs are incomplete');
+  if (terminal.size === 0) throw new Error('provider SSE response pairs are incomplete');
   const pairs = [];
-  for (const [id, response] of completed) {
+  for (const [id, end] of terminal) {
     const start = created.get(id);
-    if (!start || start.model !== response.model) throw new Error('provider SSE response pair model differs');
-    pairs.push(response);
+    if (!start || start.model !== end.response.model) throw new Error('provider SSE response pair model differs');
+    if (end.type !== 'response.completed') {
+      throw new Error(`provider SSE response did not complete: ${id} (${end.type})`);
+    }
+    pairs.push(end.response);
+  }
+  for (const [id, start] of created) {
+    if (terminal.has(id)) continue;
+    if (start.status !== 'in_progress' || start.usage != null || start.error != null || start.incomplete_details != null) {
+      throw new Error(`provider SSE abandoned response is not inert: ${id}`);
+    }
   }
   return pairs;
 }
