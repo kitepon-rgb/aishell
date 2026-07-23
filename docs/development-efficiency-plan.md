@@ -56,7 +56,9 @@ tokens per solved task = 全試行のtotal model tokens合計 / oracle成功数
 代表ベンチの各arm binaryはmanifestのSHA-256へ照合して`run/bindings/`へ原子的に保存し、再開時は
 mutableなbuild出力ではなく保存済み実体だけを使う。部分完了後にcandidate bindingを変更する場合は、
 他のmanifest条件が同一であることを機械検証し、native／current記録だけを再利用して旧candidate記録を
-すべて再測定する。異なるcandidate binaryの記録を同一armへ混在させない。agentの最終reportが不正でも
+すべて再測定する。隣接する`aishell-run-supervisor`が存在する製品bindingでは、main binary SHAに結び付けた
+companion binding receiptと一緒にhelperも凍結・再照合する。異なるcandidate binaryの記録を同一armへ
+混在させない。agentの最終reportが不正でも
 run全体を中断せず、その試行のprovider usageを全試行tokenへ含めてoracle失敗として記録する。process終了直後に
 exit、timeout、wallを永続化し、後段observerの失敗で実測値を失わない。
 
