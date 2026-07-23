@@ -184,6 +184,17 @@ try {
 
   await writeJSON(files.telemetry, {silentFullScans:0});
   assert.equal((await evaluate('workspace-wait-event-gap')).solved, true, '期待typed errorをaccepted outcomeとして扱う');
+  await writeJSON(files.telemetry, {silentTextFallbacks:0});
+  const diagnostic = await evaluate('diagnostic-adapter-known-format', {
+    agentAssertions:{
+      diagnostics:[{path:'src/a.swift',line:3,message:'boom',adapter:'sarif',severity:'error'}],
+      provenance:'sarif',
+    },
+  }, {
+    diagnostics:[{path:'src/a.swift',line:3,message:'boom',adapter:'sarif',severity:'error'}],
+    provenance:'sarif',
+  });
+  assert.equal(diagnostic.solved, true, JSON.stringify(diagnostic));
   await writeFile(path.join(workspace, 'src/state.txt'), 'one\n');
   const bilingualBaselineFile = path.join(root, 'bilingual-baseline.json');
   await writeJSON(bilingualBaselineFile, await captureManifest(workspace));

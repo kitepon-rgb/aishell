@@ -38,6 +38,23 @@ export function selectRepresentativeCapabilityCall(candidates, expectedError = u
     : candidates.find(({ isError }) => !isError) ?? null;
 }
 
+export function materializeRepresentativePrompt({ attempt, prompt, setup }) {
+  if (!prompt.includes(REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN)) return prompt;
+  let bindings;
+  if (attempt.taskID.startsWith('artifact-query-')) {
+    const runs = setup.trustedProductionSetup.artifact_read?.managedRuns ?? [];
+    bindings = attempt.arm === 'candidate'
+      ? { baseline_run_id: runs[0]?.runID, candidate_run_id: runs[1]?.runID }
+      : { baseline_run_id: 'run-1', candidate_run_id: 'run-2' };
+  } else {
+    bindings = { cursor: setup.fields.cursor };
+  }
+  if (Object.values(bindings).some((value) => typeof value !== 'string' || value.length === 0)) {
+    throw new Error(`opaque setup bindings are unavailable: ${attempt.attemptID}`);
+  }
+  return prompt.replace(REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN, JSON.stringify(bindings));
+}
+
 function sha256(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
 }
@@ -500,17 +517,7 @@ export function createRepresentativeLocalCallbacks({ armBinaries }) {
     if (failed) throw new Error(`deferred mutation failed: ${JSON.stringify(failed)}`);
   };
 
-  const materializePrompt = async ({ attempt, prompt, setup }) => {
-    if (!prompt.includes(REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN)) return prompt;
-    const runs = setup.trustedProductionSetup.artifact_read?.managedRuns ?? [];
-    const bindings = attempt.arm === 'candidate'
-      ? { baseline_run_id: runs[0]?.runID, candidate_run_id: runs[1]?.runID }
-      : { baseline_run_id: 'run-1', candidate_run_id: 'run-2' };
-    if (Object.values(bindings).some((value) => typeof value !== 'string' || value.length === 0)) {
-      throw new Error(`opaque artifact bindings are unavailable: ${attempt.attemptID}`);
-    }
-    return prompt.replace(REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN, JSON.stringify(bindings));
-  };
+  const materializePrompt = async (input) => materializeRepresentativePrompt(input);
 
   const validateSetupEvidence = async ({ attempt, workspace, baselineManifest, preAttemptManifest, setupEvidence }) => {
     if (PHASE3_TASKS.has(attempt.taskID)) return;

@@ -6,6 +6,10 @@ import { pathToFileURL } from 'node:url';
 
 const here = new URL('.', import.meta.url);
 export const REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN = '{{AISHELL_VERIFIED_OPAQUE_SETUP_BINDINGS}}';
+const CURSOR_BOUND_TASKS = new Set([
+  'workspace-wait-external-edit', 'workspace-wait-event-gap', 'bilingual-workflow-english',
+  'semantic-context-fresh-reference', 'semantic-context-stale-after-edit',
+]);
 
 export function representativeJSONType(value) {
   if (Array.isArray(value)) {
@@ -25,7 +29,7 @@ function sha256(value) {
 }
 
 function materializedModelParameters(taskId, fixture, configured) {
-  if (taskId.startsWith('artifact-query-')) {
+  if (taskId.startsWith('artifact-query-') || CURSOR_BOUND_TASKS.has(taskId)) {
     return `${configured} Verified opaque setup bindings: ${REPRESENTATIVE_OPAQUE_BINDINGS_TOKEN}.`;
   }
   if (!['change-set-atomic-success', 'change-set-stale-sha', 'bilingual-workflow-japanese'].includes(taskId)) {

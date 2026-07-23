@@ -8,13 +8,27 @@ import path from 'node:path';
 import { captureManifest } from './capture-workspace-manifest.mjs';
 import {
   collectRepresentativeAttemptEvidence,
+  materializeRepresentativePrompt,
   selectRepresentativeCapabilityCall,
 } from './representative-local-callbacks.mjs';
 import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
 import { selectProbeAttempts } from './probe-representative-production.mjs';
+import { renderRepresentativePrompt } from './render-representative-prompt.mjs';
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'aishell-representative-harness-'));
 try {
+  const eventGapPrompt = await renderRepresentativePrompt(
+    'workspace-wait-event-gap', { materializeModelParameters: true },
+  );
+  const cursor = 'ws2:root:exclusion:generation:0';
+  const boundEventGapPrompt = materializeRepresentativePrompt({
+    attempt: { attemptID: 'event-gap-probe', taskID: 'workspace-wait-event-gap', arm: 'candidate' },
+    prompt: eventGapPrompt,
+    setup: { fields: { cursor }, trustedProductionSetup: {} },
+  });
+  assert.equal(boundEventGapPrompt.includes(JSON.stringify({ cursor })), true);
+  assert.equal(boundEventGapPrompt.includes('{{AISHELL_VERIFIED_OPAQUE_SETUP_BINDINGS}}'), false);
+
   const harness = createRepresentativeProductionHarness({
     executorOptions: {
       outputDirectory: path.join(temporary, 'output'),

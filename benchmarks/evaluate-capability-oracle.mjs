@@ -9,10 +9,10 @@ const here = new URL('.', import.meta.url);
 
 function subsetFailures(expected, actual, path = 'assertions') {
   if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || JSON.stringify(actual) !== JSON.stringify(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) {
       return [`${path}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`];
     }
-    return [];
+    return expected.flatMap((value, index) => subsetFailures(value, actual[index], `${path}[${index}]`));
   }
   if (expected && typeof expected === 'object') {
     if (!actual || typeof actual !== 'object' || Array.isArray(actual)) {
