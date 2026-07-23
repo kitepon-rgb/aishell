@@ -19,9 +19,9 @@ export const REPRESENTATIVE_ARMS = Object.freeze(['native', 'current-aishell-0.3
 export const REPRESENTATIVE_REPETITIONS = Object.freeze([1, 2, 3]);
 export const REPRESENTATIVE_FROZEN_INPUTS = Object.freeze({
   suiteSHA256: '3ca53c0fa9f95d6f2f277388b124fd09c1fd022a5803cdae29cefa2ebda58214',
-  fixtureCatalogSHA256: 'def2454c3e56917812c0cb07c67523a4b90d15c1f24f4834c5ff6fa189b03982',
+  fixtureCatalogSHA256: 'aadb3944e3219bdf666a422488fd1ddaa3a2d5b03bceb6762b09408055c65519',
   taskGoalsSHA256: '810103d0f1358685db035f6f1f711895f411c21e15ba0f8b9de1c3a6761d8e5d',
-  executionContractsSHA256: 'aa02c3d604dbad28c182ff9ae1df836b7781d671b199a48f3df3e7a4fe3f6163',
+  executionContractsSHA256: '14c17dd9e386d52f69386d99f21922eacf7846d560a5b4f40faee9a5b3bede64',
 });
 const SHA256 = /^[a-f0-9]{64}$/u;
 
