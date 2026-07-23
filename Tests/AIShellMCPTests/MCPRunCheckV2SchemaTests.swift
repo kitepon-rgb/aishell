@@ -153,7 +153,7 @@ final class MCPRunCheckV2SchemaTests: XCTestCase {
         XCTAssertEqual(variants[3].objectValue?["additionalProperties"], .bool(false))
         XCTAssertEqual(variants[4].objectValue?["additionalProperties"], .bool(false))
         XCTAssertEqual(propertyKeys(variants[2]), [
-            "cacheState", "lookupEvidence", "planDigest", "plannedCheckIDs", "processesStarted",
+            "cacheState", "diagnostics", "lookupEvidence", "planDigest", "plannedCheckIDs", "processesStarted",
             "publications", "requestedCheckIDs", "schemaVersion", "selectionDigest", "steps"
         ])
         XCTAssertEqual(propertyKeys(variants[3]), [

@@ -21,12 +21,20 @@ public struct RunCheckInvocationPlan: Equatable, Sendable {
         /// v1の`working_directory`省略を空文字や既定cwdへ捏造しない。
         public let workingDirectory: String?
         public let effectiveEnvironment: [String: String]
+        public let diagnosticFormat: DiagnosticFormat?
 
-        public init(executable: String, arguments: [String], workingDirectory: String?, effectiveEnvironment: [String: String]) {
+        public init(
+            executable: String,
+            arguments: [String],
+            workingDirectory: String?,
+            effectiveEnvironment: [String: String],
+            diagnosticFormat: DiagnosticFormat? = nil
+        ) {
             self.executable = executable
             self.arguments = arguments
             self.workingDirectory = workingDirectory
             self.effectiveEnvironment = effectiveEnvironment
+            self.diagnosticFormat = diagnosticFormat
         }
     }
 
@@ -368,6 +376,7 @@ public struct RunCheckInvocationPlan: Equatable, Sendable {
                 ("arguments", encodeArray(direct.arguments)),
                 ("working_directory", encodeOptional(direct.workingDirectory)),
                 ("environment", encodeMap(direct.effectiveEnvironment)),
+                ("diagnostic_format", encodeOptional(direct.diagnosticFormat?.rawValue)),
             ])
         case let .profileCheck(profile):
             encode([

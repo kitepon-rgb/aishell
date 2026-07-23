@@ -1229,6 +1229,9 @@ final class MCPServer: @unchecked Sendable {
         if let error = error as? ArtifactQueryService.Error {
             return (error.localizedDescription.components(separatedBy: ":").first ?? "ARTIFACT_QUERY_FAILED", error.localizedDescription)
         }
+        if let error = error as? DiagnosticAdapterError {
+            return ("DIAGNOSTIC_PARSE_FAILED", error.localizedDescription)
+        }
         if let error = error as? GitContextError {
             switch error {
             case .notGitRepository: return ("NOT_GIT_REPOSITORY", error.localizedDescription)

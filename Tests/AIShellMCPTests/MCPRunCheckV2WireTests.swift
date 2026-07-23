@@ -5,6 +5,51 @@ import XCTest
 @testable import AIShellMCP
 
 final class MCPRunCheckV2WireTests: XCTestCase {
+    func testDirectDiagnosticAdapterReturnsStructuredSARIFAndFailsClosedOnMalformedInput() async throws {
+        let fixture = try await MCPRunCheckWireFixture.make()
+        defer { fixture.cleanup() }
+        let server = MCPServer(runtimeStore: fixture.store, capabilitySet: "expanded-v1")
+        let valid = fixture.root.appendingPathComponent("result.sarif")
+        try Data(#"{"runs":[{"results":[{"level":"error","message":{"text":"boom"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/a.swift"},"region":{"startLine":3}}}]}]}]}"#.utf8)
+            .write(to: valid)
+
+        let success = await server.callTool(id: .number(1), params: .object([
+            "name": .string("run_check"),
+            "arguments": .object(v2Direct(
+                executable: "/bin/cat",
+                workingDirectory: fixture.root.path,
+                dispatch: ["mode": .string("sync")],
+                arguments: [valid.lastPathComponent],
+                diagnosticAdapter: "sarif"
+            ))
+        ]))
+        let successResult = try XCTUnwrap(success.result?.objectValue)
+        let diagnostics = try XCTUnwrap(
+            successResult["structuredContent"]?.objectValue?["diagnostics"]?.objectValue
+        )
+        XCTAssertEqual(successResult["isError"], .bool(false))
+        XCTAssertEqual(diagnostics["format"], .string("sarif"))
+        XCTAssertEqual(diagnostics["diagnostics"]?.arrayValue?.first?.objectValue?["message"], .string("boom"))
+
+        try Data("{broken\n".utf8).write(to: valid, options: .atomic)
+        let malformed = await server.callTool(id: .number(2), params: .object([
+            "name": .string("run_check"),
+            "arguments": .object(v2Direct(
+                executable: "/bin/cat",
+                workingDirectory: fixture.root.path,
+                dispatch: ["mode": .string("sync")],
+                arguments: [valid.lastPathComponent],
+                diagnosticAdapter: "sarif"
+            ))
+        ]))
+        let malformedResult = try XCTUnwrap(malformed.result?.objectValue)
+        XCTAssertEqual(malformedResult["isError"], .bool(true))
+        XCTAssertEqual(
+            malformedResult["structuredContent"]?.objectValue?["error"]?.objectValue?["code"],
+            .string("DIAGNOSTIC_PARSE_FAILED")
+        )
+    }
+
     func testLegacyAndV2DirectReachRuntimeWithoutChangingV1Shape() async throws {
         let fixture = try await MCPRunCheckWireFixture.make()
         defer { fixture.cleanup() }
@@ -437,16 +482,19 @@ final class MCPRunCheckV2WireTests: XCTestCase {
         executable: String,
         workingDirectory: String,
         dispatch: [String: JSONValue],
-        arguments: [String] = []
+        arguments: [String] = [],
+        diagnosticAdapter: String? = nil
     ) -> [String: JSONValue] {
-        [
+        var invocation: [String: JSONValue] = [
+            "mode": .string("direct"),
+            "executable": .string(executable),
+            "arguments": .array(arguments.map(JSONValue.string)),
+            "working_directory": .string(workingDirectory)
+        ]
+        if let diagnosticAdapter { invocation["diagnostic_adapter"] = .string(diagnosticAdapter) }
+        return [
             "schema": .string("aishell.run-check.v2"),
-            "invocation": .object([
-                "mode": .string("direct"),
-                "executable": .string(executable),
-                "arguments": .array(arguments.map(JSONValue.string)),
-                "working_directory": .string(workingDirectory)
-            ]),
+            "invocation": .object(invocation),
             "dispatch": .object(dispatch),
             "cache": .string("off"),
             "execution_policy": .object([

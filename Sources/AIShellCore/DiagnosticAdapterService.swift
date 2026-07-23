@@ -56,11 +56,17 @@ public struct DiagnosticAdapterService: Sendable {
 
     public func parse(format: DiagnosticFormat, data: Data, root: URL) throws -> DiagnosticAdapterResult {
         let drafts: [Draft]
-        switch format {
-        case .sarif: drafts = try parseSARIF(data)
-        case .cargoJSON: drafts = try parseCargo(data)
-        case .xcresult: drafts = try parseXCResult(data)
-        case .bazelBEP: drafts = try parseBazel(data)
+        do {
+            switch format {
+            case .sarif: drafts = try parseSARIF(data)
+            case .cargoJSON: drafts = try parseCargo(data)
+            case .xcresult: drafts = try parseXCResult(data)
+            case .bazelBEP: drafts = try parseBazel(data)
+            }
+        } catch is DiagnosticAdapterError {
+            throw DiagnosticAdapterError.malformed(format)
+        } catch {
+            throw DiagnosticAdapterError.malformed(format)
         }
         guard !drafts.isEmpty else { throw DiagnosticAdapterError.malformed(format) }
         let canonicalRoot = root.standardizedFileURL.resolvingSymlinksInPath()

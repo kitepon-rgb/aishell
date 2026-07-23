@@ -65,7 +65,7 @@ async function evaluate(taskId, extras = {}, resultOverrides = {}) {
   const preAttempt = JSON.parse(await readFile(preAttemptFile, 'utf8'));
   const setupEvidence = {schema:'aishell.benchmark-setup-evidence.v1', taskId, workspaceRoot:path.resolve(workspace),
     preStateDigest:preAttempt.digest, checkpoint:'chk_fixture', cursor:'ws2:test-root:test-exclusion:test-generation:0',
-    runId:'run_fixture', handles:['art_one','art_two']};
+    runId:'run_fixture', handles:['art_one','art_two'], ...extras.setupFields};
   await writeJSON(files.setupEvidence, setupEvidence);
   const baselineManifest = extras.baselineFile ? JSON.parse(await readFile(extras.baselineFile, 'utf8')) : null;
   const requestContract = materializeRequestContract({taskId, workspaceRoot:workspace, preAttemptManifest:preAttempt,
@@ -106,6 +106,12 @@ try {
     {runId:'run-2',handle:'art_two',file:'b.log',sha256:createHash('sha256').update(second).digest('hex')},
   ]});
   assert.equal((await evaluate('artifact-query-history-diff', {artifactStore})).solved, true);
+  const crossRun = await evaluate('artifact-query-cross-run-search', {
+    artifactStore,
+    setupFields: {artifactRunAliases:{RUN_A:'run-1',RUN_B:'run-2'}},
+    agentAssertions:{matchRuns:['RUN_A','RUN_B'],pattern:'error root'},
+  });
+  assert.equal(crossRun.solved, true, JSON.stringify(crossRun));
   await writeFile(path.join(artifactStore, 'b.log'), 'tampered\n');
   await assert.rejects(() => evaluate('artifact-query-history-diff', {artifactStore}), /digest mismatch/u);
 
@@ -183,7 +189,10 @@ try {
   await writeJSON(bilingualBaselineFile, await captureManifest(workspace));
   await writeFile(path.join(workspace, 'src/state.txt'), 'two\n');
   await writeJSON(files.telemetry, {pollLoops:0});
-  const bilingualEnglish = await evaluate('bilingual-workflow-english', {baselineFile:bilingualBaselineFile});
+  const bilingualEnglish = await evaluate('bilingual-workflow-english', {
+    baselineFile:bilingualBaselineFile,
+    agentAssertions:{changedPaths:['src/state.txt'],language:'English',requiredCapability:'workspace_wait'},
+  });
   assert.equal(bilingualEnglish.solved, true, JSON.stringify(bilingualEnglish));
 } finally {
   await rm(root, {recursive:true,force:true});

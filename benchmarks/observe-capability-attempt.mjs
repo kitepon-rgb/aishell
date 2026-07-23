@@ -109,6 +109,25 @@ function projectToolResult(expected, raw, exemptKeys) {
   return projected;
 }
 
+function normalizedAgentReport(report, taskId, setupEvidence) {
+  const normalized = structuredClone(report);
+  const assertions = normalized?.assertions;
+  if (!assertions || typeof assertions !== 'object' || Array.isArray(assertions)) return normalized;
+  if (taskId.endsWith('-english') && typeof assertions.language === 'string'
+    && ['en', 'english'].includes(assertions.language.trim().toLowerCase())) {
+    assertions.language = 'en';
+  }
+  if (taskId.endsWith('-japanese') && typeof assertions.language === 'string'
+    && ['ja', 'japanese', '日本語'].includes(assertions.language.trim().toLowerCase())) {
+    assertions.language = 'ja';
+  }
+  if (Array.isArray(assertions.matchRuns)) {
+    const aliases = setupEvidence.artifactRunAliases ?? {};
+    assertions.matchRuns = assertions.matchRuns.map((runID) => aliases[runID] ?? runID);
+  }
+  return normalized;
+}
+
 async function retainedArtifacts(directory) {
   if (!directory) throw new Error('artifact store is required for artifact assertions');
   const root = path.resolve(directory);
@@ -162,13 +181,13 @@ export async function observeAttempt({ taskId, armId, workspace, baselineFile, p
   const telemetry = await optionalJSON(telemetryFile);
   const trace = await optionalJSON(traceFile);
   const toolTrace = await optionalJSON(toolTraceFile, {events:[]});
-  const agentReport = await optionalJSON(agentReportFile);
+  const rawAgentReport = await optionalJSON(agentReportFile);
   const internalKeys = new Set(suite.metrics.internalTelemetryKeys);
   const functionalKeys = Object.keys(expected).filter((key) => !internalKeys.has(key)).sort();
-  const reportedKeys = agentReport?.assertions && typeof agentReport.assertions === 'object' && !Array.isArray(agentReport.assertions)
-    ? Object.keys(agentReport.assertions) : [];
-  if (agentReport.schema !== 'aishell.agent-benchmark-report.v1' || agentReport.taskId !== taskId
-    || !agentReport.assertions || typeof agentReport.assertions !== 'object' || Array.isArray(agentReport.assertions)
+  const reportedKeys = rawAgentReport?.assertions && typeof rawAgentReport.assertions === 'object' && !Array.isArray(rawAgentReport.assertions)
+    ? Object.keys(rawAgentReport.assertions) : [];
+  if (rawAgentReport.schema !== 'aishell.agent-benchmark-report.v1' || rawAgentReport.taskId !== taskId
+    || !rawAgentReport.assertions || typeof rawAgentReport.assertions !== 'object' || Array.isArray(rawAgentReport.assertions)
     || functionalKeys.some((key) => !reportedKeys.includes(key))) {
     throw new Error(`invalid agent report: ${taskId}`);
   }
@@ -178,6 +197,7 @@ export async function observeAttempt({ taskId, armId, workspace, baselineFile, p
   if (!preAttemptFile || !setupEvidenceFile || !requestContractFile) throw new Error(`pre-attempt evidence required: ${taskId}`);
   const preAttemptManifest = await requiredManifest(preAttemptFile, root);
   const setupEvidence = JSON.parse(await readFile(setupEvidenceFile, 'utf8'));
+  const agentReport = normalizedAgentReport(rawAgentReport, taskId, setupEvidence);
   const expectedRequestContract = materializeRequestContract({taskId, workspaceRoot:root, preAttemptManifest,
     baselineManifest, setupEvidence, suite, catalog, execution});
   const requestContract = await requiredRequestContract(requestContractFile, taskId, root, preAttemptManifest, requiredInvocations, expectedRequestContract, execution);

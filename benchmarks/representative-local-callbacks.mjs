@@ -438,6 +438,11 @@ export function createRepresentativeLocalCallbacks({ armBinaries }) {
       const managedRuns = await createManagedArtifactRuns(attempt, armBinaries, workspace, stateDirectory, artifactFiles);
       const benchmarkArtifacts = await createBenchmarkArtifactStore(runDirectory, workspace, artifactFiles);
       fields.handles = benchmarkArtifacts.handles;
+      if (managedRuns.length > 0) {
+        fields.artifactRunAliases = Object.fromEntries(
+          managedRuns.map(({ runID }, index) => [runID, `run-${index + 1}`]),
+        );
+      }
       artifactStore = benchmarkArtifacts.directory;
       trustedProductionSetup.artifact_read = { managedRuns };
     }

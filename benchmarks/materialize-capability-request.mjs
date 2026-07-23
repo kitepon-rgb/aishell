@@ -49,11 +49,11 @@ function requestValues({ taskId, fixture, scenario, expected, root, preAttempt, 
       : [taskId === 'semantic-context-stale-after-edit' ? 'references:renamed' : 'references:target'],
     targets:materializedTargets,
     byte_budget:16384,
-    executable:'node',
+    executable:fixture.id === 'diagnostic-adapter' ? '/bin/cat' : 'node',
     arguments:fixture.id === 'freshness-cache' ? ['check.mjs']
       : fixture.id === 'async-process' ? ['slow.mjs'] : ['result.json'],
     freshness_inputs:fixture.id === 'freshness-cache' ? ['check.mjs', 'src/value.mjs'] : seedTargets,
-    diagnostic_adapter:'fixture-json',
+    diagnostic_adapter:'sarif',
     async:true,
     // 実run IDはrun_check完了前に存在しない。凍結requestではproducer結果への
     // データ依存を表すtokenを使い、adapter traceが実値の一対一bindingを証明する。
@@ -70,11 +70,19 @@ function requestValues({ taskId, fixture, scenario, expected, root, preAttempt, 
 
 export function materializeRequestContract({ taskId, workspaceRoot, preAttemptManifest, baselineManifest, setupEvidence, suite, catalog, execution }) {
   const root = path.resolve(workspaceRoot);
-  const setupKeys = new Set(['schema','taskId','workspaceRoot','preStateDigest','checkpoint','cursor','runId','handles']);
+  const setupKeys = new Set([
+    'schema','taskId','workspaceRoot','preStateDigest','checkpoint','cursor','runId','handles','artifactRunAliases',
+  ]);
   if (setupEvidence?.schema !== 'aishell.benchmark-setup-evidence.v1' || setupEvidence.taskId !== taskId
     || setupEvidence.workspaceRoot !== root || setupEvidence.preStateDigest !== preAttemptManifest.digest
     || !/^[a-f0-9]{64}$/u.test(setupEvidence.preStateDigest)
-    || Object.keys(setupEvidence).some((key) => !setupKeys.has(key))) {
+    || Object.keys(setupEvidence).some((key) => !setupKeys.has(key))
+    || (setupEvidence.artifactRunAliases !== undefined
+      && (setupEvidence.artifactRunAliases === null
+        || typeof setupEvidence.artifactRunAliases !== 'object'
+        || Array.isArray(setupEvidence.artifactRunAliases)
+        || Object.entries(setupEvidence.artifactRunAliases).some(([runID, alias]) =>
+          runID.length === 0 || !/^run-[1-9][0-9]*$/u.test(alias))))) {
     throw new Error(`invalid setup evidence: ${taskId}`);
   }
   const task = suite.tasks.find(({id}) => id === taskId);

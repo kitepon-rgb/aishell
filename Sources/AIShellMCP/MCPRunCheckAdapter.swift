@@ -78,8 +78,14 @@ enum MCPRunCheckAdapter {
         case let .v2(v2):
             let invocation: RunCheckInvocationPlan.Invocation
             switch v2.invocation {
-            case let .direct(executable, arguments, directory, environment):
-                invocation = .direct(.init(executable: executable, arguments: arguments, workingDirectory: directory, effectiveEnvironment: environment))
+            case let .direct(executable, arguments, directory, environment, diagnosticAdapter):
+                invocation = .direct(.init(
+                    executable: executable,
+                    arguments: arguments,
+                    workingDirectory: directory,
+                    effectiveEnvironment: environment,
+                    diagnosticFormat: diagnosticAdapter.flatMap(DiagnosticFormat.init(rawValue:))
+                ))
             case let .profileCheck(projectID, profileDigest, checkID):
                 invocation = .profileCheck(.init(projectID: projectID, profileDigest: profileDigest, checkID: checkID))
             case let .focusedSet(id, ids):

@@ -301,6 +301,19 @@ public actor DevelopmentRuntimeService {
                     }
                 }
             )
+            var diagnostics: DiagnosticAdapterResult?
+            if case let .direct(direct) = plan.invocation, let format = direct.diagnosticFormat {
+                guard let root = direct.workingDirectory,
+                      let stdout = outcome.results.first?.artifacts.first(where: { $0.kind == "stdout" }) else {
+                    throw RunCheckPipelineError.invocationInvalid(processesStarted: processCounter.value)
+                }
+                let data = try await evidenceStore.completeData(handle: stdout.handle, maximumBytes: 64 * 1_024 * 1_024)
+                diagnostics = try DiagnosticAdapterService().parse(
+                    format: format,
+                    data: data,
+                    root: URL(fileURLWithPath: root, isDirectory: true)
+                )
+            }
             return RunCheckPipelineResult(
                 schemaVersion: "aishell.run-check.v2",
                 planDigest: plan.digest,
@@ -311,7 +324,8 @@ public actor DevelopmentRuntimeService {
                 processesStarted: outcome.processesStarted,
                 publications: outcome.publications,
                 steps: outcome.results.map(RunCheckPipelineStepResult.init),
-                lookupEvidence: outcome.lookupEvidence
+                lookupEvidence: outcome.lookupEvidence,
+                diagnostics: diagnostics
             )
         } catch let error as CheckFreshnessCache.Error {
             throw Self.pipelineError(error, processesStarted: processCounter.value)
@@ -1115,6 +1129,7 @@ public struct RunCheckPipelineResult: Encodable, Sendable {
     public let publications: Int
     public let steps: [RunCheckPipelineStepResult]
     public let lookupEvidence: [CheckFreshnessCache.LookupEvidence]
+    public let diagnostics: DiagnosticAdapterResult?
 }
 
 public enum RunCheckPipelineError: Swift.Error, Equatable, Sendable {

@@ -239,6 +239,20 @@ public actor EvidenceStore {
         return metadata
     }
 
+    public func completeData(handle: String, maximumBytes: Int) throws -> Data {
+        let metadata = try loadMetadata(handle: handle)
+        guard clock() <= metadata.expiresAt else { throw AIShellError.handleExpired(handle) }
+        guard maximumBytes > 0, metadata.sizeBytes <= maximumBytes else {
+            throw AIShellError.invalidArgument("diagnostic artifact exceeds the configured parse limit")
+        }
+        let data = try Data(contentsOf: dataURL(for: handle), options: .mappedIfSafe)
+        guard data.count == metadata.sizeBytes,
+              SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == metadata.sha256 else {
+            throw ApplyChangeSetError(.changeSetStoreCorrupt, "EVIDENCE_CORRUPT: artifact verification failed")
+        }
+        return data
+    }
+
     public func store(
         fileAt sourceURL: URL,
         kind: String,

@@ -59,7 +59,13 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
         let retentionSeconds: Double?
     }
     enum Invocation: Equatable, Sendable {
-        case direct(executable: String, arguments: [String], workingDirectory: String?, environment: [String: String])
+        case direct(
+            executable: String,
+            arguments: [String],
+            workingDirectory: String?,
+            environment: [String: String],
+            diagnosticAdapter: String?
+        )
         case profileCheck(projectID: String, profileDigest: String, checkID: String)
         case focusedSet(id: String, orderedCheckIDs: [String])
     }
@@ -110,6 +116,11 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
         let invocation = try Self.invocation(invocationObject, decoder: decoder)
         let dispatch = try Self.dispatch(dispatchObject, decoder: decoder)
         let selection = try Self.selection(selectionObject, decoder: decoder)
+        if case let .direct(_, _, _, _, diagnosticAdapter) = invocation,
+           diagnosticAdapter != nil,
+           case .start = dispatch {
+            throw Self.invalid(decoder)
+        }
         switch (invocation, selection) {
         case (.focusedSet, .focusedSet), (.focusedSet, .prepareFocusedSet),
              (.direct, .preparedByCore), (.profileCheck, .preparedByCore): break
@@ -124,13 +135,20 @@ enum MCPRunCheckRequestDTO: Decodable, Equatable, Sendable {
     private static func invocation(_ object: [String: JSONValue], decoder: Decoder) throws -> Invocation {
         switch object["mode"]?.stringValue {
         case "direct":
-            try exactKeys(object, allowed: ["mode", "executable", "arguments", "working_directory", "environment"])
+            try exactKeys(object, allowed: ["mode", "executable", "arguments", "working_directory", "environment", "diagnostic_adapter"])
             guard let executable = boundedNonEmptyString(object["executable"], maximum: 4_096) else { throw invalid(decoder) }
+            let diagnosticAdapter = try optionalString(object["diagnostic_adapter"], maximum: 32)
+            guard diagnosticAdapter == nil || ["xcresult", "sarif", "cargo_json", "bazel_bep"].contains(diagnosticAdapter!) else {
+                throw invalid(decoder)
+            }
+            let workingDirectory = try optionalString(object["working_directory"], maximum: 4_096)
+            guard diagnosticAdapter == nil || workingDirectory != nil else { throw invalid(decoder) }
             return .direct(
                 executable: executable,
                 arguments: try strings(object["arguments"], maximumItems: 4_096, maximumLength: 4_096, allowEmpty: false),
-                workingDirectory: try optionalString(object["working_directory"], maximum: 4_096),
-                environment: try map(object["environment"])
+                workingDirectory: workingDirectory,
+                environment: try map(object["environment"]),
+                diagnosticAdapter: diagnosticAdapter
             )
         case "profile_check":
             try exactKeys(object, allowed: ["mode", "project_id", "profile_digest", "check_id"])
@@ -891,7 +909,8 @@ enum ToolCatalog {
             "executable": boundedString(minLength: 1, maxLength: 4_096),
             "arguments": boundedStringArray(minItems: 0, maxItems: 4_096),
             "working_directory": boundedString(minLength: 1, maxLength: 4_096),
-            "environment": stringMap("effective environment override")
+            "environment": stringMap("effective environment override"),
+            "diagnostic_adapter": enumType(["xcresult", "sarif", "cargo_json", "bazel_bep"])
         ]
     )
 
@@ -1001,7 +1020,8 @@ enum ToolCatalog {
             "plannedCheckIDs": arrayOf(type("string")),
             "cacheState": enumType(["disabled", "hit", "miss_executed", "refresh_executed", "ineligible"]),
             "processesStarted": type("integer"), "publications": type("integer"),
-            "steps": arrayOf(pipelineStepSchema), "lookupEvidence": arrayOf(lookupEvidenceSchema)
+            "steps": arrayOf(pipelineStepSchema), "lookupEvidence": arrayOf(lookupEvidenceSchema),
+            "diagnostics": type("object")
         ]
     )
 
