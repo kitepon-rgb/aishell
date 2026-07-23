@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { evaluateAttempt } from './evaluate-capability-oracle.mjs';
-import { observedToolCalls, observerMetrics } from './phase3-local-callbacks.mjs';
+import { observedToolCalls, observerMetrics, representativeTelemetryEvidence } from './phase3-local-callbacks.mjs';
 import { createRepresentativeLocalCallbacks } from './representative-local-callbacks.mjs';
 import { createRepresentativeProductionHarness } from './representative-production-harness.mjs';
 import {
@@ -88,6 +88,19 @@ async function optionalJSON(file, fallback) {
   }
 }
 
+async function recoveryEvidenceExists(directory, attemptID) {
+  try {
+    await Promise.all([
+      access(path.join(directory, attemptID, 'observer-evidence.json')),
+      access(path.join(directory, attemptID, 'provider-events.jsonl')),
+    ]);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 async function main() {
   const [sourceRunArgument, targetConfigurationArgument, seedConfigurationArgument] = process.argv.slice(2);
   if (!sourceRunArgument || !targetConfigurationArgument) {
@@ -105,8 +118,8 @@ async function main() {
   const sourceCheckpoint = await readJSON(path.join(sourceRunDirectory, 'checkpoint.json'));
   if (sourceCheckpoint?.schema !== 'aishell.representative-checkpoint.v1') throw new Error('source checkpoint is invalid');
   const timeoutRecords = selectTimeoutRecoveryRecords(sourceCheckpoint.records);
-  const sourceTimeout = Number((await readJSON(path.join(path.dirname(sourceRunDirectory), 'configuration.json')))
-    .executorOptions?.timeoutMilliseconds);
+  const sourceConfiguration = await readJSON(path.join(path.dirname(sourceRunDirectory), 'configuration.json'));
+  const sourceTimeout = Number(sourceConfiguration.executorOptions?.timeoutMilliseconds);
   const targetTimeout = Number(targetConfiguration.executorOptions?.timeoutMilliseconds);
   if (!Number.isSafeInteger(sourceTimeout) || !Number.isSafeInteger(targetTimeout) || targetTimeout <= sourceTimeout) {
     throw new Error('target timeout must be greater than source timeout');
@@ -130,7 +143,9 @@ async function main() {
       throw new Error('recovery checkpoint does not match timeout targets');
     }
     recoveredBySequence.set(record.sequence, record);
-    recoveredEvidenceDirectoryBySequence.set(record.sequence, targetConfiguration.executorOptions.outputDirectory);
+    if (await recoveryEvidenceExists(targetConfiguration.executorOptions.outputDirectory, record.attemptID)) {
+      recoveredEvidenceDirectoryBySequence.set(record.sequence, targetConfiguration.executorOptions.outputDirectory);
+    }
   }
   if (seedConfigurationArgument) {
     const seedConfigurationPath = path.resolve(seedConfigurationArgument);
@@ -143,11 +158,20 @@ async function main() {
     const seedCheckpoint = await readJSON(path.join(seedRunDirectory, 'recovery-checkpoint.json'));
     if (seedCheckpoint?.schema !== 'aishell.representative-timeout-recovery-checkpoint.v1'
       || !Array.isArray(seedCheckpoint.recoveredRecords)) throw new Error('seed recovery checkpoint is invalid');
-    addRecoveryCheckpointRecords(recoveredBySequence, targetBySequence, seedCheckpoint.recoveredRecords);
+    const newSeedRecords = [];
     for (const record of seedCheckpoint.recoveredRecords) {
+      const existing = recoveredBySequence.get(record.sequence);
+      if (existing) {
+        if (!canonicalJSONBytes(existing).equals(canonicalJSONBytes(record))) {
+          throw new Error('seed recovery record differs from target checkpoint');
+        }
+      } else {
+        newSeedRecords.push(record);
+      }
       recoveredEvidenceDirectoryBySequence.set(record.sequence, seedConfiguration.executorOptions.outputDirectory);
       seededRecoveryCount += 1;
     }
+    addRecoveryCheckpointRecords(recoveredBySequence, targetBySequence, newSeedRecords);
     await atomicJSON(recoveryCheckpointFile, {
       schema: 'aishell.representative-timeout-recovery-checkpoint.v1',
       recoveredRecords: [...recoveredBySequence.values()].sort((a, b) => a.sequence - b.sequence),
@@ -209,6 +233,18 @@ async function main() {
 
   const records = mergeRecoveredRecords(sourceCheckpoint.records, [...recoveredBySequence.values()]);
   const outcome = await harness.run({ manifest: targetManifest, priorRecords: records });
+  for (const attempt of targetManifest.attempts.filter(({ arm }) => arm === 'candidate')) {
+    const evidenceRoot = recoveredEvidenceDirectoryBySequence.get(attempt.sequence)
+      ?? sourceConfiguration.executorOptions.outputDirectory;
+    const targetTelemetry = path.join(targetConfiguration.executorOptions.outputDirectory,
+      attempt.attemptID, 'observer-telemetry.json');
+    const attemptDirectory = path.join(evidenceRoot, attempt.attemptID);
+    const events = (await readFile(path.join(attemptDirectory, 'provider-events.jsonl'), 'utf8'))
+      .split('\n').filter(Boolean).map(JSON.parse);
+    const calls = await observedToolCalls(events, path.join(attemptDirectory, 'mcp-wire'));
+    await mkdir(path.dirname(targetTelemetry), { recursive: true });
+    await atomicJSON(targetTelemetry, representativeTelemetryEvidence(calls, attempt));
+  }
   await atomicJSON(path.join(targetRunDirectory, 'manifest.json'), targetManifest);
   await atomicJSON(path.join(targetRunDirectory, 'checkpoint.json'), {
     schema: 'aishell.representative-checkpoint.v1', records,

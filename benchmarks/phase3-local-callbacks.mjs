@@ -24,6 +24,31 @@ function plainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+export function representativeTelemetryEvidence(calls, attempt) {
+  if (!Array.isArray(calls) || !plainObject(attempt) || typeof attempt.taskID !== 'string') {
+    throw new TypeError('representative telemetry input is invalid');
+  }
+  const successful = (tool) => calls.filter((call) => call.tool === tool && !call.isError);
+  const results = calls.map(({ result }) => result);
+  const semantic = successful('search_context').find(({ request }) => request.action === 'semantic')?.result;
+  const profiles = successful('workspace_snapshot').flatMap(({ result }) => result.projectProfiles ?? []);
+  return {
+    maxFullRescans: results.reduce((sum, result) => sum + (result.fullRescans ?? 0), 0),
+    silentFallbacks: results.some((result) => result.fallbackUsed === true) ? 1 : 0,
+    profileCacheHit: profiles.some((profile) => ['hit', 'warm'].includes(profile.cacheState ?? profile.cache_state)),
+    silentTruncations: results.some((result) => (result.omittedBytes ?? 0) > 0 && !result.hasMore && !result.continuation) ? 1 : 0,
+    secondExecutionCount: results.reduce((sum, result) => sum + (result.processesStarted ?? 0), 0),
+    cacheHit: results.some((result) => result.cacheState === 'hit' || result.cacheHit === true),
+    falseFresh: results.reduce((sum, result) => sum + (result.falseFresh ?? 0), 0),
+    pollLoops: attempt.taskID.includes('workspace-wait') || attempt.taskID === 'bilingual-workflow-english'
+      ? Math.max(0, calls.filter(({ tool }) => tool === 'workspace_wait').length - 1) : 0,
+    silentFullScans: results.some((result) => result.silentFullScan === true) ? 1 : 0,
+    partialWrites: results.reduce((sum, result) => sum + (result.partialWrites ?? 0), 0),
+    silentTextFallbacks: results.some((result) => result.textFallback === true) ? 1 : 0,
+    silentLexicalFallbacks: semantic?.scanMode === 'semantic_provider' ? 0 : (semantic ? 1 : 0),
+  };
+}
+
 export function selectCompatibleCandidateRoot(calls, { tool, action }, compatible) {
   if (!Array.isArray(calls) || typeof tool !== 'string' || typeof action !== 'string'
     || typeof compatible !== 'function') {
@@ -912,12 +937,9 @@ export async function collectAttemptEvidence(input) {
     projectedResult = Object.assign({}, ...calls.filter(({ isError }) => !isError).map(({ result }) => result));
   }
   if (!plainObject(finalAgent?.assertions)) throw new Error('final agent assertions are unavailable');
-  const observedTelemetry = {
-    secondExecutionCount: calls.reduce((sum, { result }) => sum + (Number.isInteger(result.processesStarted) ? result.processesStarted : 0), 0),
-    cacheHit: calls.some(({ result }) => result.cacheState === 'hit' || result.cacheHit === true),
-    falseFresh: calls.reduce((sum, { result }) => sum + (Number.isInteger(result.falseFresh) ? result.falseFresh : 0), 0),
-  };
+  const observedTelemetry = representativeTelemetryEvidence(calls, attempt);
   const telemetry = attempt.arm === 'candidate' ? {
+    ...observedTelemetry,
     secondExecutionCount: Number.isInteger(projectedResult.secondExecutionCount)
       ? projectedResult.secondExecutionCount : observedTelemetry.secondExecutionCount,
     cacheHit: typeof projectedResult.cacheHit === 'boolean' ? projectedResult.cacheHit : observedTelemetry.cacheHit,

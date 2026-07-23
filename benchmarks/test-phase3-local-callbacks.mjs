@@ -276,7 +276,11 @@ const collected = await collectAttemptEvidence({
   finalAgent: { assertions: {} }, execution: { exitCode: 0, timedOut: false },
 });
 assert.deepEqual(collected.result, { secondExecutionCount: 0, cacheHit: true, falseFresh: 0 });
-assert.deepEqual(collected.telemetry, { secondExecutionCount: 0, cacheHit: true, falseFresh: 0 });
+assert.deepEqual(collected.telemetry, {
+  maxFullRescans: 0, silentFallbacks: 0, profileCacheHit: false, silentTruncations: 0,
+  secondExecutionCount: 0, cacheHit: true, falseFresh: 0, pollLoops: 0,
+  silentFullScans: 0, partialWrites: 0, silentTextFallbacks: 0, silentLexicalFallbacks: 0,
+});
 assert.equal(Buffer.isBuffer(collected.adapterTraceBytes), true);
 assert.equal(collected.toolTrace.events[0].action, 'execute');
 assert.deepEqual(collected.toolTrace.events.at(-1), {

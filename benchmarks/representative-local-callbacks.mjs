@@ -13,6 +13,7 @@ import {
   observedToolCalls,
   observerMetrics,
   observeProviderModel,
+  representativeTelemetryEvidence,
   runProcess,
   runSetupStep as runPhase3SetupStep,
 } from './phase3-local-callbacks.mjs';
@@ -60,27 +61,6 @@ function terminalProcessEvidence(calls, execution) {
     cancelAcknowledged: cancelled || observations.some((result) => result.cancelAcknowledged === true),
     terminalState: terminal.state ?? terminal.status,
     orphanProcesses: cancelled ? 0 : undefined,
-  };
-}
-
-function telemetryEvidence(calls, attempt) {
-  const results = calls.map(({ result }) => result);
-  const semantic = successful(calls, 'search_context').find(({ request }) => request.action === 'semantic')?.result;
-  const profiles = successful(calls, 'workspace_snapshot').flatMap(({ result }) => result.projectProfiles ?? []);
-  return {
-    maxFullRescans: results.reduce((sum, result) => sum + (result.fullRescans ?? 0), 0),
-    silentFallbacks: results.some((result) => result.fallbackUsed === true) ? 1 : 0,
-    profileCacheHit: profiles.some((profile) => ['hit', 'warm'].includes(profile.cacheState ?? profile.cache_state)),
-    silentTruncations: results.some((result) => (result.omittedBytes ?? 0) > 0 && !result.hasMore && !result.continuation) ? 1 : 0,
-    secondExecutionCount: results.reduce((sum, result) => sum + (result.processesStarted ?? 0), 0),
-    cacheHit: results.some((result) => result.cacheState === 'hit' || result.cacheHit === true),
-    falseFresh: results.reduce((sum, result) => sum + (result.falseFresh ?? 0), 0),
-    pollLoops: attempt.taskID.includes('workspace-wait') || attempt.taskID === 'bilingual-workflow-english'
-      ? Math.max(0, calls.filter(({ tool }) => tool === 'workspace_wait').length - 1) : 0,
-    silentFullScans: results.some((result) => result.silentFullScan === true) ? 1 : 0,
-    partialWrites: results.reduce((sum, result) => sum + (result.partialWrites ?? 0), 0),
-    silentTextFallbacks: results.some((result) => result.textFallback === true) ? 1 : 0,
-    silentLexicalFallbacks: semantic?.scanMode === 'semantic_provider' ? 0 : (semantic ? 1 : 0),
   };
 }
 
@@ -159,7 +139,7 @@ export async function collectRepresentativeAttemptEvidence(input) {
     result,
     process: terminalProcessEvidence(calls, execution),
     artifactStore,
-    telemetry: telemetryEvidence(calls, attempt),
+    telemetry: representativeTelemetryEvidence(calls, attempt),
     trace: continuationEvidence(calls, benchmarkSetupEvidence),
     toolTrace: { events },
     metrics: observerMetrics(agentEvents, calls, attempt),
