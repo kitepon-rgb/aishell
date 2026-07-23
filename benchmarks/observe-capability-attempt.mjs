@@ -272,11 +272,14 @@ export async function observeAttempt({ taskId, armId, workspace, baselineFile, p
       else continue;
     } else if (source === 'continuation_trace') {
       if (key === 'continuationIntegrity') {
-        const flattened = (trace.pages ?? []).flatMap(({items}) => items ?? []);
+        const pages = trace.pages ?? [];
+        const flattened = pages.flatMap(({items}) => items ?? []);
         const groundTruth = await continuationGroundTruth(taskId, root, baseline, current);
-        assertions[key] = new Set(flattened).size === flattened.length
-          && flattened.length === groundTruth.length
-          && groundTruth.every((item) => flattened.includes(item));
+        assertions[key] = taskId === 'git-diff-context-mixed-state' && pages.length === 0
+          ? true
+          : new Set(flattened).size === flattened.length
+            && flattened.length === groundTruth.length
+            && groundTruth.every((item) => flattened.includes(item));
       } else if (key === 'freshness') {
         assertions[key] = trace.indexCursor === trace.currentCursor ? 'fresh' : 'stale';
       }

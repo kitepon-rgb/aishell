@@ -182,6 +182,14 @@ try {
   await writeJSON(files.trace, {pages:[{items:['src/needle.mjs']}],expectedItems:[]});
   assert.equal((await evaluate('batch-context-shared-budget')).solved, true, 'workspaceから独立算出したground truthへ一致する');
 
+  const mixedBaselineFile = path.join(root, 'mixed-baseline.json');
+  await writeJSON(mixedBaselineFile, await captureManifest(workspace));
+  await writeFile(path.join(workspace, 'README.md'), 'fixture changed\n');
+  await writeFile(path.join(workspace, 'src/new.mjs'), 'export const added = true;\n');
+  await writeJSON(files.trace, {pages:[]});
+  assert.equal((await evaluate('git-diff-context-mixed-state', {baselineFile:mixedBaselineFile})).solved, true,
+    'budget内で継続不要な完全diffは空のpage chainを欠落扱いしない');
+
   await writeJSON(files.telemetry, {silentFullScans:0});
   assert.equal((await evaluate('workspace-wait-event-gap')).solved, true, '期待typed errorをaccepted outcomeとして扱う');
   await writeJSON(files.telemetry, {silentTextFallbacks:0});
