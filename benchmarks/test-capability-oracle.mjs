@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { evaluateAttempt } from './evaluate-capability-oracle.mjs';
+import { evaluateAttempt, subsetFailures } from './evaluate-capability-oracle.mjs';
 import { observeAttempt } from './observe-capability-attempt.mjs';
 import { captureManifest } from './capture-workspace-manifest.mjs';
 import { materializeRequestContract } from './materialize-capability-request.mjs';
@@ -13,6 +13,17 @@ import { materializeRequestContract } from './materialize-capability-request.mjs
 const execution = JSON.parse(await (await import('node:fs/promises')).readFile(new URL('./representative-execution-contracts.v1.json', import.meta.url)));
 const suite = JSON.parse(await (await import('node:fs/promises')).readFile(new URL('./representative-suite.v1.json', import.meta.url)));
 const catalog = JSON.parse(await (await import('node:fs/promises')).readFile(new URL('./capability-fixtures.v1.json', import.meta.url)));
+
+assert.deepEqual(
+  subsetFailures(['npm test', 'npm run lint'], ['npm run lint', 'npm test'], 'assertions.commands'),
+  [],
+  'commands are a set; discovery order is not part of the oracle',
+);
+assert.notDeepEqual(
+  subsetFailures([['src/a.mjs', 'src/b.mjs']], [['src/b.mjs', 'src/a.mjs']], 'assertions.renames'),
+  [],
+  'ordered tuple arrays must retain their semantic order',
+);
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;

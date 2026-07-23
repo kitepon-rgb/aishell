@@ -7,10 +7,16 @@ import { validateCapabilityObservation } from './validate-capability-observation
 
 const here = new URL('.', import.meta.url);
 
-function subsetFailures(expected, actual, path = 'assertions') {
+export function subsetFailures(expected, actual, path = 'assertions') {
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual) || actual.length !== expected.length) {
       return [`${path}: expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}`];
+    }
+    if (path.endsWith('.commands')) {
+      const expectedCommands = [...expected].sort();
+      const actualCommands = [...actual].sort();
+      return expectedCommands.flatMap((value, index) =>
+        subsetFailures(value, actualCommands[index], `${path}[${index}]`));
     }
     return expected.flatMap((value, index) => subsetFailures(value, actual[index], `${path}[${index}]`));
   }
