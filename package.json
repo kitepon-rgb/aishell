@@ -38,7 +38,9 @@
     "build:npm": "node scripts/prepare-npm-release.mjs",
     "prepack": "npm run build:npm",
     "test": "swift test",
-    "test:package": "npm run build:npm && node scripts/verify-npm-package.mjs"
+    "test:package": "npm run build:npm && node scripts/verify-npm-package.mjs",
+    "verify:release-commit": "node scripts/verify-release-commit.mjs",
+    "prepublishOnly": "npm run verify:release-commit && npm run test:package"
   },
   "engines": {
     "node": ">=18"
