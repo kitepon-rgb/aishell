@@ -55,7 +55,12 @@ AIShellの`apply_change_set`は当初、変更ごとに`change_id`・`result: "a
 
 ## 波及
 
-同種の疑いとして`change-set-stale-sha`（拒否時にどのパスが手つかずかを報告するtask）がある。
-これも「拒否した結果どうなったか」を呼び出し側が補わされる形で、候補・旧版とも2/3で同点だった。
+同じ欠陥類型が`run_observe`にもあった。status/cancel応答が`terminationCause`を"natural_exit"等の
+文字列へ潰し、exit code本体とcancel受理を返していなかった。非同期プロセス2 taskの実測は
+修正前1/6、`exitCode`/`signal`/`cancelAcknowledged`を返す0.3.6で5/6（詳細:
+`docs/evidence/2026-07-24-ace-070-async-measurement-erratum.md`）。**プロセス型の観測toolも
+副作用型と同じ検査を通すこと** — 「終わった」ではなく「どう終わったか」を返す。
+
+残る疑いとして`change-set-stale-sha`（拒否時にどのパスが手つかずかを報告するtask）がある。
 0.3.5では3/3へ回復したが、原因が同じ設計欠陥かは切り分けていない。副作用型toolの**失敗経路**についても
 同じ検査をする価値がある。
