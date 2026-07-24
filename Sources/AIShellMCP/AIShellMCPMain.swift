@@ -3,6 +3,7 @@ import Foundation
 @main
 enum AIShellMCPMain {
     static func main() async {
-        await MCPServer().run()
+        let outcome = await MCPServer().run()
+        exit(outcome.exitCode)
     }
 }

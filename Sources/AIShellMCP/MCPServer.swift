@@ -10,6 +10,24 @@ private struct ManagedChangeSetInput {
     let retentionSeconds: Int
 }
 
+typealias MCPDiagnosticsSink = @Sendable (String) -> Void
+
+/// `run()`の終了理由。processのexit codeはここだけから決まる。
+enum MCPServerOutcome: Equatable, Sendable {
+    case completed
+    case startupFailure(String)
+
+    /// 起動時設定の誤りは`EX_CONFIG`(sysexits.h)で返し、正常終了と区別できるようにする。
+    var exitCode: Int32 {
+        switch self {
+        case .completed:
+            return 0
+        case .startupFailure:
+            return 78
+        }
+    }
+}
+
 final class MCPServer: @unchecked Sendable {
     private let store: RuntimeStore
     private let toolProfile: String
@@ -37,13 +55,21 @@ final class MCPServer: @unchecked Sendable {
         managedRuns = managedRunService
     }
 
-    func run() async {
-        let writer = MCPResponseWriter()
+    @discardableResult
+    func run(
+        writer: MCPResponseWriter = MCPResponseWriter(),
+        diagnostics: @escaping MCPDiagnosticsSink = MCPServer.standardErrorDiagnostics
+    ) async -> MCPServerOutcome {
         do {
             try validateStartup()
         } catch {
-            try? await writer.write(.failure(id: .null, code: -32000, message: error.localizedDescription))
-            return
+            let message = error.localizedDescription
+            // 起動時検証の失敗はinitializeへの応答にならないため、stdoutのJSON-RPC errorだけでは
+            // hostに「応答せず終了した」としか見えない。型付きメッセージをstderrにも出し、
+            // 非0 exitで終了することでhost側の接続失敗表示に載せる。
+            diagnostics(message)
+            try? await writer.write(.failure(id: .null, code: -32000, message: message))
+            return .startupFailure(message)
         }
         let scheduler = MCPRequestScheduler(writer: writer) { [self] request in
             await handle(request)
@@ -64,6 +90,15 @@ final class MCPServer: @unchecked Sendable {
             }
         }
         await scheduler.waitUntilIdle()
+        return .completed
+    }
+
+    static func diagnosticsLine(_ message: String) -> String {
+        "aishell-mcp: \(message)\n"
+    }
+
+    static let standardErrorDiagnostics: MCPDiagnosticsSink = { message in
+        FileHandle.standardError.write(Data(MCPServer.diagnosticsLine(message).utf8))
     }
 
     private func handle(_ request: JSONRPCRequest) async -> JSONRPCResponse? {
