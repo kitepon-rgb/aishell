@@ -72,6 +72,16 @@ final class MCPApplyChangeSetWireTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: source, encoding: .utf8), "after")
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("two.txt"), encoding: .utf8), "two")
 
+        // apply_change_set inlines the resulting content of small text files so the caller can report
+        // exactly what was written (e.g. [path, content]) without a follow-up read.
+        let appliedChanges = try XCTUnwrap(structured["changes"]?.arrayValue)
+        let afterContentByID = Dictionary(uniqueKeysWithValues: appliedChanges.compactMap { change -> (String, JSONValue)? in
+            guard let id = change.objectValue?["change_id"]?.stringValue else { return nil }
+            return (id, change.objectValue?["after_content"] ?? .null)
+        })
+        XCTAssertEqual(afterContentByID["write-one"], .string("after"))
+        XCTAssertEqual(afterContentByID["create-two"], .string("two"))
+
         let delta = await server.callTool(id: .number(3), params: .object([
             "name": .string("workspace_snapshot"),
             "arguments": .object([

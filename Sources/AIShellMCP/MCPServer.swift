@@ -1045,7 +1045,8 @@ final class MCPServer: @unchecked Sendable {
                 "before_metadata": change.beforeMetadata.map { .object(["mode": .number(Double($0.mode))]) } ?? .null,
                 "after_metadata": change.afterMetadata.map { .object(["mode": .number(Double($0.mode))]) } ?? .null,
                 "result": jsonString(change.result),
-                "trash_path": jsonString(change.trashPath)
+                "trash_path": jsonString(change.trashPath),
+                "after_content": jsonString(change.afterContent)
             ])
         }
         let summary = result.summary.map { value in

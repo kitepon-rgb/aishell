@@ -139,6 +139,13 @@ public struct ApplyChangeSetChangeResult: Codable, Equatable, Sendable {
     public let afterMetadata: ApplyChangeSetMetadata?
     public let result: String?
     public let trashPath: String?
+    /// UTF-8 resulting file content, inlined only for small text files so the caller can confirm and
+    /// report exactly what was written without a follow-up read. Nil for deletes, binary, or files
+    /// larger than `inlineAfterContentByteLimit` — those remain covered by afterSHA256 and the diff artifact.
+    public let afterContent: String?
+
+    /// Upper bound (bytes) for inlining resulting content; larger files stay token-lean via the diff artifact.
+    public static let inlineAfterContentByteLimit = 4_096
 
     public init(
         changeID: String,
@@ -154,14 +161,21 @@ public struct ApplyChangeSetChangeResult: Codable, Equatable, Sendable {
         beforeMetadata: ApplyChangeSetMetadata? = nil,
         afterMetadata: ApplyChangeSetMetadata? = nil,
         result: String? = nil,
-        trashPath: String? = nil
+        trashPath: String? = nil,
+        afterContent: String? = nil
     ) {
         self.changeID = changeID; self.afterSHA256 = afterSHA256; self.kind = kind
         self.beforePath = beforePath; self.afterPath = afterPath
         self.beforeIdentity = beforeIdentity; self.afterIdentity = afterIdentity
         self.beforeSHA256 = beforeSHA256; self.beforeSizeBytes = beforeSizeBytes; self.afterSizeBytes = afterSizeBytes
         self.beforeMetadata = beforeMetadata; self.afterMetadata = afterMetadata
-        self.result = result; self.trashPath = trashPath
+        self.result = result; self.trashPath = trashPath; self.afterContent = afterContent
+    }
+
+    /// Inline `bytes` as resulting content when they are valid UTF-8 within the byte limit, else nil.
+    public static func inlineAfterContent(_ bytes: Data?) -> String? {
+        guard let bytes, bytes.count <= inlineAfterContentByteLimit else { return nil }
+        return String(data: bytes, encoding: .utf8)
     }
 }
 
@@ -3311,7 +3325,8 @@ public actor ApplyChangeSetService {
                 beforeIdentity: beforePath.flatMap { sourceIdentities[$0] }, afterIdentity: nil,
                 beforeSHA256: before?.applySHA256, beforeSizeBytes: before?.count, afterSizeBytes: after?.count,
                 beforeMetadata: beforePath.flatMap { sourceModes[$0] }.map { .init(mode: $0) },
-                afterMetadata: mode.map { .init(mode: $0) }, result: "applied")
+                afterMetadata: mode.map { .init(mode: $0) }, result: "applied",
+                afterContent: ApplyChangeSetChangeResult.inlineAfterContent(after))
         }
         let summary = ApplyChangeSetSummary(
             createCount: request.changes.filter { if case .create = $0 { true } else { false } }.count,
@@ -3446,7 +3461,8 @@ public actor ApplyChangeSetService {
                 beforeIdentity: change.beforeIdentity, afterIdentity: identity,
                 beforeSHA256: change.beforeSHA256, beforeSizeBytes: change.beforeSizeBytes,
                 afterSizeBytes: change.afterSizeBytes, beforeMetadata: change.beforeMetadata,
-                afterMetadata: change.afterMetadata, result: change.result, trashPath: change.trashPath)
+                afterMetadata: change.afterMetadata, result: change.result, trashPath: change.trashPath,
+                afterContent: change.afterContent)
         })
         await state.storePendingResult(transaction, result: durableResult)
         try await state.requirePersistenceHealthy()
@@ -3586,7 +3602,8 @@ public actor ApplyChangeSetService {
                     beforeIdentity: change.beforeIdentity, afterIdentity: change.afterIdentity,
                     beforeSHA256: change.beforeSHA256, beforeSizeBytes: change.beforeSizeBytes,
                     afterSizeBytes: change.afterSizeBytes, beforeMetadata: change.beforeMetadata,
-                    afterMetadata: change.afterMetadata, result: change.result, trashPath: trashPath)
+                    afterMetadata: change.afterMetadata, result: change.result, trashPath: trashPath,
+                    afterContent: change.afterContent)
             })
             await state.storePendingResult(transaction, result: durableResult)
             try await state.requirePersistenceHealthy()
@@ -3664,7 +3681,7 @@ public actor ApplyChangeSetService {
                 afterIdentity: change.afterIdentity, beforeSHA256: change.beforeSHA256,
                 beforeSizeBytes: change.beforeSizeBytes, afterSizeBytes: change.afterSizeBytes,
                 beforeMetadata: change.beforeMetadata, afterMetadata: change.afterMetadata,
-                result: change.result, trashPath: trashPath)
+                result: change.result, trashPath: trashPath, afterContent: change.afterContent)
         })
     }
 
