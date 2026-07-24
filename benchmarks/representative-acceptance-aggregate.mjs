@@ -20,6 +20,18 @@ function plainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * "Unverified is never counted as solved": a solved candidate attempt must retain its adapter trace,
+ * because the evidence collector always emits one when the root capability call was accepted. A null
+ * trace is therefore only admissible on a non-solving candidate attempt (tool non-adoption). Returns
+ * the violation message, or null when the attempt is admissible.
+ */
+export function solvedCandidateTraceViolation(arm, solved, adapterTrace, sequence) {
+  return arm === 'candidate' && solved === true && adapterTrace === null
+    ? `candidate ${sequence} solved attempt is missing its adapter trace`
+    : null;
+}
+
 function exactKeys(value, expected, label) {
   if (!plainObject(value)) throw new Error(`${label} must be an object`);
   const actual = Object.keys(value).sort();
@@ -169,6 +181,8 @@ export async function aggregateRepresentativeAcceptance({ manifest, result, orac
         throw new Error(`oracle ${expected.sequence} differs from manifest`);
       }
       validateMetric(metric, `metrics ${expected.sequence}`);
+      const traceViolation = solvedCandidateTraceViolation(expected.arm, oracle.solved, attempt.adapterTrace, expected.sequence);
+      if (traceViolation) throw new Error(traceViolation);
       return { attempt, oracle, metrics: metric, telemetry: expected.arm === 'candidate' ? telemetry.get(expected.sequence) : null };
     });
     const aggregate = aggregateValidatedRepresentativeRecords(records);

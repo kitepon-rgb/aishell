@@ -314,9 +314,16 @@ function collectResultFailures(result, manifest) {
           || !canonicalJSONBytes(attempt.usage).equals(canonicalJSONBytes(extracted.usage))) {
           throw new Error(`attempt ${index + 1} provider evidence differs`);
         }
+        // A candidate may legitimately lack an adapter trace: a null trace records tool non-adoption
+        // (the candidate produced no accepted root capability call), which is a valid failed attempt,
+        // not missing harness evidence. The evidence collector throws on any real collection gap and
+        // leaves the trace null only when no root call exists, so this mirrors the phase 3 runner.
+        // The "a solved candidate must retain its trace" invariant lives in the oracle-joined
+        // aggregate stage, keeping this result validator oracle-free by design.
         if (attempt.arm === 'candidate') {
-          if (attempt.adapterTrace === null) throw new Error(`attempt ${index + 1} candidate adapter trace is missing`);
-          decodeExactBytes(attempt.adapterTrace, `attempt ${index + 1} adapter trace`);
+          if (attempt.adapterTrace !== null) {
+            decodeExactBytes(attempt.adapterTrace, `attempt ${index + 1} adapter trace`);
+          }
         } else if (attempt.adapterTrace !== null) {
           throw new Error(`attempt ${index + 1} non-candidate adapter trace must be null`);
         }

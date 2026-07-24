@@ -2,7 +2,10 @@
 
 import assert from 'node:assert/strict';
 
-import { aggregateValidatedRepresentativeRecords } from './representative-acceptance-aggregate.mjs';
+import {
+  aggregateValidatedRepresentativeRecords,
+  solvedCandidateTraceViolation,
+} from './representative-acceptance-aggregate.mjs';
 
 const telemetry = {
   silentFallbacks: 0, silentTruncations: 0, falseFresh: 0, silentFullScans: 0,
@@ -45,5 +48,14 @@ for (const record of regression.filter(({ attempt }) => attempt.arm === 'candida
 const regressionReport = aggregateValidatedRepresentativeRecords(regression);
 assert.deepEqual(regressionReport.correctness.candidateRegressionsFromNative, ['task-a']);
 assert.equal(regressionReport.gate.passed, false);
+
+// "Unverified is never counted as solved": a solved candidate must retain its adapter trace,
+// while a non-solving candidate (tool non-adoption) or any non-candidate arm may have a null trace.
+assert.equal(solvedCandidateTraceViolation('candidate', true, null, 120),
+  'candidate 120 solved attempt is missing its adapter trace');
+assert.equal(solvedCandidateTraceViolation('candidate', false, null, 120), null);
+assert.equal(solvedCandidateTraceViolation('candidate', true, { base64: 'AA==' }, 120), null);
+assert.equal(solvedCandidateTraceViolation('native', true, null, 118), null);
+assert.equal(solvedCandidateTraceViolation('current-aishell-0.3.3', true, null, 119), null);
 
 process.stdout.write('representative acceptance aggregate: ok\n');
