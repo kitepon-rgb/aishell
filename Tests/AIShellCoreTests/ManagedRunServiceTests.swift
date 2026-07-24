@@ -40,6 +40,10 @@ final class ManagedRunServiceTests: XCTestCase {
         let terminal = try await waitForTerminal(service, handle: started.runHandle)
         XCTAssertEqual(terminal.state, "passed")
         XCTAssertEqual(terminal.terminationCause, "natural_exit")
+        // The observation surfaces the terminal result state itself, so a caller can confirm and
+        // restate the outcome (exit code, cancel acknowledgment) without reconstructing it.
+        XCTAssertEqual(terminal.exitCode, 0)
+        XCTAssertEqual(terminal.cancelAcknowledged, false)
         XCTAssertNotNil(terminal.stdoutArtifact)
         XCTAssertNotNil(terminal.stderrArtifact)
         XCTAssertNotNil(terminal.diagnosticArtifact)

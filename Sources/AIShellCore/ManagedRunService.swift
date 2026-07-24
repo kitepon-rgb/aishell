@@ -28,6 +28,15 @@ public struct ManagedRunStatusResult: Codable, Equatable, Sendable {
     public let timeoutDeadline: Date?
     public let retentionSeconds: TimeInterval
     public let terminationCause: String?
+    /// Terminal exit code for natural_exit runs. The caller confirms and restates the outcome from
+    /// this result state instead of reconstructing it from artifacts; nil while the run is live or
+    /// when the run never reached a natural exit.
+    public let exitCode: Int32?
+    /// Terminating signal for natural_exit runs, when the process died by signal.
+    public let signal: Int32?
+    /// Whether a cancellation was accepted as this run's terminal cause. False on other terminal
+    /// causes, nil while the run is still live.
+    public let cancelAcknowledged: Bool?
     public let stdoutArtifact: ManagedArtifactIdentity?
     public let stderrArtifact: ManagedArtifactIdentity?
     public let diagnosticArtifact: ManagedArtifactIdentity?
@@ -427,11 +436,30 @@ public actor ManagedRunService {
             timeoutDeadline: request.timeoutDeadline,
             retentionSeconds: request.retentionSeconds,
             terminationCause: Self.cause(snapshot.terminationCause),
+            exitCode: Self.exitCode(snapshot.terminationCause),
+            signal: Self.signal(snapshot.terminationCause),
+            cancelAcknowledged: Self.cancelAcknowledged(snapshot.terminationCause),
             stdoutArtifact: snapshot.finalization?.stdout,
             stderrArtifact: snapshot.finalization?.stderr,
             diagnosticArtifact: snapshot.finalization?.diagnostics,
             expiresAt: snapshot.expiresAt
         )
+    }
+
+    private static func exitCode(_ value: ManagedTerminationCause?) -> Int32? {
+        if case let .naturalExit(exitCode, _) = value { return exitCode }
+        return nil
+    }
+
+    private static func signal(_ value: ManagedTerminationCause?) -> Int32? {
+        if case let .naturalExit(_, signal) = value { return signal }
+        return nil
+    }
+
+    private static func cancelAcknowledged(_ value: ManagedTerminationCause?) -> Bool? {
+        guard let value else { return nil }
+        if case .cancellation = value { return true }
+        return false
     }
 
     private static func environmentDigest(_ environment: [String: String]) throws -> String {
