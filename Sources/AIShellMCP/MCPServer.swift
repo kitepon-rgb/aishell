@@ -645,7 +645,9 @@ final class MCPServer: @unchecked Sendable {
     }
 
     private func managerApplicationURL() throws -> URL {
-        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+        // MCP hostは`aishell-mcp`をbare command名で起動するため、argv[0]がpathを含まない。
+        // その場合CWD相対に解決されbundleを見失うので、実際にloadされたexecutable pathを正とする。
+        let executableURL = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]))
             .resolvingSymlinksInPath()
             .standardizedFileURL
         let applicationURL = executableURL
