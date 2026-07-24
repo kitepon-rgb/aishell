@@ -271,9 +271,16 @@ enum ToolCatalog {
     ]
     static let defaultToolNames = developmentToolNames.union(controlToolNames)
 
+    static let factoryTool = tool(
+        "factory_diagnostics", "工場向けnative診断",
+        "工場reporter向けに、AIShell runtimeと管理appのread-only診断をpathや操作履歴を含めず返します。",
+        properties: [:], required: [], readOnly: true, idempotent: true,
+        outputSchema: factoryDiagnosticsOutputSchema
+    )
+
     static func listedTools(profile: String?, capabilitySet: String? = nil) throws -> [MCPTool] {
         switch profile {
-        case nil, "development", "full", "legacy": break
+        case nil, "development", "factory", "full", "legacy": break
         case let value?: throw MCPStartupError.invalidToolProfile(value)
         }
         let expanded: Bool
@@ -281,6 +288,12 @@ enum ToolCatalog {
         case nil: expanded = false
         case "expanded-v1": expanded = true
         case let value?: throw MCPStartupError.invalidCapabilitySet(value)
+        }
+        if profile == "factory" {
+            guard capabilitySet == nil else {
+                throw MCPStartupError.factoryProfileDoesNotAcceptCapabilitySet(capabilitySet!)
+            }
+            return [factoryTool]
         }
         let catalog = expanded ? expandedTools : tools
         if expanded {
@@ -1429,6 +1442,15 @@ enum ToolCatalog {
         .object(["type": .array([.string(name), .string("null")])])
     }
 
+    private static func nullableNonNegativeIntegerType() -> JSONValue {
+        .object([
+            "oneOf": .array([
+                .object(["type": .string("integer"), "minimum": .number(0)]),
+                .object(["type": .string("null")])
+            ])
+        ])
+    }
+
     private static func enumType(_ values: [String]) -> JSONValue {
         .object(["type": .string("string"), "enum": .array(values.map(JSONValue.string))])
     }
@@ -1467,6 +1489,86 @@ enum ToolCatalog {
             ])
         ])
     }
+
+    private static let factoryDiagnosticsOutputSchema: JSONValue = .object([
+        "type": .string("object"),
+        "oneOf": .array([
+            .object([
+                "type": .string("object"),
+                "required": .array([
+                    .string("schemaVersion"), .string("product"), .string("platform"), .string("runtime"),
+                    .string("mcp"), .string("manager"), .string("privacy"), .string("ready"), .string("issues")
+                ]),
+                "properties": .object([
+                    "schemaVersion": .object(["const": .string("aishell.native_factory_diagnostics.v1")]),
+                    "product": .object([
+                        "type": .string("object"), "required": .array([.string("identifier"), .string("version")]),
+                        "properties": .object([
+                            "identifier": .object(["const": .string("aishell")]), "version": type("string")
+                        ]), "additionalProperties": .bool(false)
+                    ]),
+                    "platform": .object([
+                        "type": .string("object"), "required": .array([
+                            .string("operatingSystem"), .string("architecture"), .string("minimumOperatingSystem"), .string("supported")
+                        ]), "properties": .object([
+                            "operatingSystem": .object(["const": .string("macos")]), "architecture": type("string"),
+                            "minimumOperatingSystem": .object(["const": .string("15.0")]), "supported": type("boolean")
+                        ]), "additionalProperties": .bool(false)
+                    ]),
+                    "runtime": .object([
+                        "type": .string("object"), "required": .array([
+                            .string("schemaVersion"), .string("configurationState"), .string("migrationStatus"),
+                            .string("operationReadiness"), .string("isPaused"), .string("configuredRootCount"),
+                            .string("automaticGitWorktreeCount"), .string("effectiveRootCount")
+                        ]), "properties": .object([
+                            "schemaVersion": .object(["const": .string("aishell.runtime_configuration.v2")]),
+                            "configurationState": enumType(["valid", "uninitialized", "invalid"]),
+                            "migrationStatus": enumType(["compatible_on_read", "blocked"]),
+                            "operationReadiness": enumType(["ready", "paused", "not_configured", "invalid_roots", "invalid_configuration"]),
+                            "isPaused": nullableType("boolean"), "configuredRootCount": nullableNonNegativeIntegerType(),
+                            "automaticGitWorktreeCount": nullableNonNegativeIntegerType(), "effectiveRootCount": nullableNonNegativeIntegerType()
+                        ]), "additionalProperties": .bool(false)
+                    ]),
+                    "mcp": .object([
+                        "type": .string("object"), "required": .array([.string("transport"), .string("protocolVersion"), .string("ready")]),
+                        "properties": .object([
+                            "transport": .object(["const": .string("stdio")]), "protocolVersion": type("string"), "ready": type("boolean")
+                        ]), "additionalProperties": .bool(false)
+                    ]),
+                    "manager": .object([
+                        "type": .string("object"), "required": .array([.string("applicationBundleState"), .string("ready")]),
+                        "properties": .object([
+                            "applicationBundleState": enumType(["available", "unavailable"]), "ready": type("boolean")
+                        ]), "additionalProperties": .bool(false)
+                    ]),
+                    "privacy": .object([
+                        "type": .string("object"), "required": .array([
+                            .string("exposesAllowedRootPaths"), .string("exposesOperationHistory"),
+                            .string("exposesFileContents"), .string("exposesProcessArguments")
+                        ]), "properties": .object([
+                            "exposesAllowedRootPaths": .object(["const": .bool(false)]),
+                            "exposesOperationHistory": .object(["const": .bool(false)]),
+                            "exposesFileContents": .object(["const": .bool(false)]),
+                            "exposesProcessArguments": .object(["const": .bool(false)])
+                        ]), "additionalProperties": .bool(false)
+                    ]),
+                    "ready": type("boolean"),
+                    "issues": .object([
+                        "type": .string("array"), "items": enumType([
+                            "runtime.invalid_roots", "runtime.invalid_configuration", "platform.unsupported", "manager.application_bundle_unavailable"
+                        ])
+                    ])
+                ]), "additionalProperties": .bool(false)
+            ]),
+            .object([
+                "type": .string("object"), "required": .array([.string("schemaVersion"), .string("error")]),
+                "properties": .object([
+                    "schemaVersion": .object(["const": .string("aishell.error.v1")]),
+                    "error": .object(["type": .string("object")])
+                ]), "additionalProperties": .bool(true)
+            ])
+        ])
+    ])
 
     private static func objectOutputWithAlternate(
         primarySchemaKey: String,
@@ -1512,13 +1614,16 @@ enum ToolCatalog {
 enum MCPStartupError: LocalizedError, Equatable {
     case invalidToolProfile(String)
     case invalidCapabilitySet(String)
+    case factoryProfileDoesNotAcceptCapabilitySet(String)
 
     var errorDescription: String? {
         switch self {
         case let .invalidToolProfile(value):
-            "INVALID_TOOL_PROFILE: AISHELL_TOOL_PROFILEはdevelopment、full、legacyだけを受理します: \(value)"
+            "INVALID_TOOL_PROFILE: AISHELL_TOOL_PROFILEはdevelopment、factory、full、legacyだけを受理します: \(value)"
         case let .invalidCapabilitySet(value):
             "INVALID_CAPABILITY_SET: AISHELL_CAPABILITY_SETは未指定またはexpanded-v1だけを受理します: \(value)"
+        case let .factoryProfileDoesNotAcceptCapabilitySet(value):
+            "FACTORY_PROFILE_CAPABILITY_SET_UNSUPPORTED: factory profileはAISHELL_CAPABILITY_SETを受理しません: \(value)"
         }
     }
 }

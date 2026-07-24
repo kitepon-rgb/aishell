@@ -54,6 +54,8 @@ codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- /opt/homebrew/
 
 Unknown or empty `AISHELL_CAPABILITY_SET` and `AISHELL_TOOL_PROFILE` values fail startup with typed errors; they never fall back to another profile.
 
+`AISHELL_TOOL_PROFILE=factory` is a separate, one-tool surface for factory reporters rather than development work. It exposes only `factory_diagnostics`, a path- and activity-free native readiness report.
+
 ## Why AIShell
 
 Typical stateless integrations repeatedly ask the model to rediscover workspace state and interpret command output. AIShell keeps the stateful, OS-facing part below the model so later turns can ask for deltas and primary evidence instead of rescanning everything.

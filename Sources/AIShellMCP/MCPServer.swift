@@ -19,6 +19,7 @@ final class MCPServer: @unchecked Sendable {
     private let development: DevelopmentRuntimeService
     private var changeSetServices: [String: ApplyChangeSetService] = [:]
     private var managedRuns: ManagedRunService?
+    private var catalogValidationSucceeded = false
 
     init(
         runtimeStore: RuntimeStore = RuntimeStore(),
@@ -85,7 +86,7 @@ final class MCPServer: @unchecked Sendable {
                 ]),
                 "serverInfo": .object([
                     "name": .string("aishell-macos"),
-                    "version": .string("0.3.6")
+                    "version": .string(AIShellProduct.version)
                 ]),
                 "instructions": .string("macOSの生きたfilesystem・process・artifact状態を直接所有します。AIはtaskに応じてtool利用を自分で判断します。依頼成果が一覧の1 toolへ直接一致する時はshell/native代替より先にそのtoolを使い、workspace accessが不要ならtoolを呼びません。tinyなsingle-file taskはhost native toolを使います。反復またはmulti-file観測はworkspace_snapshotから開始し埋込contextを先に使います。SHA付きmulti-file編集はsnapshotのopaque cursorをそのままapply_change_setへ渡します。client IDやsequenceの管理は不要です。32KiB超の出力が見込まれる検査だけrun_checkを使い、artifact_readは主要診断が不足する時だけ使います。search_context/read_contextはsnapshot不足時のdrilldownです。 Choose tools autonomously. When the requested outcome directly matches one listed tool, call that tool before shell or native alternatives. Call no tool when the answer needs no workspace access. Snapshot multi-file state, observe existing runs, wait on workspace cursors without polling, and apply SHA-guarded edits atomically.")
             ]))
@@ -167,10 +168,17 @@ final class MCPServer: @unchecked Sendable {
 
     func validateStartup() throws {
         _ = try ToolCatalog.listedTools(profile: toolProfile, capabilitySet: capabilitySet)
+        catalogValidationSucceeded = true
     }
 
     private func invoke(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
         switch name {
+        case "factory_diagnostics":
+            try validateKeys(arguments, allowed: [])
+            return try await .from(FactoryDiagnosticsService(store: store).diagnose(
+                managerApplicationURL: try? managerApplicationURL(),
+                mcpReady: catalogValidationSucceeded
+            ))
         case "run_check":
             switch try MCPRunCheckAdapter.runCheck(arguments: arguments) {
             case .legacy(let legacy):

@@ -13,6 +13,15 @@ const packageMetadata = JSON.parse(
 
 assert.equal(packageMetadata.name, "@quolu/aishell");
 assert.equal(packageMetadata.version, "0.3.6");
+const factoryDiagnosticsSource = await readFile(
+  path.join(projectDirectory, "Sources", "AIShellCore", "FactoryDiagnostics.swift"),
+  "utf8"
+);
+const swiftVersion = factoryDiagnosticsSource.match(
+  /public\s+static\s+let\s+version\s*=\s*"([^"]+)"/
+)?.[1];
+assert.ok(swiftVersion, "AIShellProduct.version must be declared in FactoryDiagnostics.swift");
+assert.equal(packageMetadata.version, swiftVersion, "package.json must match AIShellProduct.version");
 assert.deepEqual(packageMetadata.os, ["darwin"]);
 assert.deepEqual(packageMetadata.cpu, ["arm64"]);
 assert.equal(
