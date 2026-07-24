@@ -26,6 +26,19 @@ per-change `result`削除、recovery/replay経路の変更を含む全suiteがgr
 - input/output schema欠落: 0
 - tool catalog digest: `a7fb8c...`（0.3.4と一致、契約不変）
 
+### 出荷物の挙動確認
+
+allowed rootを設定した一時workspaceへ、installed binary経由で実際の`apply_change_set`
+（`src/a.txt`と`src/b.txt`をexpected SHA付きで`A2\n`／`B2\n`へ書き換え）を投げた。
+
+- `status: committed`
+- change `a`: `after_path=src/a.txt`、`after_content="A2\n"`、`result`は**非存在**
+- change `b`: `after_path=src/b.txt`、`after_content="B2\n"`、`result`は**非存在**
+- 実ファイルも`A2`／`B2`へ更新
+
+npmから配布されているものが0.3.5の2変更（`after_content`追加・per-change `result`削除）を
+実際に持つことを確認した。ローカルビルドだけで直っていた可能性は排除されている。
+
 ## Benchmark harness focused tests
 
 - test-representative-acceptance-aggregate / production-runner / production-harness /
