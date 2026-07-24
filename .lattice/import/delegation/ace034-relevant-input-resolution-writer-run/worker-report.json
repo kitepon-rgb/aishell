@@ -1,0 +1,80 @@
+{
+  "schema_version": "dotagents.worker-report.v1",
+  "control_id": "aishell-capability-expansion-20260721",
+  "task_id": "ace034-relevant-input-resolution",
+  "worker_run_id": "ace034-relevant-input-resolution-writer-run",
+  "assignment_id": "ace034-relevant-input-resolution-assignment",
+  "packet_digest": "5633277d7ee2c13c6591d1d6b1adc24f64e9859328f164822fe6bb4faf50d896",
+  "executor_handle": {
+    "agent_path": "/root/ace034_relevant_input_resolution_writer"
+  },
+  "observed_state": "completed",
+  "status": "completed",
+  "result_digest": "a6aa5bbed1664ea6ff4f4f583bdf3a27197f83486f193022d0a8df2f65e36411",
+  "evidence": [
+    {
+      "type": "executor-receipt",
+      "ref": "codex-native:/root/ace034_relevant_input_resolution_writer:workspace-result",
+      "digest": "a6aa5bbed1664ea6ff4f4f583bdf3a27197f83486f193022d0a8df2f65e36411",
+      "observed_at": "2026-07-22T05:43:56.000Z"
+    }
+  ],
+  "validation_results": [
+    {
+      "validation_ref": "swift test --filter RunCheckResolutionServiceTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter RunCheckResolutionServiceTests",
+        "digest": "e85c0ba8170e7224f77ce4fc8268d8fa96c9078d47cd5867538604245c86d488",
+        "observed_at": "2026-07-22T05:43:56.000Z"
+      }
+    },
+    {
+      "validation_ref": "swift test --filter ProjectProfileServiceTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter ProjectProfileServiceTests",
+        "digest": "cc97995a8d0dc505d03cb5bbc0459286a5b73336bc0a9a9c3267c58900984bca",
+        "observed_at": "2026-07-22T05:43:56.000Z"
+      }
+    },
+    {
+      "validation_ref": "swift test --filter WorkspaceStateRuntimeTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter WorkspaceStateRuntimeTests",
+        "digest": "f1ff2cb2dae494b22246bd3da670f82547ae5212251c3e5555ec0631cb1f3f26",
+        "observed_at": "2026-07-22T05:43:56.000Z"
+      }
+    },
+    {
+      "validation_ref": "git diff --check",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "git diff --check",
+        "digest": "04511dd5e923393a6597004dab2dcddc8567a3864e8e144a833d049a72d2bfc3",
+        "observed_at": "2026-07-22T05:43:56.000Z"
+      }
+    }
+  ],
+  "changed_paths": [
+    "Sources/AIShellCore/ProjectProfileService.swift",
+    "Sources/AIShellCore/RunCheckResolutionService.swift",
+    "Sources/AIShellCore/WorkspaceStateRuntime.swift",
+    "Tests/AIShellCoreTests/ProjectProfileServiceTests.swift",
+    "Tests/AIShellCoreTests/RunCheckResolutionServiceTests.swift",
+    "Tests/AIShellCoreTests/WorkspaceStateRuntimeTests.swift"
+  ],
+  "claims": [
+    "ProjectProfileServiceは保存cacheをroot索引にだけ使い、fresh WorkspaceSnapshotからproject/profile/checkをexact再照合する",
+    "WorkspaceStateRuntimeはbounded snapshotと別に全file content、directory直下membership、tracked missing leafを二重観測し、4MiB超も完全SHA-256へ含める",
+    "receiptはprovider ID/version、Direct OS測定器version、root identity、cursor、project/profile/check、leaf count、completeness、Merkle digestを独立に束縛する",
+    "npmとSwiftPMの既存checkは実行能力を維持し、外部effect完全性を証明できないためtyped ineligibleとなる",
+    "trackedPathsは現在missingならmissing leaf、存在する場合は通常nodeとして測り、missingからpresentへの遷移でdigestを変更する",
+    "symlink、project root escape、観測間tree/root identity drift、cursor driftはfail closedする"
+  ]
+}

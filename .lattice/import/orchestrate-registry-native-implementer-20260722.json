@@ -1,0 +1,38 @@
+{
+  "cwd": "/Users/kite/Developer/aishell",
+  "control_id": "aishell-capability-expansion-20260721",
+  "actor_id": "bell-root-20260722-wave-ace031-ace044b",
+  "expected_revision": 7,
+  "observation": {
+    "registry_observation_id": "codex-native-implementer-routing-20260722-ace-wave",
+    "executor": {
+      "adapter_id": "codex-native",
+      "contract_version": "v1",
+      "instance_id": "native-subagent",
+      "handle_schema_id": "codex-native.agent-path.v1"
+    },
+    "workflow_id": "native-subagent",
+    "enabled": {
+      "value": "true",
+      "evidence": {"type": "executor-receipt", "ref": "verify-codex-agent-routing:implementer:/root/ace031_cache_safety_writer", "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4", "observed_at": "2026-07-22T02:31:31.000Z"}
+    },
+    "workflow_capabilities": [
+      {"capability_id": "report.structured", "value": "true", "evidence": {"type": "executor-receipt", "ref": "verify-codex-agent-routing:implementer", "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4", "observed_at": "2026-07-22T02:31:31.000Z"}},
+      {"capability_id": "workspace.read", "value": "true", "evidence": {"type": "executor-receipt", "ref": "verify-codex-agent-routing:implementer", "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4", "observed_at": "2026-07-22T02:31:31.000Z"}},
+      {"capability_id": "workspace.write", "value": "true", "evidence": {"type": "executor-receipt", "ref": "verify-codex-agent-routing:implementer", "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4", "observed_at": "2026-07-22T02:31:31.000Z"}}
+    ],
+    "capacity": {
+      "admission": {"value": "true", "evidence": {"type": "executor-receipt", "ref": "agents.spawn_agent:two-implementers", "digest": "c9112542eb53212d6dd777f8a0cd5fbb581a2d91eae8b960b153134dcbe12130", "observed_at": "2026-07-22T02:31:31.000Z"}},
+      "hard_inflight_limit": {"knowledge": "known", "value": 2, "evidence": {"type": "executor-receipt", "ref": "agents.spawn_agent:two-implementers", "digest": "c9112542eb53212d6dd777f8a0cd5fbb581a2d91eae8b960b153134dcbe12130", "observed_at": "2026-07-22T02:31:31.000Z"}},
+      "soft_inflight_limit": {"knowledge": "known", "value": 2, "evidence": {"type": "executor-receipt", "ref": "agents.spawn_agent:two-implementers", "digest": "c9112542eb53212d6dd777f8a0cd5fbb581a2d91eae8b960b153134dcbe12130", "observed_at": "2026-07-22T02:31:31.000Z"}},
+      "observed_inflight": {"knowledge": "known", "value": 0, "evidence": {"type": "executor-receipt", "ref": "agents.list_agents:routing-smokes-complete", "digest": "c9112542eb53212d6dd777f8a0cd5fbb581a2d91eae8b960b153134dcbe12130", "observed_at": "2026-07-22T02:31:31.000Z"}}
+    },
+    "verification": {
+      "stage": "execution-verified",
+      "observed_version": "codex-cli 0.144.6",
+      "observed_at": "2026-07-22T02:31:31.000Z",
+      "evidence": {"type": "executor-receipt", "ref": "verify-codex-agent-routing:implementer", "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4", "observed_at": "2026-07-22T02:31:31.000Z"}
+    },
+    "expires_at": "2026-07-22T04:31:31.000Z"
+  }
+}

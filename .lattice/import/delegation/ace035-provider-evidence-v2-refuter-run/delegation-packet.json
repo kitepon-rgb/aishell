@@ -1,0 +1,220 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "4f69ac1431762168fcf29b5d93e4e3357b34685c34b4840503e1e1b875f9239a",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 165,
+  "task": {
+    "task_id": "ace035-provider-evidence-v2-refutation",
+    "title": "auto-reviewer込みprovider evidence v2と総token会計を独立反証する",
+    "classification": "F",
+    "effect": "read",
+    "doc_ref": "docs/evidence/2026-07-22-ace-035-phase3-harness-readiness.md",
+    "role": "refuter",
+    "lane": "behavior-change",
+    "depends_on": [
+      "ace035-manifest-contract-refutation"
+    ],
+    "validation": [
+      "node --test benchmarks/test-phase3-representative-runner.mjs benchmarks/test-phase3-codex-executor.mjs benchmarks/test-phase3-local-callbacks.mjs benchmarks/test-phase3-production-harness.mjs benchmarks/test-phase3-acceptance-aggregate.mjs",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "ファイルを変更しない",
+      "dangerous bypassを提案しない",
+      "54実試行を実行しない"
+    ],
+    "known_traps": [
+      "reviewer tokenをmain usageから落とさない",
+      "SSE response pairの重複・欠損を許さない",
+      "requested model echoをactual evidenceへ昇格しない",
+      "missing usageを0補完しない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-representative-runner.mjs"
+      },
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-codex-executor.mjs"
+      },
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-local-callbacks.mjs"
+      },
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-acceptance-aggregate.mjs"
+      },
+      {
+        "kind": "directory",
+        "path": "benchmarks"
+      },
+      {
+        "kind": "file",
+        "path": "docs/evidence/2026-07-22-ace-035-phase3-harness-readiness.md"
+      }
+    ],
+    "write_scope": [],
+    "required_capabilities": [
+      "workspace.read",
+      "report.structured"
+    ],
+    "isolation": "none",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": true,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "approval": null,
+    "alternative_group": null,
+    "admission_digest": "c2d263a01c048a4d0788877f068ca5fef15f1999ca0b0a4f36b7ac750a74f95a"
+  },
+  "worker": {
+    "worker_run_id": "ace035-provider-evidence-v2-refuter-run",
+    "assignment_id": "ace035-provider-evidence-v2-refuter-assignment",
+    "state": "admitted",
+    "role_ref": "refuter",
+    "write_mode": "none",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "git_dir_file_id": "16777233:33978148",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "d43eafda84b9e4bf32c50a34acadf6ae960dd386",
+    "head_at_reservation": null
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-representative-runner.mjs"
+      },
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-codex-executor.mjs"
+      },
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-local-callbacks.mjs"
+      },
+      {
+        "kind": "file",
+        "path": "benchmarks/phase3-acceptance-aggregate.mjs"
+      },
+      {
+        "kind": "directory",
+        "path": "benchmarks"
+      },
+      {
+        "kind": "file",
+        "path": "docs/evidence/2026-07-22-ace-035-phase3-harness-readiness.md"
+      }
+    ],
+    "write_scope": []
+  },
+  "classification": "F",
+  "effect": "read",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:refuter:/root/ace035_provider_evidence_refuter",
+        "digest": "ae2ab2b4ad23700ce101f194ca030001d40ca685b80cc72a2656b594f19bf4ec",
+        "observed_at": "2026-07-22T10:41:40.704Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:refuter:/root/ace035_provider_evidence_refuter",
+        "digest": "ae2ab2b4ad23700ce101f194ca030001d40ca685b80cc72a2656b594f19bf4ec",
+        "observed_at": "2026-07-22T10:41:40.704Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 1800,
+    "cost_microusd": 1000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace035-provider-evidence-v2-refuter-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-sol",
+    "prompt_family": "refutation-v1",
+    "independence_group": "ace035-provider-evidence-v2-refutation",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": true,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "04448fb57e50eac0a6823a5f0f8f43dc78ae5d07d2d4f4ccd35b9ed32f1ed230",
+    "approach_family_ref": "ace035-provider-evidence-v2-refutation-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "node --test benchmarks/test-phase3-representative-runner.mjs benchmarks/test-phase3-codex-executor.mjs benchmarks/test-phase3-local-callbacks.mjs benchmarks/test-phase3-production-harness.mjs benchmarks/test-phase3-acceptance-aggregate.mjs",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "ファイルを変更しない",
+    "dangerous bypassを提案しない",
+    "54実試行を実行しない"
+  ],
+  "known_traps": [
+    "reviewer tokenをmain usageから落とさない",
+    "SSE response pairの重複・欠損を許さない",
+    "requested model echoをactual evidenceへ昇格しない",
+    "missing usageを0補完しない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "4f69ac1431762168fcf29b5d93e4e3357b34685c34b4840503e1e1b875f9239a",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

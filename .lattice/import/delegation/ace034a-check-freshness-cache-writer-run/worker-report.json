@@ -1,0 +1,32 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "85a5292f2ff4e9d545089100f87fc73373de0708dbd3eb98ab7e1ab8cfdedd12",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034a-check-freshness-cache",
+    "worker_run_id": "ace034a-check-freshness-cache-writer-run",
+    "assignment_id": "ace034a-check-freshness-cache-assignment",
+    "packet_digest": "85a5292f2ff4e9d545089100f87fc73373de0708dbd3eb98ab7e1ab8cfdedd12",
+    "executor_handle": { "agent_path": "/root/ace034a_check_freshness_cache_writer" },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "8225217e53d7885310f56125ae75243629017bfb13f0dd65e3e0b83498a9ab25",
+    "evidence": [{ "type": "executor-receipt", "ref": "codex-native:/root/ace034a_check_freshness_cache_writer", "digest": "16c027ec7841588f79ed9601ae24f780f8191fd0e6200a6095499fa93297722e", "observed_at": "2026-07-22T03:51:51.000Z" }],
+    "validation_results": [
+      { "validation_ref": "swift test --filter CheckFreshnessCacheTests", "outcome": "passed", "evidence": { "type": "command", "ref": "swift test --filter CheckFreshnessCacheTests", "digest": "7ad6ee1ca0e5ce83f040126a683274f5d4dd6af2a175b09eb3e6b10d59006db3", "observed_at": "2026-07-22T03:51:51.000Z" } },
+      { "validation_ref": "git diff --check", "outcome": "passed", "evidence": { "type": "command", "ref": "git diff --check", "digest": "76bc6faa83361c4132db3c15fb089fb4c3c81337e9bf383802e620a309892c93", "observed_at": "2026-07-22T03:51:51.000Z" } }
+    ],
+    "changed_paths": ["Sources/AIShellCore/CheckFreshnessCache.swift", "Tests/AIShellCoreTests/CheckFreshnessCacheTests.swift"],
+    "claims": []
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

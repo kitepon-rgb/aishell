@@ -1,0 +1,67 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "9f5b76b97e03f9db919c025b9093c5ad78defcb887eb9f4dc45fcbbb2d5c8228",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-focused-expiry-correction",
+    "worker_run_id": "ace034-focused-expiry-writer-run",
+    "assignment_id": "ace034-focused-expiry-assignment",
+    "packet_digest": "9f5b76b97e03f9db919c025b9093c5ad78defcb887eb9f4dc45fcbbb2d5c8228",
+    "executor_handle": {
+      "agent_path": "/root/ace034_focused_expiry_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "35bbf7a4efd3911d61f4d83bc3945e6029ec7591a6ca0a74e370b67699312e16",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "codex-native:/root/ace034_focused_expiry_writer",
+        "digest": "35bbf7a4efd3911d61f4d83bc3945e6029ec7591a6ca0a74e370b67699312e16",
+        "observed_at": "2026-07-22T04:27:05.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter FocusedCheckServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter FocusedCheckServiceTests",
+          "digest": "35bbf7a4efd3911d61f4d83bc3945e6029ec7591a6ca0a74e370b67699312e16",
+          "observed_at": "2026-07-22T04:26:55.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "35bbf7a4efd3911d61f4d83bc3945e6029ec7591a6ca0a74e370b67699312e16",
+          "observed_at": "2026-07-22T04:27:05.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Sources/AIShellCore/FocusedCheckService.swift",
+      "Tests/AIShellCoreTests/FocusedCheckServiceTests.swift"
+    ],
+    "claims": [
+      "expiresAtをcanonical set digestから除外し、同一意味論で期限だけ異なるcompileは同じfocused set IDとdigestになるよう修正した。",
+      "既存registryの同一ID/digestでは最初に発行したreceiptを返し、再compileの短いexpiryによる短縮および長いexpiryによる延長を行わない。",
+      "期限切れresolveのselectionStale契約と、evidence・provenance・coverage・limitations・candidate・DAGのdigest束縛を維持した。",
+      "untrackedを含むstatus確認では担当2ファイルの変更のみだった。"
+    ]
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

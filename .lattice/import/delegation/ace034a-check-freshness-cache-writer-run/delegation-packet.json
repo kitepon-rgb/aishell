@@ -1,0 +1,239 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "85a5292f2ff4e9d545089100f87fc73373de0708dbd3eb98ab7e1ab8cfdedd12",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 23,
+  "task": {
+    "task_id": "ace034a-check-freshness-cache",
+    "title": "CheckFreshnessCacheのproduction serviceとfocused testを実装する",
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/development-efficiency-plan.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "validation": [
+      "swift test --filter CheckFreshnessCacheTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "DevelopmentRuntimeService・MCP統合を変更しない",
+      "担当2 file以外を変更しない",
+      "commit・push・Lattice状態更新をしない"
+    ],
+    "known_traps": [
+      "cache policyでinvocation・ordered step・selection digestを変更しない",
+      "offはcache materialを観測せず、prefer/onlyはaggregate all-or-noneにする",
+      "corruptionをmissへ丸めず、refreshも既存generationを上書きしない",
+      "secretをentry・artifact・errorへ保存しない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0019-freshness-cache-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/RunCheckFreshnessCacheSafetyNetTests.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/EvidenceStore.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/Models.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/CheckFreshnessCache.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/CheckFreshnessCacheTests.swift"
+      }
+    ],
+    "approval": null,
+    "alternative_group": null,
+    "admission_digest": "0d9726593f27a6dcda0e03de16f74ae73ad0b6f971aa3bc5975c7abf8fc25022"
+  },
+  "worker": {
+    "worker_run_id": "ace034a-check-freshness-cache-writer-run",
+    "assignment_id": "ace034a-check-freshness-cache-assignment",
+    "state": "admitted",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace034a-check-freshness-cache",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace034a-check-freshness-cache",
+    "git_dir_file_id": "16777233:42234204",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "b47179237f15b29769bbc938d383f88634ee6641",
+    "head_at_reservation": "b47179237f15b29769bbc938d383f88634ee6641"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0019-freshness-cache-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/RunCheckFreshnessCacheSafetyNetTests.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/EvidenceStore.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/Models.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/CheckFreshnessCache.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/CheckFreshnessCacheTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 3600,
+    "cost_microusd": 2000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace034a-check-freshness-cache-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "implementation-v1",
+    "independence_group": "ace034a-check-freshness-cache",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "034a034a034a034a034a034a034a034a034a034a034a034a034a034a034a034a",
+    "approach_family_ref": "ace034a-check-freshness-cache-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter CheckFreshnessCacheTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "DevelopmentRuntimeService・MCP統合を変更しない",
+    "担当2 file以外を変更しない",
+    "commit・push・Lattice状態更新をしない"
+  ],
+  "known_traps": [
+    "cache policyでinvocation・ordered step・selection digestを変更しない",
+    "offはcache materialを観測せず、prefer/onlyはaggregate all-or-noneにする",
+    "corruptionをmissへ丸めず、refreshも既存generationを上書きしない",
+    "secretをentry・artifact・errorへ保存しない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "85a5292f2ff4e9d545089100f87fc73373de0708dbd3eb98ab7e1ab8cfdedd12",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

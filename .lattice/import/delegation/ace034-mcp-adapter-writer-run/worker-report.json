@@ -1,0 +1,64 @@
+{
+  "schema_version": "dotagents.worker-report.v1",
+  "control_id": "aishell-capability-expansion-20260721",
+  "task_id": "ace034-mcp-request-adapter",
+  "worker_run_id": "ace034-mcp-adapter-writer-run",
+  "assignment_id": "ace034-mcp-adapter-assignment",
+  "packet_digest": "4df12d03ec2ac7f62a2c45fef2bc88f57f898428576331f8e86ec90a112133ce",
+  "executor_handle": {
+    "agent_path": "/root/ace034_mcp_adapter_writer"
+  },
+  "observed_state": "completed",
+  "status": "completed",
+  "result_digest": "a5a37c1b72e80767c76914ea0cebff11dfc723cb0b5360dbbc753fd165fe832c",
+  "evidence": [
+    {
+      "type": "executor-receipt",
+      "ref": "codex-native:/root/ace034_mcp_adapter_writer",
+      "digest": "a5a37c1b72e80767c76914ea0cebff11dfc723cb0b5360dbbc753fd165fe832c",
+      "observed_at": "2026-07-22T05:57:37.000Z"
+    }
+  ],
+  "validation_results": [
+    {
+      "validation_ref": "swift test --filter MCPRunCheckAdapterTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter MCPRunCheckAdapterTests",
+        "digest": "d21e9e7a2c1b6fb4f3f445bcce76dc634760815a56fe42d6d273ece749972d70",
+        "observed_at": "2026-07-22T05:57:31.000Z"
+      }
+    },
+    {
+      "validation_ref": "swift test --filter MCPRunCheckV2SchemaTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter MCPRunCheckV2SchemaTests",
+        "digest": "e16ab949b0a47e652605c422720f97ac09b0c9867ea550939c4d3966e6dad312",
+        "observed_at": "2026-07-22T05:57:31.000Z"
+      }
+    },
+    {
+      "validation_ref": "git diff --check",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "git diff --check",
+        "digest": "a5a37c1b72e80767c76914ea0cebff11dfc723cb0b5360dbbc753fd165fe832c",
+        "observed_at": "2026-07-22T05:57:31.000Z"
+      }
+    }
+  ],
+  "changed_paths": [
+    "Sources/AIShellMCP/MCPRunCheckAdapter.swift",
+    "Tests/AIShellMCPTests/MCPRunCheckAdapterTests.swift"
+  ],
+  "claims": [
+    "run_check v1 defaultsとfractional timeout/retentionをexactなDoubleのまま保持し、v2 direct/profile/focusedを閉じた意味 requestへ変換する",
+    "profile prepare intentとfocused set/selection digestを別の意味状態として保持し、任意digestの再注入を公開しない",
+    "change_impact analyze/recommend/opaque continuationをservice呼出しなしでCore requestまたはcontinuation intentへ変換する",
+    "unknown field、v1/v2混在、nested unknown、duplicate ID、SHA/range不正、initial/continuation混在をruntimeでinvalid argumentsとして拒否する"
+  ]
+}

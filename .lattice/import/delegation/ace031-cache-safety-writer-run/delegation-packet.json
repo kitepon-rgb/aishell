@@ -1,0 +1,221 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "d22122272d4c83a69fd7ca01147d3ca2cf038abf80e11ecd09e3f47128f47223",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 12,
+  "task": {
+    "task_id": "ace031-cache-safety-net",
+    "title": "freshness cacheのfalse-fresh・corruption・TTL・quota安全網を実装する",
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/development-efficiency-plan.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "validation": [
+      "swift test --filter RunCheckFreshnessCacheSafetyNetTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "CheckFreshnessCache本体やDevelopmentRuntimeService統合を実装しない",
+      "担当file以外を変更しない",
+      "commit・push・Lattice状態更新をしない"
+    ],
+    "known_traps": [
+      "responseのcache.stateだけをoracleにせずprocess countとartifact SHAで判定する",
+      "test内だけの万能fakeでproduction契約を弱めない",
+      "安全網taskなので将来のACE-034a責務を先取りしない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0019-freshness-cache-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/EvidenceStore.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/Models.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/RunCheckFreshnessCacheSafetyNetTests.swift"
+      }
+    ],
+    "approval": null,
+    "alternative_group": null,
+    "admission_digest": "232ba99e0eedf5c06399b5423301fd3f181e62532bec6ac55867b2e8f20fd121"
+  },
+  "worker": {
+    "worker_run_id": "ace031-cache-safety-writer-run",
+    "assignment_id": "ace031-cache-safety-assignment",
+    "state": "admitted",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace031-cache-safety",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace031-cache-safety",
+    "git_dir_file_id": "16777233:42019745",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "df0b79f8c152aa860532315d339443aade7b582a",
+    "head_at_reservation": "df0b79f8c152aa860532315d339443aade7b582a"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0019-freshness-cache-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/EvidenceStore.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/Models.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/RunCheckFreshnessCacheSafetyNetTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 3600,
+    "cost_microusd": 2000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace031-cache-safety-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "implementation-v1",
+    "independence_group": "ace031-cache-safety",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "0310310310310310310310310310310310310310310310310310310310310310",
+    "approach_family_ref": "ace031-cache-safety-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter RunCheckFreshnessCacheSafetyNetTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "CheckFreshnessCache本体やDevelopmentRuntimeService統合を実装しない",
+    "担当file以外を変更しない",
+    "commit・push・Lattice状態更新をしない"
+  ],
+  "known_traps": [
+    "responseのcache.stateだけをoracleにせずprocess countとartifact SHAで判定する",
+    "test内だけの万能fakeでproduction契約を弱めない",
+    "安全網taskなので将来のACE-034a責務を先取りしない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "d22122272d4c83a69fd7ca01147d3ca2cf038abf80e11ecd09e3f47128f47223",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

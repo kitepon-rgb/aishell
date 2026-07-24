@@ -1,0 +1,24 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "7078d281cb16af41ba1eade230a28f5997d9c4043446c11afb2a003df8aeae7e",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-impact-recommend-adapter",
+    "worker_run_id": "ace034-impact-recommend-writer-run",
+    "assignment_id": "ace034-impact-recommend-assignment",
+    "packet_digest": "7078d281cb16af41ba1eade230a28f5997d9c4043446c11afb2a003df8aeae7e",
+    "executor_handle": { "agent_path": "/root/ace034_impact_recommend_writer" },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "30a62ff2e3f3c220a5960e33c7381339fbc6cc721f31ae7e38e6d2a0614c7bd4",
+    "evidence": [{ "type": "executor-receipt", "ref": "/root/ace034_impact_recommend_writer", "digest": "30a62ff2e3f3c220a5960e33c7381339fbc6cc721f31ae7e38e6d2a0614c7bd4", "observed_at": "2026-07-22T04:42:13.000Z" }],
+    "validation_results": [
+      { "validation_ref": "swift test --filter ChangeImpactRecommendationTests", "outcome": "passed", "evidence": { "type": "command", "ref": "swift test --filter ChangeImpactRecommendationTests (6 tests)", "digest": "30a62ff2e3f3c220a5960e33c7381339fbc6cc721f31ae7e38e6d2a0614c7bd4", "observed_at": "2026-07-22T04:42:13.000Z" } },
+      { "validation_ref": "swift test --filter ChangeImpactServiceTests", "outcome": "passed", "evidence": { "type": "command", "ref": "swift test --filter ChangeImpactServiceTests (6 tests)", "digest": "30a62ff2e3f3c220a5960e33c7381339fbc6cc721f31ae7e38e6d2a0614c7bd4", "observed_at": "2026-07-22T04:42:13.000Z" } },
+      { "validation_ref": "git diff --check", "outcome": "passed", "evidence": { "type": "command", "ref": "git diff --check", "digest": "30a62ff2e3f3c220a5960e33c7381339fbc6cc721f31ae7e38e6d2a0614c7bd4", "observed_at": "2026-07-22T04:42:13.000Z" } }
+    ],
+    "changed_paths": ["Sources/AIShellCore/ChangeImpactService.swift", "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"],
+    "claims": ["recommend専用filterは6件、既存ChangeImpactServiceTests filterは原版6件を実行した。", "reportは指定pathへ保存した。"]
+  }
+}

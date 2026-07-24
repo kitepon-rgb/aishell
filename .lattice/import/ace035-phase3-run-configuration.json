@@ -1,0 +1,33 @@
+{
+  "schema": "aishell.phase3-run-configuration.v1",
+  "provider": "openai",
+  "modelSnapshot": "gpt-5.6-sol",
+  "reasoningEffort": "high",
+  "sandbox": {
+    "approvalPolicy": "on-request",
+    "filesystem": "workspace-write",
+    "network": false
+  },
+  "commonHostCatalogDigest": "7a0b3f9d19429836f0a9bf67830cd8fba8f4fef3acb982ca03c7c8204be30466",
+  "approvalReviewer": {
+    "mode": "auto_review",
+    "modelSnapshots": ["gpt-5.4"]
+  },
+  "armBindings": {
+    "native": {
+      "binding": "Codex native tools; AIShell MCP absent",
+      "aishellBinaryDigest": null,
+      "aishellToolCatalogDigest": null
+    },
+    "current-aishell-0.3.3": {
+      "binding": "git 2705b407cde704873c40b833507059eba99a1a82; tag v0.3.3",
+      "aishellBinaryDigest": "982b9a3d07a358440937acecc6535063f7e9691dd8f8a8ae0368dcf7a0b43c4c",
+      "aishellToolCatalogDigest": "0491fd1024fc3a34b871c6d3cf1aabff6fce4ed2539d974f3a604d4c4ee45361"
+    },
+    "candidate": {
+      "binding": "git 873d2bc7b5acba9c1286847c39612048338f1530",
+      "aishellBinaryDigest": "046df45ab842c2e37cc074a160183412f6e3ad52bcb06ee0f37b0b2fe8440843",
+      "aishellToolCatalogDigest": "f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58"
+    }
+  }
+}

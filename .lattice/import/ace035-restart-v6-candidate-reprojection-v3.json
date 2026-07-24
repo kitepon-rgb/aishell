@@ -1,0 +1,680 @@
+{
+  "schema": "aishell.phase3-candidate-reprojection.v1",
+  "sourceRun": "/Users/kite/Developer/aishell/benchmarks/results/phase3-production-20260722-restart-v6",
+  "attempts": [
+    {
+      "attemptID": "phase3-01-freshness-cache-repeat-check-candidate-r1",
+      "taskID": "freshness-cache-repeat-check",
+      "repetition": 1,
+      "result": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 1,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "capabilityEvidence: required accepted outcome missing: run_check:execute"
+      ],
+      "adapterTraceSHA256": "545838d39b870f7352ec22d0e8a5a260c7358912cbd6146173edea7c0ddb6778"
+    },
+    {
+      "attemptID": "phase3-05-freshness-cache-repeat-check-candidate-r2",
+      "taskID": "freshness-cache-repeat-check",
+      "repetition": 2,
+      "result": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 1,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "capabilityEvidence: required accepted outcome missing: run_check:execute"
+      ],
+      "adapterTraceSHA256": "d39076064d1060ae3790a044d1e9647b6cc9cd1a2601954f8e490146c78c270c"
+    },
+    {
+      "attemptID": "phase3-07-freshness-cache-repeat-check-candidate-r3",
+      "taskID": "freshness-cache-repeat-check",
+      "repetition": 3,
+      "result": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 1,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "capabilityEvidence: required accepted outcome missing: run_check:execute"
+      ],
+      "adapterTraceSHA256": "8fc996a92ea49901ea2a77be13cc916047ba533cc9c002e6592b7ef193a4dd5e"
+    },
+    {
+      "attemptID": "phase3-12-freshness-cache-input-change-candidate-r1",
+      "taskID": "freshness-cache-input-change",
+      "repetition": 1,
+      "result": {
+        "inputValue": 2,
+        "oldResultReportedFresh": false,
+        "rerunExitCode": 1
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 0,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": false
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.secondExecutionCount: expected 1, received 0",
+        "capabilityEvidence: required accepted outcome missing: run_check:execute"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-13-freshness-cache-input-change-candidate-r2",
+      "taskID": "freshness-cache-input-change",
+      "repetition": 2,
+      "result": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "capabilityEvidence: required accepted outcome missing: run_check:execute"
+      ],
+      "adapterTraceSHA256": "658df9030dfbcd3294ebc2a6ad6075ee107d9fffb6727a20efd5b2b71f2fb7fa"
+    },
+    {
+      "attemptID": "phase3-17-freshness-cache-input-change-candidate-r3",
+      "taskID": "freshness-cache-input-change",
+      "repetition": 3,
+      "result": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "capabilityEvidence: required accepted outcome missing: run_check:execute"
+      ],
+      "adapterTraceSHA256": "ac789b4437a61e620dd81ddcc5c59166a2b977c6e5ac00d4d90614187b008c96"
+    },
+    {
+      "attemptID": "phase3-21-change-impact-direct-dependent-candidate-r1",
+      "taskID": "change-impact-direct-dependent",
+      "repetition": 1,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "static-import",
+        "unknowns": 0,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 5109,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "c4c8b1adb1b2b005c84eb01b12a982639e7546e577d5dc51051ce4e6fe5a66b1"
+    },
+    {
+      "attemptID": "phase3-24-change-impact-direct-dependent-candidate-r2",
+      "taskID": "change-impact-direct-dependent",
+      "repetition": 2,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "static-import",
+        "unknowns": 0,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 5109,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "68c9eca753913640c1bf6346e71d8548b3107fe7fef196ef66e928906f1f5220"
+    },
+    {
+      "attemptID": "phase3-26-change-impact-direct-dependent-candidate-r3",
+      "taskID": "change-impact-direct-dependent",
+      "repetition": 3,
+      "result": {
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenanceRequired": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 0,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": false
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.impactedPaths: expected [\"src/b.mjs\",\"test/b.test.mjs\"], received undefined",
+        "assertions.provenanceRequired: expected true, received false",
+        "toolResultAssertions.impactedPaths: expected [\"src/b.mjs\",\"test/b.test.mjs\"], received undefined",
+        "toolResultAssertions.provenanceRequired: expected true, received false",
+        "capabilityEvidence: required accepted outcome missing: change_impact:analyze"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-29-change-impact-unresolved-edge-candidate-r1",
+      "taskID": "change-impact-unresolved-edge",
+      "repetition": 1,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [],
+        "provenance": "",
+        "unknowns": 1,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 3303,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": false,
+      "failures": [
+        "agentReport.assertions.unknowns: expected 1, received \"1\"",
+        "agentReport.assertions.silentCompletenessClaims: expected 0, received \"0\""
+      ],
+      "adapterTraceSHA256": "5ce95b8ecffef525d7adbf4f0bcd859049f13b2ff5cf69c3f7736bc41f8b7337"
+    },
+    {
+      "attemptID": "phase3-31-change-impact-unresolved-edge-candidate-r2",
+      "taskID": "change-impact-unresolved-edge",
+      "repetition": 2,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [],
+        "provenance": "",
+        "unknowns": 1,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 3303,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": false,
+      "failures": [
+        "agentReport.assertions.unknowns: expected 1, received \"1\"",
+        "agentReport.assertions.silentCompletenessClaims: expected 0, received \"0\""
+      ],
+      "adapterTraceSHA256": "ad7b01565a6962c41abe6288a6ec4a221ae37649151005ad0bc3815dbf4e07bf"
+    },
+    {
+      "attemptID": "phase3-35-change-impact-unresolved-edge-candidate-r3",
+      "taskID": "change-impact-unresolved-edge",
+      "repetition": 3,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [],
+        "provenance": "",
+        "unknowns": 1,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 3303,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": false,
+      "failures": [
+        "agentReport.assertions.unknowns: expected 1, received \"1\"",
+        "agentReport.assertions.silentCompletenessClaims: expected 0, received \"0\""
+      ],
+      "adapterTraceSHA256": "c38ce354a9d544d9e4777a039cd88ee0157f4efb6b4ac4679d072b761a2ebee2"
+    },
+    {
+      "attemptID": "phase3-39-focused-pipeline-recommend-only-candidate-r1",
+      "taskID": "focused-pipeline-recommend-only",
+      "repetition": 1,
+      "result": {
+        "executedChecks": 0,
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ]
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "assertions.executedChecks: expected 0, received undefined",
+        "toolResultAssertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "toolResultAssertions.executedChecks: expected 0, received undefined",
+        "capabilityEvidence: required accepted outcome missing: change_impact:recommend"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-40-focused-pipeline-recommend-only-candidate-r2",
+      "taskID": "focused-pipeline-recommend-only",
+      "repetition": 2,
+      "result": {
+        "executedChecks": 0,
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ]
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "assertions.executedChecks: expected 0, received undefined",
+        "toolResultAssertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "toolResultAssertions.executedChecks: expected 0, received undefined",
+        "capabilityEvidence: required accepted outcome missing: change_impact:recommend"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-45-focused-pipeline-recommend-only-candidate-r3",
+      "taskID": "focused-pipeline-recommend-only",
+      "repetition": 3,
+      "result": {
+        "executedChecks": "0",
+        "recommendedChecks": "[\"test/a.test.mjs\"]"
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 3,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "assertions.executedChecks: expected 0, received undefined",
+        "agentReport.assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received \"[\\\"test/a.test.mjs\\\"]\"",
+        "agentReport.assertions.executedChecks: expected 0, received \"0\"",
+        "toolResultAssertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "toolResultAssertions.executedChecks: expected 0, received undefined",
+        "capabilityEvidence: required accepted outcome missing: change_impact:recommend"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-48-focused-pipeline-explicit-run-candidate-r1",
+      "taskID": "focused-pipeline-explicit-run",
+      "repetition": 1,
+      "result": {
+        "executionRequiresOptIn": "true",
+        "recommendedChecks": "node --test test/a.test.mjs"
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 0,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": false
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "assertions.executionRequiresOptIn: expected true, received undefined",
+        "agentReport.assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received \"node --test test/a.test.mjs\"",
+        "agentReport.assertions.executionRequiresOptIn: expected true, received \"true\"",
+        "toolResultAssertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "toolResultAssertions.executionRequiresOptIn: expected true, received undefined",
+        "capabilityEvidence: required accepted outcome missing: change_impact:recommend"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-49-focused-pipeline-explicit-run-candidate-r2",
+      "taskID": "focused-pipeline-explicit-run",
+      "repetition": 2,
+      "result": {
+        "executionRequiresOptIn": "true",
+        "recommendedChecks": "test/a.test.mjs"
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "assertions.executionRequiresOptIn: expected true, received undefined",
+        "agentReport.assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received \"test/a.test.mjs\"",
+        "agentReport.assertions.executionRequiresOptIn: expected true, received \"true\"",
+        "toolResultAssertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "toolResultAssertions.executionRequiresOptIn: expected true, received undefined",
+        "capabilityEvidence: required accepted outcome missing: change_impact:recommend"
+      ],
+      "adapterTraceSHA256": null
+    },
+    {
+      "attemptID": "phase3-52-focused-pipeline-explicit-run-candidate-r3",
+      "taskID": "focused-pipeline-explicit-run",
+      "repetition": 3,
+      "result": {
+        "executionRequiresOptIn": "true",
+        "recommendedChecks": "node --test test/a.test.mjs"
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 0,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": false
+      },
+      "acceptedInvocations": [],
+      "solved": false,
+      "failures": [
+        "assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "assertions.executionRequiresOptIn: expected true, received undefined",
+        "agentReport.assertions.recommendedChecks: expected [\"test/a.test.mjs\"], received \"node --test test/a.test.mjs\"",
+        "agentReport.assertions.executionRequiresOptIn: expected true, received \"true\"",
+        "toolResultAssertions.recommendedChecks: expected [\"test/a.test.mjs\"], received undefined",
+        "toolResultAssertions.executionRequiresOptIn: expected true, received undefined",
+        "capabilityEvidence: required accepted outcome missing: change_impact:recommend"
+      ],
+      "adapterTraceSHA256": null
+    }
+  ]
+}

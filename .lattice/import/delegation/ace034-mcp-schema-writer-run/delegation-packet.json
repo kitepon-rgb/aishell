@@ -1,0 +1,256 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "008b961727ec7bab0cfd4cc0ea2dec1698848223900e68791b22803a4a94919c",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 83,
+  "task": {
+    "task_id": "ace034-mcp-schema",
+    "title": "run_check v2とchange_impact v2のclosed MCP schema・parse DTOを実装する",
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/adr/0003-expanded-development-surface-contract.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [
+      "ace034-runtime-pipeline",
+      "ace034-impact-recommend-adapter"
+    ],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "validation": [
+      "swift test --filter MCPRunCheckV2SchemaTests",
+      "swift test --filter MCPTypesTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "MCPServer invoke・Core runtime・ManagedProcessRegistryを変更しない",
+      "run_observeを早期公開しない",
+      "legacy v1 fieldsを削除しない",
+      "担当file以外を変更しない",
+      "commit・push・Lattice/Control更新をしない"
+    ],
+    "known_traps": [
+      "v1 flatとv2 object混在をoneOfの曖昧優先にしない",
+      "unknown variant/extra fieldを許可しない",
+      "expanded-v1 gate外へchange_impactを早期露出しない",
+      "schema順・descriptionを非決定的にしない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0003-expanded-development-surface-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0012-change-impact-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0020-focused-check-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPServer.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPTypes.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPTypesTests.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPRunCheckV2SchemaTests.swift"
+      }
+    ],
+    "approval": null,
+    "alternative_group": null,
+    "admission_digest": "d6c19782e5ab7da7aa1dc27550110d9883224dca7d5bfa499f9d52c41f12fde3"
+  },
+  "worker": {
+    "worker_run_id": "ace034-mcp-schema-writer-run",
+    "assignment_id": "ace034-mcp-schema-assignment",
+    "state": "dispatched",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace034-mcp-schema",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace034-mcp-schema",
+    "git_dir_file_id": "16777233:42493608",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "87cc88013c6713c48bcdd0874ac670b9c8ed4eb1",
+    "head_at_reservation": "87cc88013c6713c48bcdd0874ac670b9c8ed4eb1"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0003-expanded-development-surface-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0012-change-impact-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0020-focused-check-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPServer.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPTypes.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPTypesTests.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPRunCheckV2SchemaTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 5400,
+    "cost_microusd": 3000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace034-mcp-schema-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "implementation-v1",
+    "independence_group": "ace034-mcp-schema",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "b647eeecc5216b6d480dbce7a802f9134268589535418148167fe16548d03fc7",
+    "approach_family_ref": "ace034-mcp-schema-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter MCPRunCheckV2SchemaTests",
+    "swift test --filter MCPTypesTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "MCPServer invoke・Core runtime・ManagedProcessRegistryを変更しない",
+    "run_observeを早期公開しない",
+    "legacy v1 fieldsを削除しない",
+    "担当file以外を変更しない",
+    "commit・push・Lattice/Control更新をしない"
+  ],
+  "known_traps": [
+    "v1 flatとv2 object混在をoneOfの曖昧優先にしない",
+    "unknown variant/extra fieldを許可しない",
+    "expanded-v1 gate外へchange_impactを早期露出しない",
+    "schema順・descriptionを非決定的にしない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "008b961727ec7bab0cfd4cc0ea2dec1698848223900e68791b22803a4a94919c",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

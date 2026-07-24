@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "ca31317b2625287fa1e06d7c84804cb76aba1fc346daf89eeb3d9068af0902dc",
+  "evidence_id": "ace-034a-check-freshness-cache-production-20260722",
+  "git_blob_oid": "41eb1e9a2e48c1e3e7f715780cdda00837fddefb",
+  "media_type": "text/markdown",
+  "path": "docs/evidence/2026-07-22-check-freshness-cache.md",
+  "repo_id": "self"
+}

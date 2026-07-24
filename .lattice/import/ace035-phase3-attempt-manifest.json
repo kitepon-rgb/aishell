@@ -1,0 +1,647 @@
+{
+  "schema": "aishell.phase3-representative-attempt-manifest.v1",
+  "phase": "phase-3",
+  "frozenInputs": {
+    "suiteSHA256": "3ca53c0fa9f95d6f2f277388b124fd09c1fd022a5803cdae29cefa2ebda58214",
+    "fixtureCatalogSHA256": "def2454c3e56917812c0cb07c67523a4b90d15c1f24f4834c5ff6fa189b03982",
+    "taskGoalsSHA256": "810103d0f1358685db035f6f1f711895f411c21e15ba0f8b9de1c3a6761d8e5d",
+    "executionContractsSHA256": "aa02c3d604dbad28c182ff9ae1df836b7781d671b199a48f3df3e7a4fe3f6163"
+  },
+  "isolation": {
+    "provider": "openai",
+    "modelSnapshot": "gpt-5.6-sol",
+    "reasoningEffort": "high",
+    "sandboxSHA256": "2b1e6afb8765ad0d3fef39218acf4db19da0936865efa452624b267cc2872fc1",
+    "commonHostCatalogDigest": "7a0b3f9d19429836f0a9bf67830cd8fba8f4fef3acb982ca03c7c8204be30466",
+    "approvalReviewer": {
+      "mode": "auto_review",
+      "modelSnapshots": [
+        "gpt-5.4"
+      ]
+    },
+    "pairedRandomizationSeed": "aishell-capability-expansion-v1",
+    "freshWorkspacePerAttempt": true,
+    "replaceInvalidAttempts": false
+  },
+  "armBindings": {
+    "native": {
+      "binding": "Codex native tools; AIShell MCP absent",
+      "aishellBinaryDigest": null,
+      "aishellToolCatalogDigest": null
+    },
+    "current-aishell-0.3.3": {
+      "binding": "git 2705b407cde704873c40b833507059eba99a1a82; tag v0.3.3",
+      "aishellBinaryDigest": "982b9a3d07a358440937acecc6535063f7e9691dd8f8a8ae0368dcf7a0b43c4c",
+      "aishellToolCatalogDigest": "0491fd1024fc3a34b871c6d3cf1aabff6fce4ed2539d974f3a604d4c4ee45361"
+    },
+    "candidate": {
+      "binding": "git 873d2bc7b5acba9c1286847c39612048338f1530",
+      "aishellBinaryDigest": "046df45ab842c2e37cc074a160183412f6e3ad52bcb06ee0f37b0b2fe8440843",
+      "aishellToolCatalogDigest": "f48911143c4202f0364ca765a2bdfb35c18ffbcada5fa156193f716962aadc58"
+    }
+  },
+  "tasks": [
+    "freshness-cache-repeat-check",
+    "freshness-cache-input-change",
+    "change-impact-direct-dependent",
+    "change-impact-unresolved-edge",
+    "focused-pipeline-recommend-only",
+    "focused-pipeline-explicit-run"
+  ],
+  "attempts": [
+    {
+      "attemptID": "phase3-01-freshness-cache-repeat-check-candidate-r1",
+      "sequence": 1,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "candidate",
+      "repetition": 1,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-02-freshness-cache-repeat-check-native-r1",
+      "sequence": 2,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "native",
+      "repetition": 1,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-03-freshness-cache-repeat-check-current-aishell-0.3.3-r1",
+      "sequence": 3,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 1,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-04-freshness-cache-repeat-check-current-aishell-0.3.3-r2",
+      "sequence": 4,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 2,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-05-freshness-cache-repeat-check-candidate-r2",
+      "sequence": 5,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "candidate",
+      "repetition": 2,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-06-freshness-cache-repeat-check-native-r2",
+      "sequence": 6,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "native",
+      "repetition": 2,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-07-freshness-cache-repeat-check-candidate-r3",
+      "sequence": 7,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "candidate",
+      "repetition": 3,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-08-freshness-cache-repeat-check-current-aishell-0.3.3-r3",
+      "sequence": 8,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 3,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-09-freshness-cache-repeat-check-native-r3",
+      "sequence": 9,
+      "taskID": "freshness-cache-repeat-check",
+      "fixtureID": "freshness-cache",
+      "arm": "native",
+      "repetition": 3,
+      "promptSHA256": "fada49a59267967274fd3928e3516851f316081f516f79df7d87966f0c384fbc",
+      "materializedFixtureSHA256": "5a110040b1aaf139fe47f45e9637a2ba87269283cbb2f373f910d77eb362b990",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-10-freshness-cache-input-change-native-r1",
+      "sequence": 10,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "native",
+      "repetition": 1,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-11-freshness-cache-input-change-current-aishell-0.3.3-r1",
+      "sequence": 11,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 1,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-12-freshness-cache-input-change-candidate-r1",
+      "sequence": 12,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "candidate",
+      "repetition": 1,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-13-freshness-cache-input-change-candidate-r2",
+      "sequence": 13,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "candidate",
+      "repetition": 2,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-14-freshness-cache-input-change-current-aishell-0.3.3-r2",
+      "sequence": 14,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 2,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-15-freshness-cache-input-change-native-r2",
+      "sequence": 15,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "native",
+      "repetition": 2,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-16-freshness-cache-input-change-native-r3",
+      "sequence": 16,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "native",
+      "repetition": 3,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-17-freshness-cache-input-change-candidate-r3",
+      "sequence": 17,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "candidate",
+      "repetition": 3,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-18-freshness-cache-input-change-current-aishell-0.3.3-r3",
+      "sequence": 18,
+      "taskID": "freshness-cache-input-change",
+      "fixtureID": "freshness-cache",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 3,
+      "promptSHA256": "7069c328ca0260b6558b0eed0672229f112c33e8f7a240a9df939b61c9bdf6c4",
+      "materializedFixtureSHA256": "3121946736e64618615319dbafc16a0775c598f15a18bba5f51f1b805d5b4222",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-19-change-impact-direct-dependent-native-r1",
+      "sequence": 19,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "native",
+      "repetition": 1,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-20-change-impact-direct-dependent-current-aishell-0.3.3-r1",
+      "sequence": 20,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 1,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-21-change-impact-direct-dependent-candidate-r1",
+      "sequence": 21,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "candidate",
+      "repetition": 1,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-22-change-impact-direct-dependent-native-r2",
+      "sequence": 22,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "native",
+      "repetition": 2,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-23-change-impact-direct-dependent-current-aishell-0.3.3-r2",
+      "sequence": 23,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 2,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-24-change-impact-direct-dependent-candidate-r2",
+      "sequence": 24,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "candidate",
+      "repetition": 2,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-25-change-impact-direct-dependent-native-r3",
+      "sequence": 25,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "native",
+      "repetition": 3,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-26-change-impact-direct-dependent-candidate-r3",
+      "sequence": 26,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "candidate",
+      "repetition": 3,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-27-change-impact-direct-dependent-current-aishell-0.3.3-r3",
+      "sequence": 27,
+      "taskID": "change-impact-direct-dependent",
+      "fixtureID": "change-impact",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 3,
+      "promptSHA256": "1f71fd2d50b00ad61656334df2a9b11a1e9a8229231e83723e2d537d2036c214",
+      "materializedFixtureSHA256": "6803f768232000b4e74b41a5e53c672224d63f30652e6bc12d667367605bd7f6",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-28-change-impact-unresolved-edge-current-aishell-0.3.3-r1",
+      "sequence": 28,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 1,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-29-change-impact-unresolved-edge-candidate-r1",
+      "sequence": 29,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "candidate",
+      "repetition": 1,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-30-change-impact-unresolved-edge-native-r1",
+      "sequence": 30,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "native",
+      "repetition": 1,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-31-change-impact-unresolved-edge-candidate-r2",
+      "sequence": 31,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "candidate",
+      "repetition": 2,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-32-change-impact-unresolved-edge-native-r2",
+      "sequence": 32,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "native",
+      "repetition": 2,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-33-change-impact-unresolved-edge-current-aishell-0.3.3-r2",
+      "sequence": 33,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 2,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-34-change-impact-unresolved-edge-current-aishell-0.3.3-r3",
+      "sequence": 34,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 3,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-35-change-impact-unresolved-edge-candidate-r3",
+      "sequence": 35,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "candidate",
+      "repetition": 3,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-36-change-impact-unresolved-edge-native-r3",
+      "sequence": 36,
+      "taskID": "change-impact-unresolved-edge",
+      "fixtureID": "change-impact",
+      "arm": "native",
+      "repetition": 3,
+      "promptSHA256": "52812498d47d683856a32241a82664cb1b1a11f889e5e955eeb3931d87845686",
+      "materializedFixtureSHA256": "ab7b748c2bc18f34de2dcf1a32a8a9b63c37c75a97ac5b3fdc0dfea8d761ec2a",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-37-focused-pipeline-recommend-only-native-r1",
+      "sequence": 37,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "native",
+      "repetition": 1,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-38-focused-pipeline-recommend-only-current-aishell-0.3.3-r1",
+      "sequence": 38,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 1,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-39-focused-pipeline-recommend-only-candidate-r1",
+      "sequence": 39,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "candidate",
+      "repetition": 1,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-40-focused-pipeline-recommend-only-candidate-r2",
+      "sequence": 40,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "candidate",
+      "repetition": 2,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-41-focused-pipeline-recommend-only-native-r2",
+      "sequence": 41,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "native",
+      "repetition": 2,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-42-focused-pipeline-recommend-only-current-aishell-0.3.3-r2",
+      "sequence": 42,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 2,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-43-focused-pipeline-recommend-only-current-aishell-0.3.3-r3",
+      "sequence": 43,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 3,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-44-focused-pipeline-recommend-only-native-r3",
+      "sequence": 44,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "native",
+      "repetition": 3,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-45-focused-pipeline-recommend-only-candidate-r3",
+      "sequence": 45,
+      "taskID": "focused-pipeline-recommend-only",
+      "fixtureID": "focused-pipeline",
+      "arm": "candidate",
+      "repetition": 3,
+      "promptSHA256": "5ca4b870c0526db5ace405fcf09f2ba1e3bf4dd5bf7ac6601de9a62d1548037b",
+      "materializedFixtureSHA256": "6c3a84d35c14db123202bd71a075d0b620c03cc13b834fbeb831f937b9a8744a",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-46-focused-pipeline-explicit-run-native-r1",
+      "sequence": 46,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "native",
+      "repetition": 1,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-47-focused-pipeline-explicit-run-current-aishell-0.3.3-r1",
+      "sequence": 47,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 1,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-48-focused-pipeline-explicit-run-candidate-r1",
+      "sequence": 48,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "candidate",
+      "repetition": 1,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-49-focused-pipeline-explicit-run-candidate-r2",
+      "sequence": 49,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "candidate",
+      "repetition": 2,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-50-focused-pipeline-explicit-run-native-r2",
+      "sequence": 50,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "native",
+      "repetition": 2,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-51-focused-pipeline-explicit-run-current-aishell-0.3.3-r2",
+      "sequence": 51,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 2,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    },
+    {
+      "attemptID": "phase3-52-focused-pipeline-explicit-run-candidate-r3",
+      "sequence": 52,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "candidate",
+      "repetition": 3,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "2fcb9e68e5d73d9b0c930eeb1a3fb44d5a878413091189b1859878f9dc8390da"
+    },
+    {
+      "attemptID": "phase3-53-focused-pipeline-explicit-run-native-r3",
+      "sequence": 53,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "native",
+      "repetition": 3,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "94b4e4bbc116d3d65450198af5ed2dbd938fee055a1379bf89f070c8b9168714"
+    },
+    {
+      "attemptID": "phase3-54-focused-pipeline-explicit-run-current-aishell-0.3.3-r3",
+      "sequence": 54,
+      "taskID": "focused-pipeline-explicit-run",
+      "fixtureID": "focused-pipeline",
+      "arm": "current-aishell-0.3.3",
+      "repetition": 3,
+      "promptSHA256": "e219933c3c932347cc0e8cb717537e41eb5ceb2aadc1655e71318481e349efd6",
+      "materializedFixtureSHA256": "5070ad18cde963d599dbb98b10c45f2ccd9152f701a349753f8ce5b61b8c73bd",
+      "armBindingSHA256": "7b6f85fff10f05a6603d26d59e906e93ec7fe6db60a6b0131cdf2a756ebddb78"
+    }
+  ]
+}

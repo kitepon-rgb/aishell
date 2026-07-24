@@ -1,0 +1,66 @@
+{
+  "schema_version": "dotagents.worker-report.v1",
+  "control_id": "aishell-capability-expansion-20260721",
+  "task_id": "ace034-mcp-schema",
+  "worker_run_id": "ace034-mcp-schema-writer-run",
+  "assignment_id": "ace034-mcp-schema-assignment",
+  "packet_digest": "008b961727ec7bab0cfd4cc0ea2dec1698848223900e68791b22803a4a94919c",
+  "executor_handle": {
+    "agent_path": "/root/ace034_mcp_schema_writer"
+  },
+  "observed_state": "completed",
+  "status": "completed",
+  "result_digest": "b88d2cba0f678ad475a0ce9c7ebe8087f1ad0f19e1c26b76a019bd181957c65b",
+  "evidence": [
+    {
+      "type": "executor-receipt",
+      "ref": "codex-native:/root/ace034_mcp_schema_writer",
+      "digest": "b88d2cba0f678ad475a0ce9c7ebe8087f1ad0f19e1c26b76a019bd181957c65b",
+      "observed_at": "2026-07-22T05:38:04.000Z"
+    }
+  ],
+  "validation_results": [
+    {
+      "validation_ref": "swift test --filter MCPRunCheckV2SchemaTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter MCPRunCheckV2SchemaTests",
+        "digest": "03b5d5061b2613ea9512c140adec11a8a3b3e549a02ceac9615bebf37b772631",
+        "observed_at": "2026-07-22T05:38:04.000Z"
+      }
+    },
+    {
+      "validation_ref": "swift test --filter MCPTypesTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter MCPTypesTests",
+        "digest": "ae3fb169bdc09ce9624a0ac1c097df29a7cb087b9c467632196184d74e39ffab",
+        "observed_at": "2026-07-22T05:38:04.000Z"
+      }
+    },
+    {
+      "validation_ref": "git diff --check",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "git diff --check",
+        "digest": "b51bb74afa908c2b7435fce9890f3cbebf768db65558a1013f9029b39a6b3e0c",
+        "observed_at": "2026-07-22T05:38:04.000Z"
+      }
+    }
+  ],
+  "changed_paths": [
+    "Sources/AIShellMCP/MCPTypes.swift",
+    "Tests/AIShellMCPTests/MCPTypesTests.swift",
+    "Tests/AIShellMCPTests/MCPRunCheckV2SchemaTests.swift"
+  ],
+  "claims": [
+    "baseline default 7/full 25とrun_check v1 schemaをexpanded内でもdeep-equalに維持した",
+    "expanded-v1だけでchange_impactをapply_change_set直前に公開しdefault 9/full 27へ拡張した",
+    "run_check v2 input・outputとchange_impact analyze/recommend/continuationをclosed unionで固定した",
+    "profile selectionはcaller digestを受けずCore prepare、focused selectionだけ発行digest再照合として型分離した",
+    "11件の独立schema/DTO fixtureと既存7件のMCPTypes testが成功した"
+  ]
+}

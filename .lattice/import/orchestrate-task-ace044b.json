@@ -1,0 +1,50 @@
+{
+  "cwd": "/Users/kite/Developer/aishell",
+  "control_id": "aishell-capability-expansion-20260721",
+  "actor_id": "bell-root-20260722-wave-ace031-ace044b",
+  "expected_revision": 6,
+  "task": {
+    "task_id": "ace044b-artifact-query-service",
+    "title": "ArtifactQueryServiceと横断search・history compare focused testを実装する",
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/development-efficiency-plan.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [],
+    "required_capabilities": ["workspace.read", "workspace.write", "report.structured"],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "validation": [
+      "swift test --filter ArtifactQueryServiceTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "EvidenceStore・Models・MCP統合を変更しない",
+      "担当2 file以外を変更しない",
+      "commit・push・Lattice状態更新をしない"
+    ],
+    "known_traps": [
+      "巨大itemで0件かつ同一cursorを返さずoversize descriptorとして消費する",
+      "binary insensitiveとregexをsilent skipせずtyped rejectionにする",
+      "fixture-only greenをACE-044 production統合完了と見なさない"
+    ],
+    "read_scope": [
+      {"kind": "file", "path": "docs/adr/0021-artifact-query-final-contract.md"},
+      {"kind": "file", "path": "Sources/AIShellCore/EvidenceStore.swift"},
+      {"kind": "file", "path": "Sources/AIShellCore/Models.swift"}
+    ],
+    "write_scope": [
+      {"kind": "file", "path": "Sources/AIShellCore/ArtifactQueryService.swift"},
+      {"kind": "file", "path": "Tests/AIShellCoreTests/ArtifactQueryServiceTests.swift"}
+    ],
+    "approval": null,
+    "alternative_group": null
+  }
+}

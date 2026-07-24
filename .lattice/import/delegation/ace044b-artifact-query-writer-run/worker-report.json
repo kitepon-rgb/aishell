@@ -1,0 +1,68 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "a0cc638c96e3fc53b9979ef403345348082235c17174d8e23a4d553c259116ea",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace044b-artifact-query-service",
+    "worker_run_id": "ace044b-artifact-query-writer-run",
+    "assignment_id": "ace044b-artifact-query-assignment",
+    "packet_digest": "a0cc638c96e3fc53b9979ef403345348082235c17174d8e23a4d553c259116ea",
+    "executor_handle": {
+      "agent_path": "/root/ace044b_artifact_query_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "1c9d7aabf6e4691f395a4b710f7fde6f55e17dfa00dccea5a55355ebf6d345be",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "codex-native:/root/ace044b_artifact_query_writer:completed",
+        "digest": "0b3fbcb4b2ea75adeecc5473b7b401ea398cf5363a4273aa594f7d897e8a8118",
+        "observed_at": "2026-07-22T02:50:28.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter ArtifactQueryServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter ArtifactQueryServiceTests",
+          "digest": "7e3c4b27cd3038b66477c1f06382ba7db3ebd1a2dfe55b33fac38a7f87a239f3",
+          "observed_at": "2026-07-22T02:50:28.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "7e3c4b27cd3038b66477c1f06382ba7db3ebd1a2dfe55b33fac38a7f87a239f3",
+          "observed_at": "2026-07-22T02:50:28.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Sources/AIShellCore/ArtifactQueryService.swift",
+      "Tests/AIShellCoreTests/ArtifactQueryServiceTests.swift"
+    ],
+    "claims": [
+      "fixture入力を対象とするquery compiler、immutable result stream、cursor paginationを実装した。request digestはpattern/page limitと入力source順のid/kind/SHAをcanonical bytesで固定する。",
+      "text literal/regexの全match UTF-8 byte offset、binary sensitive literalのraw offset、binary insensitive/regexのtyped rejection、oversize descriptor、cursor改ざん・別stream拒否をfocused testで確認した。oversize rangeはUTF-8 prefixを含む行全体のartifact rangeを表す。",
+      "regex flagsはiのみを一度だけ受理し、未知・重複flagをtyped errorで拒否する。",
+      "history compareはbaseline/candidateのartifact SHA/sizeとbinding missing/changeを一結果に含める。",
+      "EvidenceStore、Models、MCPおよびproduction run indexとの統合は所有範囲外であり、完了を主張しない。"
+    ]
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

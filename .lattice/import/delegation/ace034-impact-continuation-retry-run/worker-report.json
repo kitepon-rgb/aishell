@@ -1,0 +1,53 @@
+{
+  "schema_version": "dotagents.worker-report.v1",
+  "control_id": "aishell-capability-expansion-20260721",
+  "task_id": "ace034-impact-continuation-seam",
+  "worker_run_id": "ace034-impact-continuation-retry-run",
+  "assignment_id": "ace034-impact-continuation-retry-assignment",
+  "packet_digest": "4d88b748717b1c92748dc00119e564e916e5b0c9663061c4cfb05248d90a52cb",
+  "executor_handle": {
+    "agent_path": "/root/ace034_impact_continuation_writer"
+  },
+  "observed_state": "completed",
+  "status": "completed",
+  "result_digest": "0cd70c75f5ccc034ad08c4bf681b83fae48da988dbeba3da1849d65fbee7af04",
+  "evidence": [
+    {
+      "type": "executor-receipt",
+      "ref": "native-subagent:/root/ace034_impact_continuation_writer:retry-verification",
+      "digest": "0cd70c75f5ccc034ad08c4bf681b83fae48da988dbeba3da1849d65fbee7af04",
+      "observed_at": "2026-07-22T06:13:46.000Z"
+    }
+  ],
+  "validation_results": [
+    {
+      "validation_ref": "swift test --filter ChangeImpactServiceTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter ChangeImpactServiceTests",
+        "digest": "0cd70c75f5ccc034ad08c4bf681b83fae48da988dbeba3da1849d65fbee7af04",
+        "observed_at": "2026-07-22T06:13:46.000Z"
+      }
+    },
+    {
+      "validation_ref": "git diff --check",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "git diff --check",
+        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "observed_at": "2026-07-22T06:13:46.000Z"
+      }
+    }
+  ],
+  "changed_paths": [
+    "Sources/AIShellCore/ChangeImpactService.swift",
+    "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"
+  ],
+  "claims": [
+    "retry worktreeの対象2ファイルは前run worktreeの確定内容とbyte-for-byte一致した。",
+    "continueImpact は両 continuation registry の完全一致で再開先を一意に決定し、0件または複数件では invalidContinuation を返す。",
+    "既存の analyze および recommend continuation API は変更していない。"
+  ]
+}

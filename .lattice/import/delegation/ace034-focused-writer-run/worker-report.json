@@ -1,0 +1,41 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "d52e400cc917dc22500b686aa662fe1080ba357aa38031cc999536a1b2538176",
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換済み",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換済み",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換済み",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式へ置換済み",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを記録",
+    "claims": "検証可能なbounded claimだけを記録",
+    "executor_handle": "相関済みhandleを変更しない"
+  },
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-focused-service",
+    "worker_run_id": "ace034-focused-writer-run",
+    "assignment_id": "ace034-focused-assignment",
+    "packet_digest": "d52e400cc917dc22500b686aa662fe1080ba357aa38031cc999536a1b2538176",
+    "executor_handle": { "agent_path": "/root/ace034_focused_writer" },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "95c9672c7cabeaa074224aa4b5ad679c362e40cbfc1665553f41ad7f73ef0b33",
+    "evidence": [{ "type": "executor-receipt", "ref": "native-subagent:ace034-focused-writer-run", "digest": "95c9672c7cabeaa074224aa4b5ad679c362e40cbfc1665553f41ad7f73ef0b33", "observed_at": "2026-07-22T04:19:20.000Z" }],
+    "validation_results": [
+      { "validation_ref": "swift test --filter FocusedCheckServiceTests", "outcome": "passed", "evidence": { "type": "command", "ref": "swift test --filter FocusedCheckServiceTests", "digest": "95c9672c7cabeaa074224aa4b5ad679c362e40cbfc1665553f41ad7f73ef0b33", "observed_at": "2026-07-22T04:19:13.000Z" } },
+      { "validation_ref": "git diff --check", "outcome": "passed", "evidence": { "type": "command", "ref": "git diff --check", "digest": "95c9672c7cabeaa074224aa4b5ad679c362e40cbfc1665553f41ad7f73ef0b33", "observed_at": "2026-07-22T04:19:13.000Z" } }
+    ],
+    "changed_paths": ["Sources/AIShellCore/FocusedCheckService.swift", "Tests/AIShellCoreTests/FocusedCheckServiceTests.swift"],
+    "claims": [
+      "canonical tagged fields と array count により set digest は候補、全evidence/provenance、coverage、limitations、expiry を束縛する。",
+      "入力候補・evidence・coverage・limitations の順序は正規化し、同じ意味論には同じ set digest を生成する。",
+      "ASCII lowercase SHA-256だけを profile、step descriptor、artifact、impact digest に許可する。",
+      "empty/duplicate/unknown/cross-set selection と expanded step ID重複を process 前に RUN_CHECK_INVOCATION_INVALID 相当で拒否する。"
+    ],
+    "residual_risks": [
+      "ChangeImpactService、DevelopmentRuntimeService、MCP wire との統合は本 task の非目標であり、後続の統合作業が必要。",
+      "registry は process-local であり、永続化はこの pure service の責務外。"
+    ]
+  }
+}

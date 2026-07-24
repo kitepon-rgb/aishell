@@ -1,0 +1,65 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "3119813c785cc065512602d1b4d465674299bba9676ff4ea91984773955f6664",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-impact-recommend-adapter",
+    "worker_run_id": "ace034-impact-recommend-test-fix-run",
+    "assignment_id": "ace034-impact-recommend-assignment",
+    "packet_digest": "3119813c785cc065512602d1b4d465674299bba9676ff4ea91984773955f6664",
+    "executor_handle": {
+      "agent_path": "/root/ace034_impact_recommend_test_fix"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "6b1afe4d5b40f486994b28a70cfe6e7eaee53952121f44e45df781a1d846dfc9",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "native-subagent:/root/ace034_impact_recommend_test_fix",
+        "digest": "6b1afe4d5b40f486994b28a70cfe6e7eaee53952121f44e45df781a1d846dfc9",
+        "observed_at": "2026-07-22T04:48:31.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter ChangeImpactRecommendationTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter ChangeImpactRecommendationTests",
+          "digest": "1ef490b7f7382e1c514879c5d853845dfcda7f26a9ab3640fc96867d36fc4b35",
+          "observed_at": "2026-07-22T04:48:31.000Z"
+        }
+      },
+      {
+        "validation_ref": "swift test --filter ChangeImpactServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter ChangeImpactServiceTests",
+          "digest": "d461a7c447372ed39cbc9f7a3f3def296a92054219cf306bfed467b7a6bbaf25",
+          "observed_at": "2026-07-22T04:48:31.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "466c2f308b48c7661d646fdd068fbecea974c665fe65dbf8ed508f224180ce0b",
+          "observed_at": "2026-07-22T04:48:31.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"
+    ],
+    "claims": [
+      "recommend 固有6 test は alias wrapper を使わず、fixture・入力・oracle を各test内で直接定義する。",
+      "recommend は profile check descriptor を暗黙実行せず、marker file を作成しない。"
+    ]
+  }
+}

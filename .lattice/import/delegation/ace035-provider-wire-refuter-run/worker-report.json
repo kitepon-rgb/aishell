@@ -1,0 +1,52 @@
+{
+  "schema_version": "dotagents.worker-report.v1",
+  "control_id": "aishell-capability-expansion-20260721",
+  "task_id": "ace035-provider-wire-refutation",
+  "worker_run_id": "ace035-provider-wire-refuter-run",
+  "assignment_id": "ace035-provider-wire-refuter-assignment",
+  "packet_digest": "5aebb0e5fedc50241faf73411837d184b88c00efbe0a92a3b9d5b080751ae806",
+  "executor_handle": {
+    "agent_path": "/root/ace035_wire_refuter"
+  },
+  "observed_state": "completed",
+  "status": "completed",
+  "result_digest": "dc95b5126d321a89a20ce4c3f80fb03163204c691fcd9dec7717f0fc54a671dc",
+  "evidence": [
+    {
+      "type": "executor-receipt",
+      "ref": "codex-native:/root/ace035_wire_refuter:cfd9621-final-refutation",
+      "digest": "dc95b5126d321a89a20ce4c3f80fb03163204c691fcd9dec7717f0fc54a671dc",
+      "observed_at": "2026-07-22T09:36:24.000Z"
+    }
+  ],
+  "validation_results": [
+    {
+      "validation_ref": "node --test benchmarks/test-phase3-mcp-wire-tap.mjs benchmarks/test-phase3-local-callbacks.mjs benchmarks/test-phase3-codex-executor.mjs",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "node --test benchmarks/test-phase3-mcp-wire-tap.mjs benchmarks/test-phase3-local-callbacks.mjs benchmarks/test-phase3-codex-executor.mjs: passed; 3 tests, 0 failures",
+        "digest": "b208c4fa2ee48c14b6714eff638d3c55edda0d8e1c00afe76dfb0b44c4e9bd82",
+        "observed_at": "2026-07-22T09:36:24.000Z"
+      }
+    },
+    {
+      "validation_ref": "git diff --check",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "git diff --check cfd9621^ cfd9621: passed; no output",
+        "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "observed_at": "2026-07-22T09:36:24.000Z"
+      }
+    }
+  ],
+  "changed_paths": [],
+  "claims": [
+    "[final-verdict][commit=cfd9621] 追加の確実なP0–P2は認めない。",
+    "[provider-evidence] benchmarks/phase3-codex-executor.mjs:124-151,408-451とbenchmarks/phase3-local-callbacks.mjs:787-802を突合。狭いtungstenite targetからresponse.created/completedのoriginal JSON bytesだけを抽出し、stdout traceと専用SSE JSONLの両digestへactual modelを結合している。全WebSocket traceは通常stderr成果物から除外される。",
+    "[wire-evidence] benchmarks/phase3-mcp-wire-tap.mjs:22-52とbenchmarks/phase3-local-callbacks.mjs:587-646,720-724を突合。AIShell 2 armだけに透過tapを適用し、native armにはwire directoryを渡さない。structuredContentはoriginal JSON-RPC responseのvalue sliceを使用し、retained artifactはwire descriptorのsizeとSHA-256へ結合される。",
+    "[known-independent-blocker] production npm check/inputContractと凍結freshness fixtureの契約不一致は追加発見ではなく、docs/evidence/2026-07-22-ace-035-phase3-harness-readiness.md:67-73へ明記済み。解消前に54 model attemptを開始しない判定は妥当。",
+    "[source-retention] rag/raw/openai-codex-provider-observability-2026-07-22.md:12-16を実読し、commit cfd9621で追跡済みであることを確認した。"
+  ]
+}

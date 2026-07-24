@@ -1,0 +1,4 @@
+{
+  "cwd":"/Users/kite/Developer/aishell","control_id":"aishell-capability-expansion-20260721","actor_id":"bell-root-20260722-wave-ace031-ace044b","expected_revision":13,"worker_run_id":"ace044b-artifact-query-writer-run",
+  "observation":{"state":"dispatched","source":"codex-native","observed_version":"codex-cli 0.144.6","observed_at":"2026-07-22T02:35:47.000Z","raw_state":"agents.followup_task dispatched","executor_handle":{"agent_path":"/root/ace044b_artifact_query_writer"},"dispatch_evidence":[{"type":"executor-receipt","ref":"codex-native:/root/ace044b_artifact_query_writer#ace044b-artifact-query-writer-run","digest":"a0cc638c96e3fc53b9979ef403345348082235c17174d8e23a4d553c259116ea","observed_at":"2026-07-22T02:35:47.000Z"}]}
+}

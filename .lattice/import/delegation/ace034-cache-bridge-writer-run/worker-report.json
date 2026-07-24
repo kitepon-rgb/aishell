@@ -1,0 +1,29 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "f189dfe77b7bc61ffd60382fa0915f107fe8e348580a05cb39bc82196bd19629",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-cache-bridge",
+    "worker_run_id": "ace034-cache-bridge-writer-run",
+    "assignment_id": "ace034-cache-bridge-assignment",
+    "packet_digest": "f189dfe77b7bc61ffd60382fa0915f107fe8e348580a05cb39bc82196bd19629",
+    "executor_handle": { "agent_path": "/root/ace034_cache_bridge_writer" },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "675a3e58220ba078a6a38ca814f0ebd2c8be8e28471f43371f03774b89ac9788",
+    "evidence": [{
+      "type": "executor-receipt",
+      "ref": "native-subagent:/root/ace034_cache_bridge_writer",
+      "digest": "675a3e58220ba078a6a38ca814f0ebd2c8be8e28471f43371f03774b89ac9788",
+      "observed_at": "2026-07-22T04:39:41.000Z"
+    }],
+    "validation_results": [
+      { "validation_ref": "swift test --filter CheckFreshnessCacheTests", "outcome": "passed", "evidence": { "type": "command", "ref": "swift test --filter CheckFreshnessCacheTests", "digest": "6d6268e32e2f8a2fb07020081920489fcd1e35ab4389d3c5835e3d8feafcb672", "observed_at": "2026-07-22T04:39:41.000Z" } },
+      { "validation_ref": "swift test --filter RunCheckFreshnessCacheSafetyNetTests", "outcome": "passed", "evidence": { "type": "command", "ref": "swift test --filter RunCheckFreshnessCacheSafetyNetTests", "digest": "334e3dfb045793c0ec0bef2291ef05721a3e34df92f66f41238a4d5842c16fff", "observed_at": "2026-07-22T04:39:41.000Z" } },
+      { "validation_ref": "git diff --check", "outcome": "passed", "evidence": { "type": "command", "ref": "git diff --check", "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "observed_at": "2026-07-22T04:39:41.000Z" } }
+    ],
+    "changed_paths": ["Sources/AIShellCore/CheckFreshnessCache.swift", "Tests/AIShellCoreTests/CheckFreshnessCacheTests.swift"],
+    "claims": ["ArtifactMetadata receipt と async verifier を cache artifact 境界にした", "原版20 test名と bridge test を維持した", "untracked file は worker report 以外なし"]
+  }
+}

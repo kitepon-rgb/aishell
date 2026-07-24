@@ -1,0 +1,59 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "d9a7b3b2c21cf5aa16d2fdfef539a5fa62d643752660369bf5955d5802175bba",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-profile-service-sharing",
+    "worker_run_id": "ace034-profile-sharing-writer-run",
+    "assignment_id": "ace034-profile-sharing-assignment",
+    "packet_digest": "d9a7b3b2c21cf5aa16d2fdfef539a5fa62d643752660369bf5955d5802175bba",
+    "executor_handle": {
+      "agent_path": "/root/ace034_profile_sharing_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "REPLACE_WITH_SHA256",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "REPLACE_WITH_EXECUTOR_RECEIPT_REF",
+        "digest": "REPLACE_WITH_SHA256",
+        "observed_at": "REPLACE_WITH_TIMESTAMP_YYYY-MM-DDTHH:mm:ss.sssZ"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter ContextCompilerServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter ContextCompilerServiceTests",
+          "digest": "REPLACE_WITH_SHA256",
+          "observed_at": "REPLACE_WITH_TIMESTAMP_YYYY-MM-DDTHH:mm:ss.sssZ"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "REPLACE_WITH_SHA256",
+          "observed_at": "REPLACE_WITH_TIMESTAMP_YYYY-MM-DDTHH:mm:ss.sssZ"
+        }
+      }
+    ],
+    "changed_paths": [],
+    "claims": []
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

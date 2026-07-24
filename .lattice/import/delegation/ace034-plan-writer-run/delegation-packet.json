@@ -1,0 +1,219 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "07bfc3e41e4d1324a97963db23ae610cc614a59eda94f849e0fa95ce8a1ce1cf",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 34,
+  "task": {
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/development-efficiency-plan.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "approval": null,
+    "alternative_group": null,
+    "task_id": "ace034-plan-compiler",
+    "title": "run_check immutable invocation plan compilerを実装する",
+    "validation": [
+      "swift test --filter RunCheckInvocationPlanTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "cache実装・focused選択・runtime統合を変更しない",
+      "担当2 file以外を変更しない",
+      "commit・push・Lattice状態更新をしない"
+    ],
+    "known_traps": [
+      "request identityをfreshness keyへ混ぜない",
+      "v1/v2 wireを公開しない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0019-freshness-cache-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0020-focused-check-final-contract.md"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/RunCheckInvocationPlan.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/RunCheckInvocationPlanTests.swift"
+      }
+    ],
+    "admission_digest": "b7d4e7f2dc60643a4d779eb324a883771264c7f38fa6bee32c796ae76bfaaf17"
+  },
+  "worker": {
+    "worker_run_id": "ace034-plan-writer-run",
+    "assignment_id": "ace034-plan-assignment",
+    "state": "admitted",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace034-plan",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace034-plan",
+    "git_dir_file_id": "16777233:42302052",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "21a1d8d357c87737c61ee6cb4236dd26a1ff3a16",
+    "head_at_reservation": "21a1d8d357c87737c61ee6cb4236dd26a1ff3a16"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0018-run-check-invocation-plan-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0019-freshness-cache-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0020-focused-check-final-contract.md"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/RunCheckInvocationPlan.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/RunCheckInvocationPlanTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "verify-codex-agent-routing:implementer",
+        "digest": "37f9bd739d9badf73a826278ba604c85b6d0cfc42021cc46f7a7b4fc65fac2e4",
+        "observed_at": "2026-07-22T02:31:31.000Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 5400,
+    "cost_microusd": 3000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace034-plan-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "implementation-v1",
+    "independence_group": "ace034-plan",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "2edb2febc438fb0fef8c12a5dccf4e25f543d963e93556c52b7ada2787f539c8",
+    "approach_family_ref": "ace034-plan-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter RunCheckInvocationPlanTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "cache実装・focused選択・runtime統合を変更しない",
+    "担当2 file以外を変更しない",
+    "commit・push・Lattice状態更新をしない"
+  ],
+  "known_traps": [
+    "request identityをfreshness keyへ混ぜない",
+    "v1/v2 wireを公開しない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "07bfc3e41e4d1324a97963db23ae610cc614a59eda94f849e0fa95ce8a1ce1cf",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

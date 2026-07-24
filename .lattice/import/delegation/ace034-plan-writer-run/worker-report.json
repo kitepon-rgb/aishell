@@ -1,0 +1,79 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "07bfc3e41e4d1324a97963db23ae610cc614a59eda94f849e0fa95ce8a1ce1cf",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-plan-compiler",
+    "worker_run_id": "ace034-plan-writer-run",
+    "assignment_id": "ace034-plan-assignment",
+    "packet_digest": "07bfc3e41e4d1324a97963db23ae610cc614a59eda94f849e0fa95ce8a1ce1cf",
+    "executor_handle": {
+      "agent_path": "/root/ace034_plan_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "779542aa286d73b2d67d489a0843d2b229df3a2e3f85d7a65eecc9b9785ec580",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "codex-native:ace034-plan-writer-run",
+        "digest": "779542aa286d73b2d67d489a0843d2b229df3a2e3f85d7a65eecc9b9785ec580",
+        "observed_at": "2026-07-22T04:19:51.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter RunCheckInvocationPlanTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter RunCheckInvocationPlanTests",
+          "digest": "b77365cdcc80e859d6e0f1f69f2820d30bfe7c4b4312edb8b828a0e9d23a4e9a",
+          "observed_at": "2026-07-22T04:19:51.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --no-index --check /dev/null <owned-path>",
+          "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "observed_at": "2026-07-22T04:19:51.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Sources/AIShellCore/RunCheckInvocationPlan.swift",
+      "Tests/AIShellCoreTests/RunCheckInvocationPlanTests.swift"
+    ],
+    "claims": [
+      {
+        "claim": "legacy direct requestはworking_directoryのnilを保持したままdirect/sync/offへだけ正規化され、v1/v2混在はRUN_CHECK_INVOCATION_INVALIDで拒否される。",
+        "evidence_ref": "swift test --filter RunCheckInvocationPlanTests"
+      },
+      {
+        "claim": "24通りのinvocation/cache/dispatch matrixは18通りを受理し、directかつcache off以外の6通りだけをRUN_CHECK_CACHE_NOT_ALLOWEDで拒否する。",
+        "evidence_ref": "swift test --filter RunCheckInvocationPlanTests"
+      },
+      {
+        "claim": "profileDigest/selectionDigestはlowercase ASCII SHA-256だけを受理し、canonical plan/request digestはpolicy、argument順、environment値、working_directoryのnil/実値を束縛する。",
+        "evidence_ref": "swift test --filter RunCheckInvocationPlanTests"
+      }
+    ],
+    "residual_risks": [
+      "MCP v2のclosed JSON unionとunknown/extra field拒否はACE-034 runtime/MCP統合の所有であり、本compiler seamはtyped Requestでmixed inputを明示拒否するまでに留めた。",
+      "cache lookup、selection再照合、managed admissionは本taskのnon-goalであり、compilerはimmutable planとdigestだけを供給する。"
+    ]
+  },
+  "placeholders": {
+    "result_digest": "final diff SHA-256 recorded in report.result_digest",
+    "evidence_ref": "bounded executor receipt recorded in report.evidence",
+    "evidence_digest": "SHA-256 recorded for each evidence item",
+    "observed_at": "UTC timestamp recorded for each evidence item",
+    "changed_paths": "repo-relative owned paths recorded in report.changed_paths",
+    "claims": "bounded claims recorded in report.claims",
+    "executor_handle": "correlated native agent path preserved in report.executor_handle"
+  }
+}

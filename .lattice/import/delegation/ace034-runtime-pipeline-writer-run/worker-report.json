@@ -1,0 +1,79 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "f6ab9b076e3c6f7ba291d436a891a1d908d7153943c521cb1349bbba757c681a",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-runtime-pipeline",
+    "worker_run_id": "ace034-runtime-pipeline-writer-run",
+    "assignment_id": "ace034-runtime-pipeline-assignment",
+    "packet_digest": "f6ab9b076e3c6f7ba291d436a891a1d908d7153943c521cb1349bbba757c681a",
+    "executor_handle": {
+      "agent_path": "/root/ace034_runtime_pipeline_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "f8d1781308968966599ab87e12950749553f8aad842e54dc629627dcecff1034",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "native-subagent:/root/ace034_runtime_pipeline_writer",
+        "digest": "f8d1781308968966599ab87e12950749553f8aad842e54dc629627dcecff1034",
+        "observed_at": "2026-07-22T05:13:36.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter RunCheckPipelineIntegrationTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter RunCheckPipelineIntegrationTests (14 tests)",
+          "digest": "d702e04943b00009702ec6403e8327fdb18101c33f12c0d00f7c08850d78808f",
+          "observed_at": "2026-07-22T05:13:36.000Z"
+        }
+      },
+      {
+        "validation_ref": "swift test --filter DevelopmentRuntimeServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter DevelopmentRuntimeServiceTests (3 tests)",
+          "digest": "2e01392b416e36ad5b05e2578403f67e65250061b5d1ef85be93c8cc967fa8f9",
+          "observed_at": "2026-07-22T05:13:36.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "04511dd5e923393a6597004dab2dcddc8567a3864e8e144a833d049a72d2bfc3",
+          "observed_at": "2026-07-22T05:13:36.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Sources/AIShellCore/DevelopmentRuntimeService.swift",
+      "Sources/AIShellCore/FocusedCheckService.swift",
+      "Tests/AIShellCoreTests/DevelopmentRuntimeServiceTests.swift",
+      "Tests/AIShellCoreTests/FocusedCheckServiceTests.swift"
+    ],
+    "claims": [
+      "legacy v1 directはnil working directoryを保持したままimmutable direct/sync/off planを通り、既存summaryと完全artifactを維持する。",
+      "profile/focused selectionはroot/cursor/profile/manifest/ID/digest/caller順をexact照合し、公開DAGだけを実行する。",
+      "binding ineligibleはprefer/refreshで同一planをuncached実行しpublication 0、onlyでprocess 0のordered miss evidenceを返す。",
+      "EvidenceStore receipt、manifest/toolchain device-inodeとSHA、complete relevant-input closureを再観測し、変更はCONTENT_CHANGED、破損はCACHE_CORRUPTで停止する。"
+    ]
+  },
+  "placeholders": {
+    "result_digest": "final owned-file digest recorded in report.result_digest",
+    "evidence_ref": "bounded native executor receipt recorded in report.evidence",
+    "evidence_digest": "lowercase SHA-256 recorded for every evidence item",
+    "observed_at": "UTC timestamp recorded for every evidence item",
+    "changed_paths": "exact owned repo-relative paths recorded in report.changed_paths",
+    "claims": "bounded validation-backed claims recorded in report.claims",
+    "executor_handle": "correlated native agent path preserved"
+  }
+}

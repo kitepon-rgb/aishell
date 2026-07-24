@@ -12,7 +12,8 @@ const packageMetadata = JSON.parse(
 );
 
 assert.equal(packageMetadata.name, "@quolu/aishell");
-assert.equal(packageMetadata.version, "0.3.6");
+// versionの単一正本はSwiftのAIShellProduct.version。package.jsonとの一致だけを検証し、
+// releaseごとに書き換わるliteralをこのscriptへ二重化しない。
 const factoryDiagnosticsSource = await readFile(
   path.join(projectDirectory, "Sources", "AIShellCore", "FactoryDiagnostics.swift"),
   "utf8"
@@ -41,9 +42,19 @@ assert.match(
   infoPlist,
   new RegExp(`<key>CFBundleShortVersionString</key>\\s*<string>${packageMetadata.version}</string>`)
 );
+// CFBundleVersionはsemantic versionと独立したbuild番号なのでpackage.jsonから導出できない。
+// Packaging/Info.plistを単一正本とし、payloadがそれと一致することだけを検証する。
+const sourceInfoPlist = await readFile(
+  path.join(projectDirectory, "Packaging", "Info.plist"),
+  "utf8"
+);
+const bundleVersion = sourceInfoPlist.match(
+  /<key>CFBundleVersion<\/key>\s*<string>(\d+)<\/string>/
+)?.[1];
+assert.ok(bundleVersion, "CFBundleVersion must be a positive integer in Packaging/Info.plist");
 assert.match(
   infoPlist,
-  /<key>CFBundleVersion<\/key>\s*<string>10<\/string>/
+  new RegExp(`<key>CFBundleVersion</key>\\s*<string>${bundleVersion}</string>`)
 );
 
 console.log("npm package metadata and payload are consistent.");

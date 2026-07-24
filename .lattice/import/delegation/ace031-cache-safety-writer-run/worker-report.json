@@ -1,0 +1,65 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "d22122272d4c83a69fd7ca01147d3ca2cf038abf80e11ecd09e3f47128f47223",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace031-cache-safety-net",
+    "worker_run_id": "ace031-cache-safety-writer-run",
+    "assignment_id": "ace031-cache-safety-assignment",
+    "packet_digest": "d22122272d4c83a69fd7ca01147d3ca2cf038abf80e11ecd09e3f47128f47223",
+    "executor_handle": {
+      "agent_path": "/root/ace031_cache_safety_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "d6a1073b5f5073cad2e8a5596f4ce00699f0d9d02765dcbe95378094e15e0964",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "codex-native:/root/ace031_cache_safety_writer:completed",
+        "digest": "003525178888c0fc2f499531fa2feb866d82fc7d59537090fe5e3411ec70a63c",
+        "observed_at": "2026-07-22T02:46:16.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter RunCheckFreshnessCacheSafetyNetTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter RunCheckFreshnessCacheSafetyNetTests",
+          "digest": "8c3b1d835c92baf915d4d6f58dab84e9c0b13df4d76eb3ef1cb9df818383f169",
+          "observed_at": "2026-07-22T02:46:16.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "observed_at": "2026-07-22T02:46:16.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Tests/AIShellCoreTests/RunCheckFreshnessCacheSafetyNetTests.swift"
+    ],
+    "claims": [
+      "ADR 0018/0019 のfalse-fresh、terminal reuse、off非観測、corruption、TTL境界、artifact失効、quota eviction/publication failure、focused partial hit、refresh conflictを、production adapter差し替え可能なoperator seamとして固定した。",
+      "各ケースでprocess起動数、artifact SHA、publication数、typed errorを独立して確認し、response state単独をoracleにしていない。",
+      "CheckFreshnessCacheおよびDevelopmentRuntimeServiceへのproduction統合は未実装であり、完了を主張しない。"
+    ]
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "anchor_digest": null,
+  "content_digest": "56a58be46a49d449d7509fe0b9ae27e6657d24f1a8a5c7167382610930e43dc2",
+  "evidence_id": "ace-006-freeze-erratum-20260723",
+  "git_blob_oid": "b12ec01e4cfc4dfb4acbe5313a8b3facc306bfff",
+  "media_type": "text/markdown",
+  "path": "docs/evidence/2026-07-23-ace-006-freeze-erratum.md",
+  "repo_id": "self"
+}

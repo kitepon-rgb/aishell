@@ -1,0 +1,90 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "39b57b7c256947c2f27676b169ef2e396186e4163d0c35fa414be9626e803f0a",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace034-public-resolution-primitives",
+    "worker_run_id": "ace034-public-primitives-writer-run",
+    "assignment_id": "ace034-public-primitives-assignment",
+    "packet_digest": "39b57b7c256947c2f27676b169ef2e396186e4163d0c35fa414be9626e803f0a",
+    "executor_handle": {
+      "agent_path": "/root/ace034_public_primitives_writer"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "1167a5d00b665709be09c68b86393642a6bdc57bc94cca803f7a4158a767e3f1",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "codex-native:/root/ace034_public_primitives_writer",
+        "digest": "5d68f14ab2b88642d1f21c072c5ce28678710d0309bdc4115f956d7ba74849c3",
+        "observed_at": "2026-07-22T05:58:30.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "swift test --filter RunCheckInvocationPlanTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter RunCheckInvocationPlanTests",
+          "digest": "b01d0d194781c25ba82010ad21e17a888ba1bee697ea5df54ffb0c82b940f9c7",
+          "observed_at": "2026-07-22T05:58:30.000Z"
+        }
+      },
+      {
+        "validation_ref": "swift test --filter FocusedCheckServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter FocusedCheckServiceTests",
+          "digest": "b475471472a4c7c98d533f366114626f9b677ff55dff5b62d5aeb8feae841ffe",
+          "observed_at": "2026-07-22T05:58:30.000Z"
+        }
+      },
+      {
+        "validation_ref": "swift test --filter ProjectProfileServiceTests",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "swift test --filter ProjectProfileServiceTests",
+          "digest": "aeac283e965fea4f85015c8fbee3420ae8c6d4669a3e9bc1ea9d4a5c5fc9abc1",
+          "observed_at": "2026-07-22T05:58:30.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "15815ff0c572fcd684849ad5b7b74aac6db5bed94f5defbe31bb383e4fa19fdf",
+          "observed_at": "2026-07-22T05:58:30.000Z"
+        }
+      }
+    ],
+    "changed_paths": [
+      "Sources/AIShellCore/FocusedCheckService.swift",
+      "Sources/AIShellCore/ProjectProfileService.swift",
+      "Sources/AIShellCore/RunCheckInvocationPlan.swift",
+      "Tests/AIShellCoreTests/FocusedCheckServiceTests.swift",
+      "Tests/AIShellCoreTests/ProjectProfileServiceTests.swift",
+      "Tests/AIShellCoreTests/RunCheckInvocationPlanTests.swift"
+    ],
+    "claims": [
+      "direct/profile prepared requests require no caller selection digest and share identity with the v2 compatibility compiler.",
+      "focused preparation validates immutable set ID, digest, and expiry before returning expected admission material; it cannot construct current Admission.",
+      "profile digest resolution scans each indexed root into a fresh catalog and fails closed if any root cannot be reobserved; zero or multiple exact matches are typed errors."
+    ]
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

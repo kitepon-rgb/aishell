@@ -1,0 +1,65 @@
+{
+  "schema_version": "dotagents.worker-report-skeleton.v1",
+  "packet_digest": "4f69ac1431762168fcf29b5d93e4e3357b34685c34b4840503e1e1b875f9239a",
+  "report": {
+    "schema_version": "dotagents.worker-report.v1",
+    "control_id": "aishell-capability-expansion-20260721",
+    "task_id": "ace035-provider-evidence-v2-refutation",
+    "worker_run_id": "ace035-provider-evidence-v2-refuter-run",
+    "assignment_id": "ace035-provider-evidence-v2-refuter-assignment",
+    "packet_digest": "4f69ac1431762168fcf29b5d93e4e3357b34685c34b4840503e1e1b875f9239a",
+    "executor_handle": {
+      "agent_path": "/root/ace035_provider_evidence_refuter"
+    },
+    "observed_state": "completed",
+    "status": "completed",
+    "result_digest": "5e6a2dbeb6a68fc06cc97cf551ecc03cfb23efef96f5fbec0c62df6e994743cc",
+    "evidence": [
+      {
+        "type": "executor-receipt",
+        "ref": "codex-native:/root/ace035_provider_evidence_refuter:provider-evidence-v2-refutation",
+        "digest": "5e6a2dbeb6a68fc06cc97cf551ecc03cfb23efef96f5fbec0c62df6e994743cc",
+        "observed_at": "2026-07-22T10:48:44.000Z"
+      }
+    ],
+    "validation_results": [
+      {
+        "validation_ref": "node --test benchmarks/test-phase3-representative-runner.mjs benchmarks/test-phase3-codex-executor.mjs benchmarks/test-phase3-local-callbacks.mjs benchmarks/test-phase3-production-harness.mjs benchmarks/test-phase3-acceptance-aggregate.mjs",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "node --test benchmarks/test-phase3-representative-runner.mjs benchmarks/test-phase3-codex-executor.mjs benchmarks/test-phase3-local-callbacks.mjs benchmarks/test-phase3-production-harness.mjs benchmarks/test-phase3-acceptance-aggregate.mjs: passed; 5 tests, 0 failures",
+          "digest": "4fb40260ee13160141b54f0e615aac4aca28939375f10641a1c1b083f1e7c6ec",
+          "observed_at": "2026-07-22T10:47:03.000Z"
+        }
+      },
+      {
+        "validation_ref": "git diff --check",
+        "outcome": "passed",
+        "evidence": {
+          "type": "command",
+          "ref": "git diff --check",
+          "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "observed_at": "2026-07-22T10:47:03.000Z"
+        }
+      }
+    ],
+    "changed_paths": [],
+    "claims": [
+      "[P1][existence=true][value=true][model-evidence-closure] benchmarks/phase3-codex-executor.mjs:111-130,441-472とbenchmarks/phase3-local-callbacks.mjs:790-810ではmainModelSnapshot/approvalReviewerをrequested値から写し、SSEから得るのはmodel集合だけである。main/reviewer役割を入れ替えたSSE最小反例でもmainModelSnapshot=main-modelとして成功した。さらにbenchmarks/phase3-representative-runner.mjs:695-726とbenchmarks/phase3-acceptance-aggregate.mjs:150-178はusageだけを再抽出しmanifestのmodel集合すら再照合しない。実害は、最終acceptanceがmain/reviewerのmodel isolationを独立証明できず、requested echoをactualProviderModelSnapshotとして公開すること。最小修正境界は、attempt resultへprovider-grounded model evidenceをexact bindingしrunner/aggregateでmanifestと再照合すること、役割相関が取れない限りunordered observed model setだけを主張してactual main/reviewer表記を止めること。",
+      "[P1][existence=true][value=true][timeout-invalidation] benchmarks/phase3-codex-executor.mjs:437-496はtimedOut判定でusageをnull化する前にprovider model evidenceとobserverを必須実行する。benchmarks/phase3-representative-runner.mjs:597-625は未完pairをthrowし、同:766-781にattempt例外の捕捉はない。benchmarks/phase3-production-harness.mjs:280-315はcompletedだけを記録しfailedを記録するcatchがないため、典型的なmid-response timeoutはinvalid runではなくharness中断になる。既存timeout test benchmarks/test-phase3-codex-executor.mjs:236-244はcomplete pairを返すfixtureだけでこの経路を覆わない。最小修正境界は、timeout/証拠欠損をraw evidence付きattempt failureとして永続化し、runner/harnessがuncaught throwではなくinvalid result/reportを返す分岐と、未完pair・final message欠損timeoutの統合testを追加すること。",
+      "[P2][existence=true][value=true][result-schema] benchmarks/phase3-codex-executor.mjs:502-516はproviderSSEとcodex-provider-sse-jsonl.v1を返すが、benchmarks/phase3-representative-result.schema.json:45-63はproviderSSEを定義せずadditionalProperties=false、providerUsageFormatも旧2形式だけである。Ajv2020へ現行executor形54件を渡す最小反例で、各attemptがproviderSSE additionalProperties違反とformat enum違反によりvalid=falseとなった。内部collectResultFailuresはこのschemaを呼ばないため内部54-run blockerではないが、schema準拠downstreamは全valid resultを拒否する。timeout/missing usage時のnull formatも不適合。最小修正境界はproviderSSEをrequired exactBytesへ追加し、formatを現行SSE形式（invalid resultも表現するならnullを含む）へ更新し、benchmarks/test-phase3-representative-runner.mjs:461-466の形状assertを実schema validationへ置き換えること。",
+      "[verified][no-finding] benchmarks/phase3-representative-runner.mjs:597-657を反例実行し、captured SSE内のcompleted重複、pair欠損、pair model差異、usage field欠損は拒否された。各completed responseのusageはmodel別に一度だけ合算され、stdout main usageとの二重加算はない。",
+      "[verified][no-finding] benchmarks/phase3-acceptance-report.schema.json:1-158のacceptance report出力schema自体の閉包には確実なP0-P2を認めない。問題はその入力result/model evidenceの閉包とrepresentative-result schemaにある。"
+    ]
+  },
+  "placeholders": {
+    "result_digest": "64文字のlowercase SHA-256へ置換する",
+    "evidence_ref": "boundedなexecutor receipt参照へ置換する",
+    "evidence_digest": "64文字のlowercase SHA-256へ置換する",
+    "observed_at": "UTCのYYYY-MM-DDTHH:mm:ss.sssZ形式（ミリ秒3桁・末尾Z）へ置換する",
+    "changed_paths": "実workspaceの変更pathとexact一致するrepo-relative pathだけを入れる",
+    "claims": "検証可能なbounded claimだけを入れる",
+    "executor_handle": "相関済みhandleを変更しない"
+  }
+}

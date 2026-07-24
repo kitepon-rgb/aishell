@@ -1,0 +1,24 @@
+{
+  "manifestFile": "ace035-phase3-attempt-manifest.json",
+  "callbacksModule": "../../benchmarks/phase3-local-callbacks.mjs",
+  "executorOptions": {
+    "outputDirectory": "/Users/kite/Developer/aishell/benchmarks/results/phase3-production-20260723-restart-v10",
+    "codexCommand": "codex",
+    "armBinaries": {
+      "current-aishell-0.3.3": "/private/tmp/aishell-phase3-arms.tDYCoY/current-0.3.3/.build/arm64-apple-macosx/release/aishell-mcp",
+      "candidate": "/Users/kite/Developer/aishell/build/AIShell.app/Contents/Helpers/aishell-mcp"
+    },
+    "sandboxConfiguration": {
+      "approvalPolicy": "on-request",
+      "filesystem": "workspace-write",
+      "network": false
+    },
+    "approvalReviewer": {
+      "mode": "auto_review",
+      "modelSnapshots": ["gpt-5.4"]
+    },
+    "commonHostCatalogDigest": "7a0b3f9d19429836f0a9bf67830cd8fba8f4fef3acb982ca03c7c8204be30466",
+    "commonCodexArguments": [],
+    "timeoutMilliseconds": 300000
+  }
+}

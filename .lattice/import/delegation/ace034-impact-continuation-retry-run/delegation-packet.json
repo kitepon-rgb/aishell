@@ -1,0 +1,215 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "4d88b748717b1c92748dc00119e564e916e5b0c9663061c4cfb05248d90a52cb",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 117,
+  "task": {
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/development-efficiency-plan.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "approval": null,
+    "alternative_group": null,
+    "task_id": "ace034-impact-continuation-seam",
+    "title": "change_impactのopaque continuationをanalyze/recommend共通入口からexact再開する",
+    "validation": [
+      "swift test --filter ChangeImpactServiceTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "MCPServer・adapter・他Core serviceを変更しない",
+      "担当2 file以外を変更しない",
+      "commit・push・Lattice/Control更新をしない"
+    ],
+    "known_traps": [
+      "analyze失敗後recommendへfallbackしない",
+      "token prefixだけをauthorityにしない",
+      "同一tokenを二重消費しない",
+      "既存analyze/recommend API互換を壊さない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPRunCheckAdapter.swift"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0003-expanded-development-surface-contract.md"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ChangeImpactService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"
+      }
+    ],
+    "admission_digest": "3da41bfd3d700b9c383b330e527058fc6afffb956839fd3d41a8887e03dbade8"
+  },
+  "worker": {
+    "worker_run_id": "ace034-impact-continuation-retry-run",
+    "assignment_id": "ace034-impact-continuation-retry-assignment",
+    "state": "admitted",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace034-impact-continuation-retry",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace034-impact-continuation-retry",
+    "git_dir_file_id": "16777233:42565574",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "658c2aca8df134631c067301332e12f400c050ab",
+    "head_at_reservation": "658c2aca8df134631c067301332e12f400c050ab"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPRunCheckAdapter.swift"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0003-expanded-development-surface-contract.md"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ChangeImpactService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 1800,
+    "cost_microusd": 1000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace034-impact-continuation-retry-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "implementation-v1",
+    "independence_group": "ace034-impact-continuation-retry",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "7ba72881ab9842026cebadd3134e6701daecbbf07195d6361ac68de9a9f72c35",
+    "approach_family_ref": "ace034-impact-continuation-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter ChangeImpactServiceTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "MCPServer・adapter・他Core serviceを変更しない",
+    "担当2 file以外を変更しない",
+    "commit・push・Lattice/Control更新をしない"
+  ],
+  "known_traps": [
+    "analyze失敗後recommendへfallbackしない",
+    "token prefixだけをauthorityにしない",
+    "同一tokenを二重消費しない",
+    "既存analyze/recommend API互換を壊さない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "4d88b748717b1c92748dc00119e564e916e5b0c9663061c4cfb05248d90a52cb",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

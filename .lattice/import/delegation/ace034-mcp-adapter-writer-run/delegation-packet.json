@@ -1,0 +1,241 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "4df12d03ec2ac7f62a2c45fef2bc88f57f898428576331f8e86ec90a112133ce",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 95,
+  "task": {
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/development-efficiency-plan.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "approval": null,
+    "alternative_group": null,
+    "task_id": "ace034-mcp-request-adapter",
+    "title": "run_check v1/v2とchange_impactのclosed wireを意味requestへ変換するMCP adapterを追加する",
+    "validation": [
+      "swift test --filter MCPRunCheckAdapterTests",
+      "swift test --filter MCPRunCheckV2SchemaTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "MCPServer・AIShellCore・tool schemaを変更しない",
+      "担当2新規file以外を変更しない",
+      "service呼出し・commit・push・Lattice/Control更新をしない"
+    ],
+    "known_traps": [
+      "schemaだけをoracleにせずruntimeでもunknown fieldとv1/v2混在を拒否する",
+      "profile selectionへcaller digestを要求しない",
+      "focused set digestとselection digestを落とさない",
+      "change_impact continuationとinitial requestを混在させない"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPTypes.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPServer.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/RunCheckInvocationPlan.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ChangeImpactService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPRunCheckV2SchemaTests.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPRunCheckAdapter.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPRunCheckAdapterTests.swift"
+      }
+    ],
+    "admission_digest": "998cd2858f5a7edbe23a155945b2b075942a508795c3799808933ac23066dcbd"
+  },
+  "worker": {
+    "worker_run_id": "ace034-mcp-adapter-writer-run",
+    "assignment_id": "ace034-mcp-adapter-assignment",
+    "state": "admitted",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": null
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace034-mcp-adapter",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace034-mcp-adapter",
+    "git_dir_file_id": "16777233:42523695",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "b191f7ec5c21892fc3ade77e7dc363a383489a4b",
+    "head_at_reservation": "b191f7ec5c21892fc3ade77e7dc363a383489a4b"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPTypes.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPServer.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/RunCheckInvocationPlan.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ChangeImpactService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPRunCheckV2SchemaTests.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellMCP/MCPRunCheckAdapter.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellMCPTests/MCPRunCheckAdapterTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-no-active-writers",
+        "digest": "27a87777fd79de50db86e6310f4fe97abbf13cba19e7836ce651e65970ddaf25",
+        "observed_at": "2026-07-22T05:24:23.732Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 5400,
+    "cost_microusd": 3000000
+  },
+  "lineage": {
+    "parent_worker_run_id": null,
+    "root_assignment_id": "ace034-mcp-adapter-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "implementation-v1",
+    "independence_group": "ace034-mcp-adapter",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "809b873aab8496f2f1237753f7812b1196bbb78b0a3230d7509af9d20db5e6aa",
+    "approach_family_ref": "ace034-mcp-adapter-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter MCPRunCheckAdapterTests",
+    "swift test --filter MCPRunCheckV2SchemaTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "MCPServer・AIShellCore・tool schemaを変更しない",
+    "担当2新規file以外を変更しない",
+    "service呼出し・commit・push・Lattice/Control更新をしない"
+  ],
+  "known_traps": [
+    "schemaだけをoracleにせずruntimeでもunknown fieldとv1/v2混在を拒否する",
+    "profile selectionへcaller digestを要求しない",
+    "focused set digestとselection digestを落とさない",
+    "change_impact continuationとinitial requestを混在させない"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "4df12d03ec2ac7f62a2c45fef2bc88f57f898428576331f8e86ec90a112133ce",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

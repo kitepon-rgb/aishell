@@ -1,0 +1,240 @@
+{
+  "schema_version": "dotagents.delegation-packet.v1",
+  "packet_digest": "3119813c785cc065512602d1b4d465674299bba9676ff4ea91984773955f6664",
+  "control_id": "aishell-capability-expansion-20260721",
+  "record_revision": 64,
+  "task": {
+    "task_id": "ace034-impact-recommend-adapter",
+    "title": "change impact完全証拠をfocused set候補へexact joinする",
+    "classification": "A",
+    "effect": "write",
+    "doc_ref": "docs/adr/0020-focused-check-final-contract.md",
+    "role": "implementer",
+    "lane": "behavior-change",
+    "depends_on": [
+      "ace034-focused-service"
+    ],
+    "required_capabilities": [
+      "workspace.read",
+      "workspace.write",
+      "report.structured"
+    ],
+    "isolation": "dedicated-worktree",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "validation": [
+      "swift test --filter ChangeImpactRecommendationTests",
+      "swift test --filter ChangeImpactServiceTests",
+      "git diff --check"
+    ],
+    "non_goals": [
+      "DevelopmentRuntimeService・CheckFreshnessCache・MCP wireを変更しない",
+      "担当2 file以外を変更しない",
+      "暗黙のtest実行・cache/dispatch選択をしない",
+      "commit・push・Lattice/Control更新をしない"
+    ],
+    "known_traps": [
+      "ProjectProfileとのjoinをbasenameや表示名で推測しない",
+      "analyzeの一pageだけを完全証拠と見なさない",
+      "候補化不能なimpactをsilent省略せずcoverage gapへ出す",
+      "recommendはprocessを0件に保つ"
+    ],
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0012-change-impact-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0020-focused-check-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/FocusedCheckService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ProjectProfileService.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ChangeImpactService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"
+      }
+    ],
+    "approval": null,
+    "alternative_group": null,
+    "admission_digest": "5fdad44711b7eb3f59109e784ad068ed48402df7ed62dde01e646f28fd2fc732"
+  },
+  "worker": {
+    "worker_run_id": "ace034-impact-recommend-test-fix-run",
+    "assignment_id": "ace034-impact-recommend-assignment",
+    "state": "admitted",
+    "role_ref": "implementer",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "fallback": {
+      "from_worker_run_id": "ace034-impact-recommend-writer-run",
+      "decision_ref": "docs/adr/0020-focused-check-final-contract.md"
+    }
+  },
+  "executor": {
+    "adapter_id": "codex-native",
+    "contract_version": "v1",
+    "instance_id": "native-subagent",
+    "handle_schema_id": "codex-native.agent-path.v1"
+  },
+  "workflow_id": "native-subagent",
+  "workspace": {
+    "kind": "worktree",
+    "worktree_root_realpath": "/Users/kite/Developer/aishell-worktrees/ace034-impact-recommend",
+    "git_dir_realpath": "/Users/kite/Developer/aishell/.git/worktrees/ace034-impact-recommend",
+    "git_dir_file_id": "16777233:42337309",
+    "common_dir_realpath": "/Users/kite/Developer/aishell/.git",
+    "head_at_record": "e98c11a6ec16e9128ead72c2aa5ae0b34e5af9c9",
+    "head_at_reservation": "e98c11a6ec16e9128ead72c2aa5ae0b34e5af9c9"
+  },
+  "workspace_binding": {
+    "mode": "fixed"
+  },
+  "scope": {
+    "read_scope": [
+      {
+        "kind": "file",
+        "path": "docs/adr/0012-change-impact-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "docs/adr/0020-focused-check-final-contract.md"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/FocusedCheckService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ProjectProfileService.swift"
+      }
+    ],
+    "write_scope": [
+      {
+        "kind": "file",
+        "path": "Sources/AIShellCore/ChangeImpactService.swift"
+      },
+      {
+        "kind": "file",
+        "path": "Tests/AIShellCoreTests/ChangeImpactServiceTests.swift"
+      }
+    ]
+  },
+  "classification": "A",
+  "effect": "write",
+  "capabilities": [
+    {
+      "capability_id": "report.structured",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-cache-active",
+        "digest": "8864c3808ca061998f6cc058c371025e214a057b7a0a8b2fc0496efd70ee5fda",
+        "observed_at": "2026-07-22T04:30:50.578Z"
+      }
+    },
+    {
+      "capability_id": "workspace.read",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-cache-active",
+        "digest": "8864c3808ca061998f6cc058c371025e214a057b7a0a8b2fc0496efd70ee5fda",
+        "observed_at": "2026-07-22T04:30:50.578Z"
+      }
+    },
+    {
+      "capability_id": "workspace.write",
+      "value": "true",
+      "evidence": {
+        "type": "executor-receipt",
+        "ref": "agents.list_agents:ace034-cache-active",
+        "digest": "8864c3808ca061998f6cc058c371025e214a057b7a0a8b2fc0496efd70ee5fda",
+        "observed_at": "2026-07-22T04:30:50.578Z"
+      }
+    }
+  ],
+  "budget": {
+    "wall_time_seconds": 3600,
+    "cost_microusd": 2000000
+  },
+  "lineage": {
+    "parent_worker_run_id": "ace034-impact-recommend-writer-run",
+    "root_assignment_id": "ace034-impact-recommend-assignment",
+    "provider": "openai",
+    "model": "gpt-5.6-terra",
+    "prompt_family": "test-fix-v1",
+    "independence_group": "ace034-impact-recommend-fix",
+    "context_policy": {
+      "share_objective": true,
+      "share_current_candidate": false,
+      "share_existing_findings": true,
+      "share_failed_approaches": true,
+      "share_test_results": true
+    },
+    "input_digest": "7fdcd7b330470e3b77524be86795c5eb40f4543d4e996e7563ad2d7c0e6f8269",
+    "approach_family_ref": "ace034-impact-recommend-test-fix-v1",
+    "shared_artifact_ids": []
+  },
+  "validation": [
+    "swift test --filter ChangeImpactRecommendationTests",
+    "swift test --filter ChangeImpactServiceTests",
+    "git diff --check"
+  ],
+  "non_goals": [
+    "DevelopmentRuntimeService・CheckFreshnessCache・MCP wireを変更しない",
+    "担当2 file以外を変更しない",
+    "暗黙のtest実行・cache/dispatch選択をしない",
+    "commit・push・Lattice/Control更新をしない"
+  ],
+  "known_traps": [
+    "ProjectProfileとのjoinをbasenameや表示名で推測しない",
+    "analyzeの一pageだけを完全証拠と見なさない",
+    "候補化不能なimpactをsilent省略せずcoverage gapへ出す",
+    "recommendはprocessを0件に保つ"
+  ],
+  "report_schema_id": "dotagents.worker-report.v1",
+  "report_template": {
+    "schema_id": "dotagents.worker-report.v1",
+    "packet_digest": "3119813c785cc065512602d1b4d465674299bba9676ff4ea91984773955f6664",
+    "required_fields": [
+      "schema_version",
+      "control_id",
+      "task_id",
+      "worker_run_id",
+      "assignment_id",
+      "packet_digest",
+      "executor_handle",
+      "observed_state",
+      "status",
+      "result_digest",
+      "evidence",
+      "validation_results",
+      "changed_paths",
+      "claims"
+    ],
+    "prohibited_fields": [
+      "prompt",
+      "raw_log",
+      "secret",
+      "extra"
+    ]
+  }
+}

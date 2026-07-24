@@ -1,0 +1,657 @@
+{
+  "schema": "aishell.phase3-candidate-reprojection.v1",
+  "sourceRun": "/Users/kite/Developer/aishell/benchmarks/results/phase3-production-20260723-restart-v10",
+  "attempts": [
+    {
+      "attemptID": "phase3-01-freshness-cache-repeat-check-candidate-r1",
+      "taskID": "freshness-cache-repeat-check",
+      "repetition": 1,
+      "result": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 3,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 1,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "run_check:execute"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "2fefb274e31cc71bb06c8c4971fd5b84e309fe62738ae842e58d7fd6d682cc92"
+    },
+    {
+      "attemptID": "phase3-05-freshness-cache-repeat-check-candidate-r2",
+      "taskID": "freshness-cache-repeat-check",
+      "repetition": 2,
+      "result": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 1,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "run_check:execute"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "7d6f2979718872cfdbd0dd37e51ae6cb13b1eba204035b3c7b22a9724579d86d"
+    },
+    {
+      "attemptID": "phase3-07-freshness-cache-repeat-check-candidate-r3",
+      "taskID": "freshness-cache-repeat-check",
+      "repetition": 3,
+      "result": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": true,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 1,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "run_check:execute"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "9c259cc9257fc1187aa84ec5cabb9638fe91149c58f0f6639f281258c6af7de9"
+    },
+    {
+      "attemptID": "phase3-12-freshness-cache-input-change-candidate-r1",
+      "taskID": "freshness-cache-input-change",
+      "repetition": 1,
+      "result": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "run_check:execute"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "7fb1fbb0ca27920d5c92024e566cde6e7537ace81d2c205fe8d02ad14de998e7"
+    },
+    {
+      "attemptID": "phase3-13-freshness-cache-input-change-candidate-r2",
+      "taskID": "freshness-cache-input-change",
+      "repetition": 2,
+      "result": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "run_check:execute"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "7e3f02c718409f707063f74ef0f5b42f92c1e5709041f05b41bf1f680f168aca"
+    },
+    {
+      "attemptID": "phase3-17-freshness-cache-input-change-candidate-r3",
+      "taskID": "freshness-cache-input-change",
+      "repetition": 3,
+      "result": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 1,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 2,
+        "modelTurns": 1,
+        "retries": 0,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 1,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "run_check:execute"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "817b8d283e34d5320d41dc5e3d701dea791f8398f9ab081f942326bbf1479922"
+    },
+    {
+      "attemptID": "phase3-21-change-impact-direct-dependent-candidate-r1",
+      "taskID": "change-impact-direct-dependent",
+      "repetition": 1,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "aishell.filesystem-impact,static-import",
+        "unknowns": 0,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 6,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 8611,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "da58cc1a07a5c0c1758d87a4d936e26915f947f01bf3b8baee0ee666d5a4896a"
+    },
+    {
+      "attemptID": "phase3-24-change-impact-direct-dependent-candidate-r2",
+      "taskID": "change-impact-direct-dependent",
+      "repetition": 2,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "static-import",
+        "unknowns": 0,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 5109,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "70b97d2c30ca2c893d91bf39abede445c00cffc725a9ee89880845f721cbb067"
+    },
+    {
+      "attemptID": "phase3-26-change-impact-direct-dependent-candidate-r3",
+      "taskID": "change-impact-direct-dependent",
+      "repetition": 3,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "static-import",
+        "unknowns": 0,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 5,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 5008,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "45d3aea4c48de94302d84cdc7255249990acac4a32090d8af0cbfced02f87742"
+    },
+    {
+      "attemptID": "phase3-29-change-impact-unresolved-edge-candidate-r1",
+      "taskID": "change-impact-unresolved-edge",
+      "repetition": 1,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "static-import",
+        "unknowns": 1,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 4,
+        "modelTurns": 1,
+        "retries": 1,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 5842,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "cb3f026df688df361f653157fd045989b1af7379da66d98c3d62e50188c359cb"
+    },
+    {
+      "attemptID": "phase3-31-change-impact-unresolved-edge-candidate-r2",
+      "taskID": "change-impact-unresolved-edge",
+      "repetition": 2,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [
+          "src/b.mjs",
+          "test/b.test.mjs"
+        ],
+        "provenance": "static-import",
+        "unknowns": 1,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 5,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 5842,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "48618a0e3058929f43241179517743ad3b0c0676c0399a71e05455c8cfd692db"
+    },
+    {
+      "attemptID": "phase3-35-change-impact-unresolved-edge-candidate-r3",
+      "taskID": "change-impact-unresolved-edge",
+      "repetition": 3,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "impactedPaths": [],
+        "provenance": "",
+        "unknowns": 1,
+        "silentCompletenessClaims": 0
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 7,
+        "modelTurns": 1,
+        "retries": 5,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 3303,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:analyze"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "39405f72f8883bf289c995390e6259b415acd08dd5f5f44eec4fa299a373fc8e"
+    },
+    {
+      "attemptID": "phase3-39-focused-pipeline-recommend-only-candidate-r1",
+      "taskID": "focused-pipeline-recommend-only",
+      "repetition": 1,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ],
+        "executionRequiresOptIn": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 14,
+        "modelTurns": 1,
+        "retries": 7,
+        "artifactRereads": 1,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 9488,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:recommend"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "09ef8da01cffcd612f26348fd942d7a9da4f6710fb23babf16857b50fd3aae22"
+    },
+    {
+      "attemptID": "phase3-40-focused-pipeline-recommend-only-candidate-r2",
+      "taskID": "focused-pipeline-recommend-only",
+      "repetition": 2,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ],
+        "executionRequiresOptIn": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 9,
+        "modelTurns": 1,
+        "retries": 6,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:recommend"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "3041c65bec3af5fc4ea2746d5c3048c5cac5d2657a56aa8fa11e01c93096255c"
+    },
+    {
+      "attemptID": "phase3-45-focused-pipeline-recommend-only-candidate-r3",
+      "taskID": "focused-pipeline-recommend-only",
+      "repetition": 3,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ],
+        "executionRequiresOptIn": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 5,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:recommend"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "ff7bdcb6c44e471993a764ec75f39c5504df6b355b7aa2bb94df991490e4326b"
+    },
+    {
+      "attemptID": "phase3-48-focused-pipeline-explicit-run-candidate-r1",
+      "taskID": "focused-pipeline-explicit-run",
+      "repetition": 1,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ],
+        "executionRequiresOptIn": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 8,
+        "modelTurns": 1,
+        "retries": 4,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:recommend"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "710595813c1c517b494448965042d65777638239351b1a5649f6c55e40be120e"
+    },
+    {
+      "attemptID": "phase3-49-focused-pipeline-explicit-run-candidate-r2",
+      "taskID": "focused-pipeline-explicit-run",
+      "repetition": 2,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ],
+        "executionRequiresOptIn": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 7,
+        "modelTurns": 1,
+        "retries": 2,
+        "artifactRereads": 1,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 10120,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:recommend"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "bcb6fb0d59d8d9e43e5e3e448b88fd7a6ef06dd1a182993083494632eb12bbb9"
+    },
+    {
+      "attemptID": "phase3-52-focused-pipeline-explicit-run-candidate-r3",
+      "taskID": "focused-pipeline-explicit-run",
+      "repetition": 3,
+      "result": {
+        "schemaVersion": "aishell.change-impact.v1",
+        "recommendedChecks": [
+          "test/a.test.mjs"
+        ],
+        "executionRequiresOptIn": true
+      },
+      "telemetry": {
+        "secondExecutionCount": 0,
+        "cacheHit": false,
+        "falseFresh": 0
+      },
+      "metrics": {
+        "firstUsefulResultMilliseconds": null,
+        "toolCalls": 9,
+        "modelTurns": 1,
+        "retries": 6,
+        "artifactRereads": 0,
+        "filesystemEntriesRescanned": 0,
+        "bytesReread": 0,
+        "processReexecutions": 0,
+        "cacheHits": 0,
+        "changeJournalHits": 0,
+        "toolAdoption": true
+      },
+      "acceptedInvocations": [
+        "change_impact:recommend"
+      ],
+      "solved": true,
+      "failures": [],
+      "adapterTraceSHA256": "19f896ee7efac297f2692436638fee60d2c49c416c9d77cb204799067039ccb9"
+    }
+  ]
+}

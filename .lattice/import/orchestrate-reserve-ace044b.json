@@ -1,0 +1,32 @@
+{
+  "cwd": "/Users/kite/Developer/aishell",
+  "control_id": "aishell-capability-expansion-20260721",
+  "actor_id": "bell-root-20260722-wave-ace031-ace044b",
+  "expected_revision": 9,
+  "task_id": "ace044b-artifact-query-service",
+  "candidate": {
+    "candidate_id": "ace044b-artifact-query-writer-run",
+    "registry_observation_id": "codex-native-implementer-routing-20260722-ace-wave",
+    "assignment_id": "ace044b-artifact-query-assignment",
+    "workspace_cwd": "/Users/kite/Developer/aishell-worktrees/ace044b-artifact-query",
+    "workspace_binding": "fixed",
+    "write_mode": "direct",
+    "operation_digest": null,
+    "budget_reservation": {"wall_time_seconds": 3600, "cost_microusd": 2000000},
+    "lineage": {
+      "parent_worker_run_id": null,
+      "root_assignment_id": "ace044b-artifact-query-assignment",
+      "provider": "openai",
+      "model": "gpt-5.6-terra",
+      "prompt_family": "implementation-v1",
+      "independence_group": "ace044b-artifact-query",
+      "context_policy": {"share_objective": true, "share_current_candidate": false, "share_existing_findings": true, "share_failed_approaches": true, "share_test_results": true},
+      "input_digest": "0440440440440440440440440440440440440440440440440440440440440440",
+      "approach_family_ref": "ace044b-artifact-query-v1",
+      "shared_artifact_ids": []
+    },
+    "fallback": null,
+    "executor_handle": {"agent_path": "/root/ace044b_artifact_query_writer"}
+  },
+  "review_decision": null
+}

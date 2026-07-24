@@ -1,0 +1,52 @@
+{
+  "schema_version": "dotagents.worker-report.v1",
+  "control_id": "aishell-capability-expansion-20260721",
+  "task_id": "ace034-profile-service-sharing",
+  "worker_run_id": "ace034-profile-sharing-writer-run",
+  "assignment_id": "ace034-profile-sharing-assignment",
+  "packet_digest": "d9a7b3b2c21cf5aa16d2fdfef539a5fa62d643752660369bf5955d5802175bba",
+  "executor_handle": {
+    "agent_path": "/root/ace034_profile_sharing_writer"
+  },
+  "observed_state": "completed",
+  "status": "completed",
+  "result_digest": "412bcd2fed722f7dbdecbc0867b81d4b07635b12250af50ae9407f63c3531388",
+  "evidence": [
+    {
+      "type": "executor-receipt",
+      "ref": "codex-native:/root/ace034_profile_sharing_writer",
+      "digest": "88958094087532fc3a3ec9b92f10932ca4d0cd413c243246dbf3bb88305a5221",
+      "observed_at": "2026-07-22T06:06:05.000Z"
+    }
+  ],
+  "validation_results": [
+    {
+      "validation_ref": "swift test --filter ContextCompilerServiceTests",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "swift test --filter ContextCompilerServiceTests: passed; 11 tests, 0 failures",
+        "digest": "9578b91c59edddf9d17921650dbc08141e876601fea41ee65027a5ce7454513f",
+        "observed_at": "2026-07-22T06:06:05.000Z"
+      }
+    },
+    {
+      "validation_ref": "git diff --check",
+      "outcome": "passed",
+      "evidence": {
+        "type": "command",
+        "ref": "git diff --check: passed; no output",
+        "digest": "58dd7e2c5f37edde8489aec377578dcf984f97ee60731ee413a9fea8fc42d4a5",
+        "observed_at": "2026-07-22T06:06:05.000Z"
+      }
+    }
+  ],
+  "changed_paths": [
+    "Sources/AIShellCore/ContextCompilerService.swift",
+    "Tests/AIShellCoreTests/ContextCompilerServiceTests.swift"
+  ],
+  "claims": [
+    "ContextCompilerServiceは任意のProjectProfileServiceを受け取り、workspace projectionでそのinstanceを使用する。",
+    "注入なしの既存initializer経路は、同じruntimeStore・workspaceRuntime・evidenceStoreからProjectProfileServiceを生成する。"
+  ]
+}
