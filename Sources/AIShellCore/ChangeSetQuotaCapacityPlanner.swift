@@ -183,7 +183,7 @@ struct ChangeSetQuotaCapacityPlanner {
                 changes.append(.init(changeID: id, kind: .create, before: nil,
                     after: .init(path: path, identity: identity, mode: 0o644, bytes: after)))
                 changeResults.append(.init(changeID: id, afterSHA256: after.sha256, kind: "create", afterPath: path,
-                    afterIdentity: identity, afterSizeBytes: after.count, afterMetadata: .init(mode: 0o644), result: "applied"))
+                    afterIdentity: identity, afterSizeBytes: after.count, afterMetadata: .init(mode: 0o644)))
             case let .write(id, path, _, content):
                 let before = try current(path) ?? (Data(), 0o644); let after = content.bytes ?? Data()
                 let maximumMode: UInt16 = 0o7777
@@ -194,7 +194,7 @@ struct ChangeSetQuotaCapacityPlanner {
                 changeResults.append(.init(changeID: id, afterSHA256: after.sha256, kind: "write", beforePath: path,
                     afterPath: path, beforeIdentity: identity, afterIdentity: identity, beforeSHA256: before.0.sha256,
                     beforeSizeBytes: before.0.count, afterSizeBytes: after.count, beforeMetadata: .init(mode: maximumMode),
-                    afterMetadata: .init(mode: maximumMode), result: "applied"))
+                    afterMetadata: .init(mode: maximumMode)))
             case let .delete(id, path, _):
                 let before = try current(path) ?? (Data(), 0o644); beforeTotal += before.0.count
                 let maximumMode: UInt16 = 0o7777
@@ -202,7 +202,7 @@ struct ChangeSetQuotaCapacityPlanner {
                     before: .init(path: path, identity: identity, mode: maximumMode, bytes: before.0), after: nil))
                 changeResults.append(.init(changeID: id, afterSHA256: nil, kind: "delete", beforePath: path,
                     beforeIdentity: identity, beforeSHA256: before.0.sha256, beforeSizeBytes: before.0.count,
-                    beforeMetadata: .init(mode: maximumMode), result: "applied"))
+                    beforeMetadata: .init(mode: maximumMode)))
             case let .rename(id, source, _, destination, _):
                 let before = try current(source) ?? (Data(), 0o644); beforeTotal += before.0.count; afterTotal += before.0.count
                 let maximumMode: UInt16 = 0o7777
@@ -213,7 +213,7 @@ struct ChangeSetQuotaCapacityPlanner {
                 changeResults.append(.init(changeID: id, afterSHA256: before.0.sha256, kind: "rename", beforePath: source,
                     afterPath: destination, beforeIdentity: identity, afterIdentity: identity, beforeSHA256: before.0.sha256,
                     beforeSizeBytes: before.0.count, afterSizeBytes: before.0.count, beforeMetadata: .init(mode: maximumMode),
-                    afterMetadata: .init(mode: maximumMode), result: "applied"))
+                    afterMetadata: .init(mode: maximumMode)))
             }
         }
         let manifest = try JSONSerialization.data(withJSONObject: [

@@ -137,7 +137,6 @@ public struct ApplyChangeSetChangeResult: Codable, Equatable, Sendable {
     public let afterSizeBytes: Int?
     public let beforeMetadata: ApplyChangeSetMetadata?
     public let afterMetadata: ApplyChangeSetMetadata?
-    public let result: String?
     public let trashPath: String?
     /// UTF-8 resulting file content, inlined only for small text files so the caller can confirm and
     /// report exactly what was written without a follow-up read. Nil for deletes, binary, or files
@@ -160,7 +159,6 @@ public struct ApplyChangeSetChangeResult: Codable, Equatable, Sendable {
         afterSizeBytes: Int? = nil,
         beforeMetadata: ApplyChangeSetMetadata? = nil,
         afterMetadata: ApplyChangeSetMetadata? = nil,
-        result: String? = nil,
         trashPath: String? = nil,
         afterContent: String? = nil
     ) {
@@ -169,7 +167,7 @@ public struct ApplyChangeSetChangeResult: Codable, Equatable, Sendable {
         self.beforeIdentity = beforeIdentity; self.afterIdentity = afterIdentity
         self.beforeSHA256 = beforeSHA256; self.beforeSizeBytes = beforeSizeBytes; self.afterSizeBytes = afterSizeBytes
         self.beforeMetadata = beforeMetadata; self.afterMetadata = afterMetadata
-        self.result = result; self.trashPath = trashPath; self.afterContent = afterContent
+        self.trashPath = trashPath; self.afterContent = afterContent
     }
 
     /// Inline `bytes` as resulting content when they are valid UTF-8 within the byte limit, else nil.
@@ -3325,7 +3323,7 @@ public actor ApplyChangeSetService {
                 beforeIdentity: beforePath.flatMap { sourceIdentities[$0] }, afterIdentity: nil,
                 beforeSHA256: before?.applySHA256, beforeSizeBytes: before?.count, afterSizeBytes: after?.count,
                 beforeMetadata: beforePath.flatMap { sourceModes[$0] }.map { .init(mode: $0) },
-                afterMetadata: mode.map { .init(mode: $0) }, result: "applied",
+                afterMetadata: mode.map { .init(mode: $0) },
                 afterContent: ApplyChangeSetChangeResult.inlineAfterContent(after))
         }
         let summary = ApplyChangeSetSummary(
@@ -3461,7 +3459,7 @@ public actor ApplyChangeSetService {
                 beforeIdentity: change.beforeIdentity, afterIdentity: identity,
                 beforeSHA256: change.beforeSHA256, beforeSizeBytes: change.beforeSizeBytes,
                 afterSizeBytes: change.afterSizeBytes, beforeMetadata: change.beforeMetadata,
-                afterMetadata: change.afterMetadata, result: change.result, trashPath: change.trashPath,
+                afterMetadata: change.afterMetadata, trashPath: change.trashPath,
                 afterContent: change.afterContent)
         })
         await state.storePendingResult(transaction, result: durableResult)
@@ -3602,7 +3600,7 @@ public actor ApplyChangeSetService {
                     beforeIdentity: change.beforeIdentity, afterIdentity: change.afterIdentity,
                     beforeSHA256: change.beforeSHA256, beforeSizeBytes: change.beforeSizeBytes,
                     afterSizeBytes: change.afterSizeBytes, beforeMetadata: change.beforeMetadata,
-                    afterMetadata: change.afterMetadata, result: change.result, trashPath: trashPath,
+                    afterMetadata: change.afterMetadata, trashPath: trashPath,
                     afterContent: change.afterContent)
             })
             await state.storePendingResult(transaction, result: durableResult)
@@ -3681,7 +3679,7 @@ public actor ApplyChangeSetService {
                 afterIdentity: change.afterIdentity, beforeSHA256: change.beforeSHA256,
                 beforeSizeBytes: change.beforeSizeBytes, afterSizeBytes: change.afterSizeBytes,
                 beforeMetadata: change.beforeMetadata, afterMetadata: change.afterMetadata,
-                result: change.result, trashPath: trashPath, afterContent: change.afterContent)
+                trashPath: trashPath, afterContent: change.afterContent)
         })
     }
 

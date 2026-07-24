@@ -222,7 +222,10 @@ final class ChangeSetServiceTests: XCTestCase {
         XCTAssertEqual(first.summary?.writeCount, 1)
         XCTAssertEqual(first.summary?.createCount, 1)
         XCTAssertEqual(first.changes.map(\.kind), ["write", "create"])
-        XCTAssertEqual(first.changes.map(\.result), ["applied", "applied"])
+        // A committed transaction implies every listed change was applied, so each change reports the
+        // resulting state (path, digest, content) rather than a redundant per-change verdict string.
+        XCTAssertEqual(first.status, .committed)
+        XCTAssertTrue(first.changes.allSatisfy { $0.afterSHA256 != nil })
         XCTAssertNotNil(first.changes[0].beforeIdentity)
         XCTAssertNotNil(first.changes[0].afterIdentity)
         XCTAssertNotNil(first.diffPreview)

@@ -688,10 +688,16 @@ function rawToolCalls(events) {
   return events.filter((event) => event.type === 'item.completed' && event.item?.type === 'mcp_tool_call');
 }
 
-const CODEX_INTERNAL_DISCOVERY_TOOLS = new Set(['list_mcp_resource_templates', 'list_mcp_resources']);
+// Read-only Codex-internal discovery calls the agent may make alongside AIShell. The wire-tapped
+// arms only tolerate this explicit server+tool allowlist, so an AIShell call can never be mistaken
+// for a host call; the untapped native path accepts any host server already.
+const CODEX_INTERNAL_DISCOVERY_CALLS = new Map([
+  ['codex', new Set(['list_mcp_resource_templates', 'list_mcp_resources'])],
+  ['codex_apps', new Set(['codex_document_control.list_document_sessions'])],
+]);
 
 function codexInternalDiscoveryCall(item, index) {
-  if (item.server !== 'codex' || !CODEX_INTERNAL_DISCOVERY_TOOLS.has(item.tool)
+  if (!CODEX_INTERNAL_DISCOVERY_CALLS.get(item.server)?.has(item.tool)
     || item.status !== 'completed' || !plainObject(item.arguments) || !plainObject(item.result)
     || item.error !== null) {
     throw new Error(`Codex MCP event ${index} is unsupported`);

@@ -284,7 +284,7 @@ final class MCPApplyChangeSetWireTests: XCTestCase {
                 beforeSHA256: String(repeating: "b", count: 64),
                 beforeSizeBytes: 3, afterSizeBytes: 4,
                 beforeMetadata: ApplyChangeSetMetadata(mode: 0o644),
-                afterMetadata: ApplyChangeSetMetadata(mode: 0o644), result: "applied"
+                afterMetadata: ApplyChangeSetMetadata(mode: 0o644)
             )],
             changedPaths: ["one.txt"],
             transactionCursorAdvanced: true,

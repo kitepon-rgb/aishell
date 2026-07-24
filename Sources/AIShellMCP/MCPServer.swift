@@ -1044,7 +1044,6 @@ final class MCPServer: @unchecked Sendable {
                 "after_size_bytes": jsonInt(change.afterSizeBytes),
                 "before_metadata": change.beforeMetadata.map { .object(["mode": .number(Double($0.mode))]) } ?? .null,
                 "after_metadata": change.afterMetadata.map { .object(["mode": .number(Double($0.mode))]) } ?? .null,
-                "result": jsonString(change.result),
                 "trash_path": jsonString(change.trashPath),
                 "after_content": jsonString(change.afterContent)
             ])
