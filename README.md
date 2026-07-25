@@ -92,7 +92,9 @@ The global package adds `aishell-mcp` and `aishell-open` to `PATH`. `aishell-ope
 
 Upgrading replaces the app bundle underneath any manager window left open, which breaks that window —
 it keeps holding a deleted bundle and silently loses every operation that opens a file panel. The
-window detects this itself and says so with a banner; reopen it to pick up the new version.
+window detects this itself and says so with a banner. When the new version sits at the same path, the
+banner restarts the window into it in one click; otherwise it asks for a quit and a fresh
+`aishell-open`. Verified against real `npm install -g` upgrades, not only simulated ones.
 
 ```sh
 npm install -g @quolu/aishell

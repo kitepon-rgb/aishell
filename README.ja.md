@@ -93,8 +93,9 @@ flowchart LR
 global packageは`aishell-mcp`と`aishell-open`を`PATH`へ追加する。`aishell-open`は同梱された管理アプリをLaunchServicesで開く。install scriptは実行しない。
 
 upgradeは開いたままの管理アプリの足元でapp bundleを置き換えるため、その窓は壊れる。削除済みbundleを
-掴み続け、ファイル選択を伴う操作を無言で失う。窓自身がこれを検知してbannerで示すので、開き直せば
-新版へ移る。
+掴み続け、ファイル選択を伴う操作を無言で失う。窓自身がこれを検知してbannerで示す。新版が同じpathに
+在る場合はbannerの再起動1回で新版の窓へ移り、pathごと消えている場合は終了と`aishell-open`での開き直しを
+促す。実際の`npm install -g` upgradeで検証済みである。
 
 ```sh
 npm install -g @quolu/aishell

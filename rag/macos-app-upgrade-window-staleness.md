@@ -55,10 +55,21 @@ banner表示に載せる（0.4.4）。「判定不能」をintactと同一視し
 
 ## 実測（0.4.4の修正後）
 
-- 隔離copyでbundle directoryをrename退避 → 1秒以内にbannerが「終了」提示で出る
+隔離copyでの検証:
+
+- bundle directoryをrename退避 → 1秒以内にbannerが「終了」提示で出る
 - 同じpathへ別実体をcopy → bannerが「再起動」提示に変わる。押すと新実体からprocessが起動し旧processは終了
 - 置換していない同一起動方式では `sample <pid>` のstackに `-[NSSavePanel runModal]` が現れpanelは正常に開く
   → 直接実行やcode signingではなくbundle実体の消失が原因、と切り分けられた
+
+実installでの検証（`npm install -g` による実置換、2026-07-25）:
+
+- 0.4.5 installで走っていた窓にbannerが出た（利用者側が確認）
+- banner上の再起動で旧pidが終了し、新実体から新pidが起動する。2回とも成立
+  （19:45:5x install → 19:46:03 新pid、19:53:59 新pid）
+- **processは置換を越えて生き続ける**: binaryのinodeが48308211→48308499へ変わっても、
+  起動中processは3秒間観測して消えなかった。macOSが署名不整合で殺すわけではなく、
+  「壊れた窓が残り続ける」のが既定の結末である
 
 ## 落とし穴
 
@@ -66,3 +77,8 @@ banner表示に載せる（0.4.4）。「判定不能」をintactと同一視し
   「効かない」ように見えて実装を疑ったが、窓をactiveにしてからの2回目で正常に動いた。GUI検証時は
   frontmost判定（`lsappinfo front` → `lsappinfo info -only pid`）を先に取る
 - 失敗を1秒pollで消える汎用errorへ載せると、失敗自体が無言になる。復旧UIの失敗は復旧UIの上に残す
+- **計測のための再installが、観測しようとしている状態を新しく作る。** 利用者の再起動が成功して
+  新pidへ入れ替わった直後、確認のため同じ版を再installしたところ、その新pidが再び古い実体を掴む
+  状態になった。その後の観測だけを見て「再起動が効いていない」と誤って結論した。原因は自分の
+  再installである。**pidと起動時刻を時系列に並べてから結論する**こと。inodeの現値だけでは
+  「誰がいつ壊したか」を判別できない
