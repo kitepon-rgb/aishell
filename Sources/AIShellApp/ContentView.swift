@@ -4,21 +4,31 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var model: AppModel
 
+    /// 境界の位置は窓の高さに対する比で持つ。窓をresizeしても見え方の比率が保たれる。
+    @AppStorage("configurationPaneFraction") private var configurationPaneFraction = 0.5
+    /// drag開始時の比。translationは開始点からの累積なので、基準を固定しないと加速する。
+    @State private var dragBaselineFraction: Double?
+
+    private static let dividerHitHeight: CGFloat = 10
+    private static let paneFractionRange = 0.15...0.85
+
     var body: some View {
         VStack(spacing: 0) {
             installationBanner
             header
             Divider()
-            // header以下を設定と履歴で厳密に半分ずつ分ける。内容量で比率が動くと、rootが増えた時に
-            // 履歴が押し出されて見えなくなる。溢れた分は各paneの内側でscrollさせる。
+            // header以下を設定と履歴で分ける。既定は半分ずつで、境界はdragで動かせる。
+            // 内容量で比率が決まると、rootが増えた時に履歴が押し出されて見えなくなる。
+            // 溢れた分は各paneの内側でscrollさせる。
             GeometryReader { proxy in
-                let paneHeight = max((proxy.size.height - 1) / 2, 0)
+                let available = max(proxy.size.height - Self.dividerHitHeight, 0)
+                let configurationHeight = available * clampedPaneFraction
                 VStack(spacing: 0) {
                     configurationPanel
-                        .frame(height: paneHeight)
-                    Divider()
+                        .frame(height: configurationHeight)
+                    paneDivider(available: available)
                     activityPanel
-                        .frame(height: paneHeight)
+                        .frame(height: available - configurationHeight)
                 }
             }
         }
@@ -29,6 +39,47 @@ struct ContentView: View {
         } message: {
             Text(model.errorMessage ?? "不明なエラー")
         }
+    }
+
+    private var clampedPaneFraction: Double {
+        min(max(configurationPaneFraction, Self.paneFractionRange.lowerBound), Self.paneFractionRange.upperBound)
+    }
+
+    /// 掴める境界。透明な領域はgestureを拾わないため、実体のあるbarとgripを描いて掴める場所を見せる。
+    private func paneDivider(available: CGFloat) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(.quaternary.opacity(0.6))
+            Capsule()
+                .fill(.secondary)
+                .frame(width: 34, height: 3)
+        }
+        .frame(height: Self.dividerHitHeight)
+        .contentShape(Rectangle())
+        .onHover { isInside in
+            if isInside {
+                NSCursor.resizeUpDown.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    guard available > 0 else { return }
+                    let baseline = dragBaselineFraction ?? clampedPaneFraction
+                    if dragBaselineFraction == nil { dragBaselineFraction = baseline }
+                    let moved = baseline + value.translation.height / available
+                    configurationPaneFraction = min(
+                        max(moved, Self.paneFractionRange.lowerBound),
+                        Self.paneFractionRange.upperBound
+                    )
+                }
+                .onEnded { _ in dragBaselineFraction = nil }
+        )
+        .accessibilityLabel("設定と操作履歴の境界")
+        .accessibilityHint("dragで上下の割合を変えます。ダブルクリックで半分に戻します。")
+        .onTapGesture(count: 2) { configurationPaneFraction = 0.5 }
     }
 
     /// 実体を差し替えられた窓はUIも操作も受け付けるのにファイル選択だけが無反応になる。

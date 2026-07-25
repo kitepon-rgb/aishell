@@ -29,10 +29,13 @@ AIShell 0.4.4 makes an upgrade visible to the window that the upgrade broke.
 
 ## Changed
 
-- The manager window now splits the area below the header evenly: settings on top, activity history
-  below, exactly half each. Previously the settings pane grew with the number of allowed roots and
-  pushed the history off the bottom of the window — with a dozen roots the history was gone. Roots
-  that no longer fit scroll inside their own half, so adding a root never moves the history again.
+- The manager window now splits the area below the header between settings and activity history at a
+  boundary you can drag. Previously the settings pane grew with the number of allowed roots and pushed
+  the history off the bottom of the window — with a dozen roots the history was gone. The split starts
+  at half and half, roots that no longer fit scroll inside their own pane, and adding a root never
+  moves the boundary. Drag the grip to rebalance; the position is remembered across launches as a
+  fraction of the window height, so resizing the window keeps the same proportions. Double-click the
+  grip to return to half and half.
 
 ## Compatibility
 
