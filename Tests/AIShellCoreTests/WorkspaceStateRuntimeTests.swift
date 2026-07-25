@@ -747,6 +747,44 @@ final class WorkspaceStateRuntimeTests: XCTestCase {
         XCTAssertFalse(snapshot.context.contains { $0.text.contains("outside secret") })
     }
 
+    func testSnapshotSurvivesSpecialFilesAndUnreadableContent() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data("source\n".utf8).write(to: root.appendingPathComponent("Source.swift"))
+
+        // socketやFIFOは開いても内容を持たない。除外しないとcontent readが例外を投げ、
+        // 1個の特殊fileでsnapshot全体が失敗する（.lattice/sensor/daemon.sockが実例）。
+        let fifo = root.appendingPathComponent("daemon.sock")
+        XCTAssertEqual(mkfifo(fifo.path, 0o644), 0, "FIFOを作成できませんでした")
+
+        // 読めない通常fileはentryを残したままhashだけ落ちる。snapshotは失敗しない。
+        let unreadable = root.appendingPathComponent("Unreadable.txt")
+        try Data("secret\n".utf8).write(to: unreadable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: unreadable.path)
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: unreadable.path
+            )
+        }
+
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+
+        let snapshot = try await runtime.snapshot()
+
+        XCTAssertTrue(snapshot.entries.contains { $0.path == "Source.swift" && $0.sha256 != nil })
+        XCTAssertFalse(
+            snapshot.entries.contains { $0.path == "daemon.sock" },
+            "特殊fileはentryにしない"
+        )
+        let blocked = snapshot.entries.first { $0.path == "Unreadable.txt" }
+        XCTAssertNotNil(blocked, "読めないfileもentryとしては残す")
+        XCTAssertNil(blocked?.sha256, "読めなかった事実はsha256の欠落として観測できる")
+    }
+
     func testSnapshotIncludesRelevantHiddenDevelopmentFiles() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }

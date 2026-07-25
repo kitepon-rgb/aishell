@@ -1074,6 +1074,11 @@ public actor WorkspaceStateRuntime {
         let isDirectory = values.isDirectory == true
         var info = stat()
         guard lstat(url.path, &info) == 0 else { return nil }
+        // socket・FIFO・device等はworkspaceの内容ではなく、開いても中身を持たない。
+        // symbolic linkと同じくentryにしない。除外しないと下のcontent readが例外を投げ、
+        // 1個の特殊fileでsnapshot全体が失敗する（`.lattice/sensor/daemon.sock`が実例）。
+        let isRegularFile = (info.st_mode & S_IFMT) == S_IFREG
+        guard isDirectory || isRegularFile else { return nil }
         let size = Int64(values.fileSize ?? 0)
         let identity = "\(info.st_dev):\(info.st_ino)"
         let hash: String?
@@ -1084,10 +1089,16 @@ public actor WorkspaceStateRuntime {
            Self.datesEquivalent(reusable.modifiedAt, values.contentModificationDate),
            reusable.sha256 != nil {
             hash = reusable.sha256
-        } else if !isDirectory, size <= 4 * 1_024 * 1_024 {
+        } else if isRegularFile, size <= 4 * 1_024 * 1_024 {
             contentReadCount += 1
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            // 1個のfileが読めないだけでsnapshot全体を落とさない。entryはpath・size・
+            // mtimeを保ったまま残し、hashだけnilにする（4MiB超のfileと同じ扱い）。
+            // 読めなかった事実はsha256の欠落として観測でき、握り潰しにはならない。
+            if let data = try? Data(contentsOf: url, options: .mappedIfSafe) {
+                hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            } else {
+                hash = nil
+            }
         } else {
             hash = nil
         }
