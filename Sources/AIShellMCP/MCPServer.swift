@@ -1,5 +1,4 @@
 import AIShellCore
-import CryptoKit
 import Foundation
 
 private struct ManagedChangeSetInput {
@@ -28,16 +27,17 @@ enum MCPServerOutcome: Equatable, Sendable {
     }
 }
 
-final class MCPServer: @unchecked Sendable {
+/// stored propertyはすべて`let`かつSendableで、可変stateは`MCPServiceRegistry`と
+/// 各serviceのactorが所有する。したがってhandlerを並列に走らせても同期は不要であり、
+/// `Sendable`適合はcompilerが検証する（`@unchecked`ではない）。
+final class MCPServer: Sendable {
     private let store: RuntimeStore
     private let toolProfile: String
     private let capabilitySet: String?
-    private lazy var files = NativeFileService(store: store)
-    private lazy var processes = NativeProcessService(store: store)
+    private let files: NativeFileService
+    private let processes: NativeProcessService
     private let development: DevelopmentRuntimeService
-    private var changeSetServices: [String: ApplyChangeSetService] = [:]
-    private var managedRuns: ManagedRunService?
-    private var catalogValidationSucceeded = false
+    private let services: MCPServiceRegistry
 
     init(
         runtimeStore: RuntimeStore = RuntimeStore(),
@@ -51,8 +51,15 @@ final class MCPServer: @unchecked Sendable {
             ?? ProcessInfo.processInfo.environment["AISHELL_TOOL_PROFILE"]
             ?? "development"
         self.capabilitySet = capabilitySet
-        development = developmentRuntime ?? DevelopmentRuntimeService(runtimeStore: runtimeStore)
-        managedRuns = managedRunService
+        files = NativeFileService(store: runtimeStore)
+        processes = NativeProcessService(store: runtimeStore)
+        let development = developmentRuntime ?? DevelopmentRuntimeService(runtimeStore: runtimeStore)
+        self.development = development
+        services = MCPServiceRegistry(
+            store: runtimeStore,
+            workspaceRuntime: development.workspaceRuntime,
+            managedRunService: managedRunService
+        )
     }
 
     @discardableResult
@@ -203,7 +210,12 @@ final class MCPServer: @unchecked Sendable {
 
     func validateStartup() throws {
         _ = try ToolCatalog.listedTools(profile: toolProfile, capabilitySet: capabilitySet)
-        catalogValidationSucceeded = true
+    }
+
+    /// 起動時検証と同じ判定をその場で行う。判定材料は`let`だけなので、結果をflagとして
+    /// 保持せずに済み、handlerが並列に走っても読み取りが競合しない。
+    private var isToolCatalogValid: Bool {
+        (try? ToolCatalog.listedTools(profile: toolProfile, capabilitySet: capabilitySet)) != nil
     }
 
     private func invoke(name: String, arguments: [String: JSONValue]) async throws -> JSONValue {
@@ -212,7 +224,7 @@ final class MCPServer: @unchecked Sendable {
             try validateKeys(arguments, allowed: [])
             return try await .from(FactoryDiagnosticsService(store: store).diagnose(
                 managerApplicationURL: try? managerApplicationURL(),
-                mcpReady: catalogValidationSucceeded
+                mcpReady: isToolCatalogValid
             ))
         case "run_check":
             switch try MCPRunCheckAdapter.runCheck(arguments: arguments) {
@@ -238,7 +250,7 @@ final class MCPServer: @unchecked Sendable {
                         guard case let .direct(direct) = plan.invocation else {
                             throw RunCheckPipelineError.dispatchNotReady(processesStarted: 0)
                         }
-                        return try await .from(managedRunService().start(
+                        return try await .from(services.managedRunService().start(
                             clientRunKey: clientRunKey,
                             requestDigest: plan.requestDigest,
                             planDigest: plan.digest,
@@ -275,12 +287,12 @@ final class MCPServer: @unchecked Sendable {
             switch action {
             case "status":
                 try validateKeys(arguments, allowed: ["action", "run_handle"])
-                return try await .from(managedRunService().status(
+                return try await .from(services.managedRunService().status(
                     runHandle: requiredString("run_handle", in: arguments)
                 ))
             case "read":
                 try validateKeys(arguments, allowed: ["action", "run_handle", "cursor", "byte_budget"])
-                return try await .from(managedRunService().read(
+                return try await .from(services.managedRunService().read(
                     runHandle: requiredString("run_handle", in: arguments),
                     cursor: try strictOptionalString("cursor", in: arguments),
                     byteBudget: try boundedInt(
@@ -292,7 +304,7 @@ final class MCPServer: @unchecked Sendable {
                 try validateKeys(arguments, allowed: [
                     "action", "run_handle", "after_state_revision", "cursor", "timeout_ms"
                 ])
-                return try await .from(managedRunService().wait(
+                return try await .from(services.managedRunService().wait(
                     runHandle: requiredString("run_handle", in: arguments),
                     afterStateRevision: UInt64(try boundedInt(
                         "after_state_revision", in: arguments, default: 0,
@@ -306,7 +318,7 @@ final class MCPServer: @unchecked Sendable {
                 ))
             case "cancel":
                 try validateKeys(arguments, allowed: ["action", "run_handle"])
-                return try await .from(managedRunService().cancel(
+                return try await .from(services.managedRunService().cancel(
                     runHandle: requiredString("run_handle", in: arguments)
                 ))
             default:
@@ -381,7 +393,7 @@ final class MCPServer: @unchecked Sendable {
                     default:
                         throw AIShellError.invalidArgument("pattern_kindはliteralまたはregexです。")
                     }
-                    return try await .from(managedRunService().searchArtifacts(
+                    return try await .from(services.managedRunService().searchArtifacts(
                         projectPath: requiredString("project_path", in: arguments),
                         sources: sources,
                         pattern: pattern,
@@ -394,7 +406,7 @@ final class MCPServer: @unchecked Sendable {
                     try validateKeys(arguments, allowed: [
                         "action", "stream_handle", "cursor", "page_byte_limit"
                     ])
-                    return try await .from(managedRunService().continueArtifactSearch(
+                    return try await .from(services.managedRunService().continueArtifactSearch(
                         streamHandle: requiredString("stream_handle", in: arguments),
                         cursor: requiredString("cursor", in: arguments),
                         pageByteLimit: try boundedInt(
@@ -410,7 +422,7 @@ final class MCPServer: @unchecked Sendable {
                           let candidate = UUID(uuidString: try requiredString("candidate_run_id", in: arguments)) else {
                         throw AIShellError.invalidArgument("baseline_run_idとcandidate_run_idはUUIDである必要があります。")
                     }
-                    return try await .from(managedRunService().compareArtifacts(
+                    return try await .from(services.managedRunService().compareArtifacts(
                         projectPath: requiredString("project_path", in: arguments),
                         baselineRunID: baseline,
                         candidateRunID: candidate,
@@ -657,26 +669,6 @@ final class MCPServer: @unchecked Sendable {
             "managerTool": .string("runtime_open_manager"),
             "nextAction": .string(nextAction)
         ])
-    }
-
-    private func managedRunService() throws -> ManagedRunService {
-        if let managedRuns { return managedRuns }
-        let executable: URL
-        if let override = ProcessInfo.processInfo.environment["AISHELL_RUN_SUPERVISOR_PATH"],
-           !override.isEmpty {
-            executable = URL(fileURLWithPath: override)
-        } else {
-            executable = URL(fileURLWithPath: CommandLine.arguments[0])
-                .resolvingSymlinksInPath()
-                .deletingLastPathComponent()
-                .appendingPathComponent("aishell-run-supervisor")
-        }
-        let service = try ManagedRunService(
-            runtimeStore: store,
-            supervisorExecutableURL: executable
-        )
-        managedRuns = service
-        return service
     }
 
     private func managerApplicationURL() throws -> URL {
@@ -1053,19 +1045,7 @@ final class MCPServer: @unchecked Sendable {
         let root = URL(fileURLWithPath: rootPath, isDirectory: true)
             .standardizedFileURL.resolvingSymlinksInPath()
         guard resolver.rootURLs.contains(root) else { throw AIShellError.outsideAllowedRoot(root.path) }
-        if let service = changeSetServices[root.path] { return service }
-        let digest = SHA256.hash(data: Data(root.path.utf8)).map { String(format: "%02x", $0) }.joined()
-        let stateDirectory = store.baseDirectory
-            .appendingPathComponent("apply-change-set", isDirectory: true)
-            .appendingPathComponent(digest, isDirectory: true)
-        let service = try await ApplyChangeSetService.production(
-            runtimeStore: store,
-            root: root,
-            stateDirectory: stateDirectory,
-            workspaceRuntime: development.workspaceRuntime
-        )
-        changeSetServices[root.path] = service
-        return service
+        return try await services.changeSetService(root: root)
     }
 
     func applyChangeSetJSON(_ result: ApplyChangeSetResult) -> JSONValue {
