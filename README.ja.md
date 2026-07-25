@@ -90,7 +90,12 @@ flowchart LR
 
 ## npmからinstall
 
-global packageは`aishell-mcp`と`aishell-open`を`PATH`へ追加する。`aishell-open`は同梱された管理アプリをLaunchServicesで開く。install scriptは実行しない。
+global packageは`aishell-mcp`と`aishell-open`を`PATH`へ追加する。`aishell-open`は同梱された管理アプリをLaunchServicesで開く。
+
+install scriptは助言専用の`postinstall`検査だけである。今回のinstallで置き換えられるinstallから
+管理アプリの窓がまだ動いている場合に警告する。その窓は削除済みbundleを掴み続け、ファイル選択を
+伴う操作を無言で失うためである。検査はprocess一覧を読んで該当pidを表示するだけで、何も書き込まず、
+installを失敗させない。窓を開き直せば新版に移る。窓自身も置換を検知して表示する。
 
 ```sh
 npm install -g @quolu/aishell

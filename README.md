@@ -88,7 +88,13 @@ flowchart LR
 
 ## Install from npm
 
-The global package adds `aishell-mcp` and `aishell-open` to `PATH`. `aishell-open` opens the bundled manager app through LaunchServices. The package runs no install script.
+The global package adds `aishell-mcp` and `aishell-open` to `PATH`. `aishell-open` opens the bundled manager app through LaunchServices.
+
+The only install script is an advisory `postinstall` check. It warns when a manager window is still
+running from the install this one replaces, because such a window keeps holding a deleted bundle and
+silently loses every operation that opens a file panel. The check reads the process list, prints the
+affected pids, writes nothing, and never fails the install. Reopen the window to pick up the new
+version; the window itself also detects the replacement and says so.
 
 ```sh
 npm install -g @quolu/aishell

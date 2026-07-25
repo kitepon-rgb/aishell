@@ -9,9 +9,18 @@ struct ContentView: View {
             installationBanner
             header
             Divider()
-            configurationPanel
-            Divider()
-            activityPanel
+            // header以下を設定と履歴で厳密に半分ずつ分ける。内容量で比率が動くと、rootが増えた時に
+            // 履歴が押し出されて見えなくなる。溢れた分は各paneの内側でscrollさせる。
+            GeometryReader { proxy in
+                let paneHeight = max((proxy.size.height - 1) / 2, 0)
+                VStack(spacing: 0) {
+                    configurationPanel
+                        .frame(height: paneHeight)
+                    Divider()
+                    activityPanel
+                        .frame(height: paneHeight)
+                }
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .task { await model.poll() }
@@ -127,36 +136,40 @@ struct ContentView: View {
                     systemImage: "folder.badge.plus",
                     description: Text("rootを追加すると、その内側をAIが直接操作できます。")
                 )
-                .frame(maxHeight: 120)
+                .frame(maxHeight: .infinity)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(model.configuration.allowedRootPaths, id: \.self) { path in
-                        HStack(spacing: 10) {
-                            Image(systemName: "folder.fill")
-                                .foregroundStyle(.blue)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(URL(fileURLWithPath: path).lastPathComponent)
-                                    .font(.body.weight(.semibold))
-                                Text(path)
-                                    .font(.caption.monospaced())
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
+                // rootが増えた分はこのScrollViewの中だけで伸び、履歴の領域を押し出さない。
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(model.configuration.allowedRootPaths, id: \.self) { path in
+                            HStack(spacing: 10) {
+                                Image(systemName: "folder.fill")
+                                    .foregroundStyle(.blue)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                                        .font(.body.weight(.semibold))
+                                    Text(path)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                Spacer()
+                                Button("削除", systemImage: "minus.circle") {
+                                    model.removeRoot(path)
+                                }
+                                .labelStyle(.iconOnly)
+                                .foregroundStyle(.red)
+                                .help("この許可rootを削除")
                             }
-                            Spacer()
-                            Button("削除", systemImage: "minus.circle") {
-                                model.removeRoot(path)
+                            .padding(.vertical, 8)
+                            if path != model.configuration.allowedRootPaths.last {
+                                Divider()
                             }
-                            .labelStyle(.iconOnly)
-                            .foregroundStyle(.red)
-                            .help("この許可rootを削除")
-                        }
-                        .padding(.vertical, 8)
-                        if path != model.configuration.allowedRootPaths.last {
-                            Divider()
                         }
                     }
+                    .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, 12)
+                .frame(maxHeight: .infinity)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             }
 

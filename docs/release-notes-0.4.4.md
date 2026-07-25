@@ -27,6 +27,13 @@ AIShell 0.4.4 makes an upgrade visible to the window that the upgrade broke.
   from a live install path are left alone, so a local `npm install` does not produce a spurious
   warning. The check never fails the install.
 
+## Changed
+
+- The manager window now splits the area below the header evenly: settings on top, activity history
+  below, exactly half each. Previously the settings pane grew with the number of allowed roots and
+  pushed the history off the bottom of the window — with a dozen roots the history was gone. Roots
+  that no longer fit scroll inside their own half, so adding a root never moves the history again.
+
 ## Compatibility
 
 No public surface changes. The tool catalog, schemas, and output shapes are unchanged: 7 tools by

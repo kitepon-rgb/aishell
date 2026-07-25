@@ -10,9 +10,18 @@
 - 対応: macOS arm64、macOS 15以降
 - `aishell-mcp`: npm `bin` からSwift製Mach-Oへ直接リンク
 - `aishell-open`: package内の `AIShell.app` をLaunchServicesで開く明示コマンド
-- lifecycle install script: 不採用
+- lifecycle install script: 助言専用の `postinstall` 1本だけ採用（0.4.4、2026-07-25に方針変更）
 
-install scriptを使わないことで、npm 12の既定動作でもMCPと管理アプリ起動経路が欠けない。インストール時にユーザー領域へアプリを自動コピーする副作用もなくす。
+MCPと管理アプリの起動経路はどちらもinstall scriptに依存させない。npm 12は依存packageのlifecycle
+scriptを既定で実行せず、利用者が `--ignore-scripts` を付ける場合もあるため、**scriptが走らなくても
+機能が欠けない構成**を保つ。インストール時にユーザー領域へアプリを自動コピーする副作用も作らない。
+
+0.4.4で例外を1つだけ設けた。`postinstall` が `scripts/check-running-instances.mjs` を実行し、
+今回のinstallで置き換えられる実体を掴んだままの窓があればpidを挙げて再起動を促す（[[macos-app-upgrade-window-staleness]]）。
+process一覧を読んで警告するだけで、書き込みも状態変更もせず、installを失敗させない。**scriptが走らない
+環境ではこの警告が単に出ないだけ**で、検知の正はapp側（`InstallationIntegrity`）に置いてある。この
+非対称が成立するのは、警告が復旧手段の前倒し通知でしかないからである。install scriptへ機能を載せない
+という元の判断はそのまま生きている。
 
 ## 実測
 
