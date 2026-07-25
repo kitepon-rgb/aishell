@@ -6,6 +6,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            installationBanner
             header
             Divider()
             configurationPanel
@@ -19,6 +20,59 @@ struct ContentView: View {
         } message: {
             Text(model.errorMessage ?? "不明なエラー")
         }
+    }
+
+    /// 実体を差し替えられた窓はUIも操作も受け付けるのにファイル選択だけが無反応になる。
+    /// 黙って壊れたままにせず、状態と復帰手段を最上段で明示する。
+    @ViewBuilder
+    private var installationBanner: some View {
+        if model.installationStatus.requiresRestart {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 20, weight: .semibold))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("新しい版がインストールされ、この窓は古い実体で動いています")
+                        .font(.callout.bold())
+                    Text(installationBannerDetail)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 12)
+
+                if canOfferRelaunch {
+                    Button("再起動") { model.relaunchForReplacedInstallation() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.white)
+                } else {
+                    Button("終了") { model.quitForRemovedInstallation() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.white)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange)
+        }
+    }
+
+    /// 一度失敗した再起動を勧め続けない。失敗後は手動での開き直しへ切り替える。
+    private var canOfferRelaunch: Bool {
+        model.installationStatus.canRelaunchInPlace && model.relaunchFailure == nil
+    }
+
+    private var installationBannerDetail: String {
+        if let failure = model.relaunchFailure {
+            return "新版の起動に失敗しました（\(failure)）。"
+                + "終了して aishell-open で開き直してください。"
+        }
+        if model.installationStatus.canRelaunchInPlace {
+            return "開き直すまで、rootの追加などファイル選択を伴う操作は無反応になります。再起動すると新版へ移ります。"
+        }
+        return "この窓の実行ファイルは削除済みです。開き直すまで、rootの追加などファイル選択を伴う操作は無反応になります。"
+            + "終了して aishell-open で開き直してください。"
     }
 
     private var header: some View {
