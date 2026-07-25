@@ -1,7 +1,7 @@
 # ADR 0028: Claude Code 2.1.219 に対するhost整合
 
-- Status: proposed
-- Date: 2026-07-24
+- Status: accepted
+- Date: 2026-07-24（決定1・3）、2026-07-25（決定2の実装と前提条件の追記）
 - 対象version: AIShell 0.4.1 (commit 3c51da8)
 
 ## 背景
@@ -40,7 +40,7 @@ host側からは「応答せずに終了した」としか見えず、`INVALID_C
 とする。exit codeは `MCPServerOutcome` からのみ決まり、`AIShellMCPMain` はそれを
 `exit()` に渡すだけにする。sinkは注入可能にして、実stderrに書かずにテストできるようにした。
 
-### 2. requestのlane分離（設計のみ決定・実装は保留）
+### 2. requestのlane分離（採用・実装済み）
 
 #### 問題
 
@@ -63,25 +63,50 @@ lane を3つに分ける。
 | read-only | `read_context`, `search_context`, `artifact_read`, `workspace_snapshot` | 並列 |
 | execution | `run_check`, `run_observe`, `apply_change_set`, `workspace_wait`, `change_impact` | 直列（現状維持） |
 
+表に無いtool（`files_*`、`apps_*`、`process_run`、`factory_diagnostics`）とmethodは
+executionへ落とす。並列化は個別に安全性を確認したものだけへ与え、未知のものは従来どおり
+直列に保つ。ただし `initialize` / `ping` / `tools/list` は不変stateだけを読む純粋な応答なので
+recoveryへ入れる。とくに `ping` はliveness確認であり、詰まっている時にこそ答える必要がある。
+
 `MCPRequestScheduler` の既存契約は維持する。すなわち同一 request id の重複検出、
 `notifications/cancelled` によるcancel、`waitUntilIdle()` のshutdown契約を壊さない。
+重複検出とcancelはlaneをまたいで効かせるため、request id由来のkeyから実行中tokenへの
+索引をscheduler側に持つ。応答を書き終えるまでkeyは解放しない。
 
-#### 実装を保留する理由（前提条件）
+#### 前提条件1: `MCPServer` のmutable stateを畳む（実施済み）
 
-現状の `MCPServer` は `@unchecked Sendable` で、同期されていないmutable stateを持つ。
+`MCPServer` は `@unchecked Sendable` で、同期されていないmutable stateを持っていた。
 
 - `private lazy var files` / `private lazy var processes`（初回アクセスで書き込みが起きる）
-- `private var changeSetServices: [String: ApplyChangeSetService]`（`MCPServer.swift` 内で
-  root pathをkeyに読み書きする）
-- `private var managedRuns: ManagedRunService?`（遅延生成して代入する）
+- `private var changeSetServices: [String: ApplyChangeSetService]`
+- `private var managedRuns: ManagedRunService?`
+- `private var catalogValidationSucceeded`
 
-**現在この `@unchecked Sendable` が健全なのは、schedulerの厳密な直列化がhandlerの同時実行を
-禁じているからである。** したがってlane分離は、schedulerだけを変更しても成立しない。先に
-上記stateを並列アクセス安全にする（`lazy var` を `let` に畳む、辞書をlockまたはactorで
-保護する）ことが前提条件になる。
+**この `@unchecked Sendable` が健全だったのは、schedulerの厳密な直列化がhandlerの同時実行を
+禁じていたからである。** よってlane分離は、schedulerだけを変更しても成立しない。
 
-この前提工事は本ADR時点では未着手である。順序は「state安全化 → lane分離」とし、両者を
-同一変更に混ぜない。
+stored propertyをすべて `let` へ畳み、可変stateは `MCPServiceRegistry` actorへ移した。
+`ApplyChangeSetService` はrootごとのstate directoryを所有するため、同一rootへの同時要求が
+別instanceを作ると整合性が壊れる。生成中のTaskをkeyに保持して同じinstanceへ合流させ、
+生成失敗はcacheしない。結果として `@unchecked` を外した `Sendable` 適合がSwift 6 modeで
+通り、安全性の根拠が外部条件からcompilerの検証へ移った。
+
+#### 前提条件2: `MCPResponseWriter` のsink呼び出しを直列化する（実施済み）
+
+lane分離の作業中に判明した、ADR初版に無かった前提である。
+
+`MCPResponseWriter` はactorだが、`sink` が nonisolated な `@Sendable async` closureなので
+`await sink(...)` でactorが解放される。直列schedulerの下では同時に1件しかwriteが無いため
+顕在化しないが、laneを分けると2本の応答が同時に同じ出力先へ書き込みうる。1行がPIPE_BUFを
+超えると混線し、JSON-linesが壊れる。
+
+実際に直列化を外して測ったところ、4 KiB応答12件の並行writeでJSON parseが8件失敗した。
+**仮説ではなく実在の破壊である。** sinkの呼び出しだけを1本のTask鎖へ直列化して塞いだ。
+encodeはactor内で完了しているため、鎖へ繋ぐ順序がそのまま出力順になる。
+
+#### 作業順序
+
+「state安全化 → lane分離（writer直列化を含む）」とし、両者を同一commitに混ぜない。
 
 ### 3. `DirectoryAdded` hook 連携（実装しない・条件付きで再検討）
 
