@@ -50,20 +50,27 @@ device / inode / size / mtime を記録し、`AppModel.refresh()`（1秒poll）�
 復旧UIの失敗が無言になると、元の症状（押しても何も起きない）と区別できなくなる。失敗後はbannerの
 提示を手動での開き直しへ切り替え、効かない再起動を勧め続けない。
 
-### 3. install側の警告は前倒し通知に限る（採用・実装済み）
+### 3. install側の前倒し警告は撤回する（0.4.4で採用、0.4.5で撤回）
 
-`postinstall` で `scripts/check-running-instances.mjs` を実行し、置き換えられる実体を掴んだままの窓の
-pidを挙げて再起動を促す。process一覧を読むだけで、書き込みも状態変更もせず、installを失敗させない。
+0.4.4では `postinstall` で `scripts/check-running-instances.mjs` を実行し、置き換えられる実体を掴んだ
+ままの窓のpidを挙げて再起動を促した。**実installで走らなかったため撤回した。**
 
-生きているinstall pathから動く窓は対象にしない。localの `npm install` で誤警告するためである。判定は
-「実行pathが存在しない」または「退避名パターン `/.aishell-XXXX/` を含む」の2条件だけとする。
+```
+npm install -g @quolu/aishell@0.4.4   （npm 11.17.0）
+→ npm warn allow-scripts 1 package has install scripts not yet covered by allowScripts:
+   npm warn allow-scripts   @quolu/aishell@0.4.4 (postinstall: node scripts/check-running-instances.mjs)
+```
 
-**検知の正はapp側に置く。** npm 12は依存packageのlifecycle scriptを既定で実行せず、利用者が
-`--ignore-scripts` を付ける場合もある。script が走らない環境ではこの警告が出ないだけで、窓自身の判定は
-働き続ける。install scriptへ機能を載せないという配布判断（[[../../rag/npm-distribution]]）は維持している。
+`npm config get allow-scripts` は空で、user/project設定ではなくnpmの既定挙動である。「依存packageの
+lifecycle scriptが既定offになるのはnpm 12から」と文書化されていたが、**npm 11.17.0の時点でglobalへ
+直接installする自package自身のscriptもblockされる**。したがってこの警告は既定で永久に出ないのに、
+`allow-scripts` の警告行だけが全利用者のinstallへ増える。前倒し通知の価値が0でコストだけが残る。
 
-判定関数は純関数として export し、実測したps行を使って `scripts/verify-npm-package.mjs` で固定する。
-payloadへの同梱と `postinstall` の結線もそこで検証する。
+`scripts/check-running-instances.mjs` を削除し、`scripts/verify-npm-package.mjs` に
+「`preinstall` / `install` / `postinstall` を持たない」assertionを置いて再導入を機械gateで止める。
+install scriptへ機能を載せないという配布判断（[[../../rag/npm-distribution]]）へ戻した形である。
+
+**この撤回で失われるのは前倒し通知だけで、検知そのものは決定1・2のapp側が全部持っている。**
 
 ## 検討して採らなかった案
 

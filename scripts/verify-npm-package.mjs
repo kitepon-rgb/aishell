@@ -35,38 +35,20 @@ assert.equal(packageMetadata.bin["aishell-open"], "scripts/aishell-open.mjs");
 
 await access(path.join(projectDirectory, packageMetadata.bin["aishell-mcp"]));
 
-// 開いたままupgradeされた窓を検知する網は、payloadへ同梱されinstall時に走ることが条件。
-assert.equal(packageMetadata.scripts.postinstall, "node scripts/check-running-instances.mjs");
+// install scriptは持たない。npm 11.17.0はglobal installでも自package自身のinstall scriptを
+// 既定でblockし（allow-scripts未設定で `npm warn allow-scripts` のみ出る）、宣言するだけで
+// 全installへ警告行が増える。0.4.4のpostinstall警告を0.4.5で撤回した経緯はADR 0029に記録。
+// 開いたままupgradeされた窓の検知はapp側（InstallationIntegrity）が正である。
 assert.ok(
-  packageMetadata.files.includes("scripts/check-running-instances.mjs"),
-  "postinstall script must ship in the package payload"
+  !("postinstall" in (packageMetadata.scripts ?? {})),
+  "no postinstall: npm blocks install scripts by default, so declaring one only adds a warning"
 );
-
-const { selectStaleWindows } = await import(
-  path.join(projectDirectory, "scripts", "check-running-instances.mjs")
-);
-// 0.4.3 upgradeで実測したps行。退避pathを掴んだ窓は、実体が残っていても対象にする。
-const stagedWindow =
-  "33396 /opt/homebrew/lib/node_modules/@quolu/.aishell-N2ismJiF/dist/AIShell.app/Contents/MacOS/AIShell";
-const liveWindow =
-  "42522 /opt/homebrew/lib/node_modules/@quolu/aishell/dist/AIShell.app/Contents/MacOS/AIShell";
-assert.deepEqual(
-  selectStaleWindows(`${stagedWindow}\n${liveWindow}\n`, { exists: () => true }).map((w) => w.pid),
-  [33396],
-  "a window holding a staged-away install must be reported while a live install is left alone"
-);
-assert.deepEqual(
-  selectStaleWindows(`${liveWindow}\n`, { exists: () => false }).map((w) => w.pid),
-  [42522],
-  "a window whose executable path no longer exists must be reported"
-);
-assert.deepEqual(
-  selectStaleWindows("1 /sbin/launchd\n999 /Applications/Other.app/Contents/MacOS/Other\n", {
-    exists: () => false
-  }),
-  [],
-  "unrelated processes must never be reported"
-);
+for (const lifecycle of ["preinstall", "install", "postinstall"]) {
+  assert.ok(
+    !(lifecycle in (packageMetadata.scripts ?? {})),
+    `${lifecycle} must stay absent so a plain install runs no script`
+  );
+}
 
 const infoPlist = await readFile(
   path.join(projectDirectory, "dist", "AIShell.app", "Contents", "Info.plist"),

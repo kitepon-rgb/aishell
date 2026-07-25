@@ -1,5 +1,9 @@
 # AIShell 0.4.4
 
+> Correction: the `npm install` warning described below never runs. npm blocks install scripts by
+> default — measured on npm 11.17.0, including a package installed globally on its own. 0.4.5 removes
+> the script. The in-app detection below is unaffected and is the whole net.
+
 AIShell 0.4.4 makes an upgrade visible to the window that the upgrade broke.
 
 ## Fixed

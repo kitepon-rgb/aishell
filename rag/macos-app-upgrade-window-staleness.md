@@ -49,8 +49,9 @@ pathの存在確認だけでは足りない。**同じpathへ別実体が入るi
 AIShellでは `AIShellCore/InstallationIntegrity` が判定だけを所有し、1秒pollのrefreshで再評価して
 banner表示に載せる（0.4.4）。「判定不能」をintactと同一視しないのは、異常なしと言い換えないため。
 
-install側の警告は前倒し通知でしかない。npm 12は依存packageのlifecycle scriptを既定で実行せず、
-`--ignore-scripts` もあるため、**検知の正はapp側に置く**（[[npm-distribution]]）。
+**install側での前倒し警告は使えない。** npm 11.17.0はglobal installでも自package自身のinstall script
+を既定でblockする（`npm warn allow-scripts` が出るだけ）。0.4.4で `postinstall` 警告を試して実測で
+走らないことを確認し、0.4.5で撤回した。検知の正はapp側だけに置く（[[npm-distribution]]）。
 
 ## 実測（0.4.4の修正後）
 

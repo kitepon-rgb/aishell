@@ -1,6 +1,6 @@
 {
   "name": "@quolu/aishell",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "A native macOS state runtime with high-density MCP tools for AI development",
   "license": "Apache-2.0",
   "author": "quolu",
@@ -32,13 +32,11 @@
   "files": [
     "dist/AIShell.app",
     "scripts/aishell-open.mjs",
-    "scripts/check-running-instances.mjs",
     "README.md"
   ],
   "scripts": {
     "build:npm": "node scripts/prepare-npm-release.mjs",
     "prepack": "npm run build:npm",
-    "postinstall": "node scripts/check-running-instances.mjs",
     "test": "swift test",
     "test:package": "npm run build:npm && node scripts/verify-npm-package.mjs",
     "verify:release-commit": "node scripts/verify-release-commit.mjs",

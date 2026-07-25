@@ -10,18 +10,31 @@
 - 対応: macOS arm64、macOS 15以降
 - `aishell-mcp`: npm `bin` からSwift製Mach-Oへ直接リンク
 - `aishell-open`: package内の `AIShell.app` をLaunchServicesで開く明示コマンド
-- lifecycle install script: 助言専用の `postinstall` 1本だけ採用（0.4.4、2026-07-25に方針変更）
+- lifecycle install script: 不採用（0.4.4で助言専用postinstallを試したが、0.4.5で撤回）
 
-MCPと管理アプリの起動経路はどちらもinstall scriptに依存させない。npm 12は依存packageのlifecycle
-scriptを既定で実行せず、利用者が `--ignore-scripts` を付ける場合もあるため、**scriptが走らなくても
-機能が欠けない構成**を保つ。インストール時にユーザー領域へアプリを自動コピーする副作用も作らない。
+MCPと管理アプリの起動経路はどちらもinstall scriptに依存させない。インストール時にユーザー領域へ
+アプリを自動コピーする副作用も作らない。
 
-0.4.4で例外を1つだけ設けた。`postinstall` が `scripts/check-running-instances.mjs` を実行し、
-今回のinstallで置き換えられる実体を掴んだままの窓があればpidを挙げて再起動を促す（[[macos-app-upgrade-window-staleness]]）。
-process一覧を読んで警告するだけで、書き込みも状態変更もせず、installを失敗させない。**scriptが走らない
-環境ではこの警告が単に出ないだけ**で、検知の正はapp側（`InstallationIntegrity`）に置いてある。この
-非対称が成立するのは、警告が復旧手段の前倒し通知でしかないからである。install scriptへ機能を載せない
-という元の判断はそのまま生きている。
+## install scriptを持てない実測理由（2026-07-25、npm 11.17.0）
+
+0.4.4で `postinstall` を1本だけ足し、開いたままupgradeされた窓のpidを警告させた
+（[[macos-app-upgrade-window-staleness]]）。**実installで走らなかった。**
+
+```
+npm install -g @quolu/aishell@0.4.4
+→ changed 1 package in 536ms
+   npm warn allow-scripts 1 package has install scripts not yet covered by allowScripts:
+   npm warn allow-scripts   @quolu/aishell@0.4.4 (postinstall: node scripts/check-running-instances.mjs)
+```
+
+- `npm config get allow-scripts` は空（user/project設定に無く、**npmの既定挙動**）
+- 「依存packageのscriptが既定offになる」のはnpm 12からと文書化されていたが、**npm 11.17.0の時点で
+  globalに直接installする自package自身のscriptもblockされる**
+- 結果、警告は既定で永久に出ないのに、`allow-scripts` 警告行だけが全installへ増える
+
+前倒し通知としての価値が既定で0になり、コストだけが全利用者に残る。よって撤回した。開いたまま
+upgradeされた窓の検知は、app側（`InstallationIntegrity`）だけを正とする。`verify-npm-package.mjs`
+に「install系lifecycle scriptを持たない」ことのassertionを置いて、再発を機械gateで止める。
 
 ## 実測
 
