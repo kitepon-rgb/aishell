@@ -13,6 +13,10 @@
 
 [日本語](README.ja.md)
 
+**Factory role:** AIShell is one of the ten self-owned core products managed by
+the dotagents development factory. It owns the macOS Apple Silicon OS-context
+runtime; dotagents owns the cross-product installation and integration contract.
+
 AIShell owns the OS-facing state below the model: allowed roots, file identity, filesystem reconciliation, directly launched processes, complete logs, and retained artifacts. The AI host remains responsible for reasoning, threads, compaction, sub-agents, and general-purpose terminal work.
 
 ## Try it in 30 seconds

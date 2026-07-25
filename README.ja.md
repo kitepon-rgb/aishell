@@ -13,6 +13,9 @@
 
 [English](README.md)
 
+**工場での役割:** AIShellはdotagents開発工場が管理する自作コア10製品の一つです。
+Apple Silicon Mac向けOS context runtimeを所有し、dotagentsが製品横断の導入・統合契約を所有します。
+
 AIShellは許可root、file identity、filesystem照合state、直接起動したprocess、完全log、artifactを所有する。reasoning、thread、compaction、sub-agent、汎用terminalはAI hostの責務として残す。
 
 ## 30秒で試す
