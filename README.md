@@ -13,9 +13,12 @@
 
 [日本語](README.ja.md)
 
-**Factory role:** AIShell is one of the ten self-owned core products managed by
-the dotagents development factory. It owns the macOS Apple Silicon OS-context
-runtime; dotagents owns the cross-product installation and integration contract.
+Built and maintained by [Quo](https://x.com/QLyun35332) at [kitepon.dev](https://kitepon.dev/en).
+
+**Ownership boundary:** this repository owns the macOS Apple Silicon OS-context
+runtime. Cross-product installation and the integration contract are handled by
+[dotagents](https://github.com/kitepon-rgb/dotagents), the internal development
+toolchain behind kitepon.dev's products.
 
 AIShell owns the OS-facing state below the model: allowed roots, file identity, filesystem reconciliation, directly launched processes, complete logs, and retained artifacts. The AI host remains responsible for reasoning, threads, compaction, sub-agents, and general-purpose terminal work.
 

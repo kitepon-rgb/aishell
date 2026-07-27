@@ -13,8 +13,12 @@
 
 [English](README.md)
 
-**工場での役割:** AIShellはdotagents開発工場が管理する自作コア10製品の一つです。
-Apple Silicon Mac向けOS context runtimeを所有し、dotagentsが製品横断の導入・統合契約を所有します。
+[kitepon.dev](https://kitepon.dev/)を運営する[クオ（@QLyun35332）](https://x.com/QLyun35332)が
+開発・メンテナンスしています。
+
+**所有境界:** 本repositoryはApple Silicon Mac向けOS context runtimeを所有します。
+製品横断の導入・統合契約は、kitepon.devの製品開発を支える内部基盤
+[dotagents](https://github.com/kitepon-rgb/dotagents)が担当します。
 
 AIShellは許可root、file identity、filesystem照合state、直接起動したprocess、完全log、artifactを所有する。reasoning、thread、compaction、sub-agent、汎用terminalはAI hostの責務として残す。
 
