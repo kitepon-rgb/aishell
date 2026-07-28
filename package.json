@@ -3,7 +3,10 @@
   "version": "0.4.7",
   "description": "A native macOS state runtime with high-density MCP tools for AI development",
   "license": "Apache-2.0",
-  "author": "quolu",
+  "author": {
+    "name": "Quo / クオ at kitepon.dev",
+    "url": "https://x.com/QLyun35332"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kitepon-rgb/aishell.git"
