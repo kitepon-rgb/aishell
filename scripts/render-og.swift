@@ -6,19 +6,22 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
-guard CommandLine.arguments.count == 3 else {
-    FileHandle.standardError.write(Data("usage: render-og.swift <background.png> <output.png>\n".utf8))
+guard CommandLine.arguments.count == 4 else {
+    FileHandle.standardError.write(Data("usage: render-og.swift <background.png> <logo.png> <output.png>\n".utf8))
     exit(64)
 }
 
 let backgroundURL = URL(fileURLWithPath: CommandLine.arguments[1]) as CFURL
-let outputURL = URL(fileURLWithPath: CommandLine.arguments[2]) as CFURL
+let logoURL = URL(fileURLWithPath: CommandLine.arguments[2]) as CFURL
+let outputURL = URL(fileURLWithPath: CommandLine.arguments[3]) as CFURL
 let width = 1280
 let height = 640
 
 guard
     let source = CGImageSourceCreateWithURL(backgroundURL, nil),
     let background = CGImageSourceCreateImageAtIndex(source, 0, nil),
+    let logoSource = CGImageSourceCreateWithURL(logoURL, nil),
+    let logo = CGImageSourceCreateImageAtIndex(logoSource, 0, nil),
     let context = CGContext(
         data: nil,
         width: width,
@@ -117,6 +120,8 @@ drawText(
     weight: .regular,
     color: CGColor(red: 0.63, green: 0.70, blue: 0.77, alpha: 1)
 )
+
+context.draw(logo, in: CGRect(x: 84, y: 566, width: 140, height: 42))
 
 guard
     let image = context.makeImage(),
