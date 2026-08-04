@@ -29,7 +29,7 @@ Requires an Apple Silicon Mac running macOS 15 or later.
 ```sh
 npm install -g @quolu/aishell
 aishell-open
-codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 ```
 
 In the manager app, add the folders the AI may access. Start a new Codex task and try:
@@ -56,10 +56,12 @@ Set `AISHELL_CAPABILITY_SET=expanded-v1` on the MCP server process to opt in to 
 For Codex, register the expanded surface explicitly:
 
 ```sh
-codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 ```
 
 Unknown or empty `AISHELL_CAPABILITY_SET` and `AISHELL_TOOL_PROFILE` values fail startup with typed errors; they never fall back to another profile.
+
+For lexical `search_context`, omitting `ranking` is valid: requests without a workspace cursor prioritize tests, while requests with `changed_since_cursor` prioritize changed paths and tests. Explicit `changed` ranking still requires that cursor.
 
 `AISHELL_TOOL_PROFILE=factory` is a separate, one-tool surface for factory reporters rather than development work. It exposes only `factory_diagnostics`, a path- and activity-free native readiness report.
 
@@ -126,10 +128,11 @@ After opening the app, use **Add Allowed Root** to select the folders AIShell ma
 
 ## Connect another AI host
 
-For a Homebrew-prefix npm installation, register the absolute executable path:
+For a global npm installation, register the executable name from `PATH` and the expanded development surface:
 
 ```sh
-codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
+claude mcp add --scope user aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 codex mcp get aishell
 ```
 

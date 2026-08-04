@@ -80,7 +80,21 @@ public struct UnavailableSourceKitLSPWorker: SourceKitLSPWorker {
 }
 
 public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sendable {
-    public init() {}
+    private let executableURL: URL
+    private let arguments: [String]
+    private let requestTimeout: Duration
+
+    public init() {
+        executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        arguments = ["sourcekit-lsp"]
+        requestTimeout = .seconds(10)
+    }
+
+    init(executableURL: URL, arguments: [String], requestTimeout: Duration) {
+        self.executableURL = executableURL
+        self.arguments = arguments
+        self.requestTimeout = requestTimeout
+    }
 
     public func query(_ request: SourceKitLSPRequest, document: Data) async throws -> SourceKitLSPWorkerResult {
         guard let text = String(data: document, encoding: .utf8) else {
@@ -93,19 +107,29 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
         }
         do {
             let process = Process()
-            let input = Pipe(), output = Pipe(), error = Pipe()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
-            process.arguments = ["sourcekit-lsp"]
-            process.standardInput = input; process.standardOutput = output; process.standardError = error
+            let input = Pipe(), output = Pipe()
+            process.executableURL = executableURL
+            process.arguments = arguments
+            process.standardInput = input
+            process.standardOutput = output
+            process.standardError = FileHandle.nullDevice
             try process.run()
-            defer {
-                try? input.fileHandleForWriting.close()
-                if process.isRunning { process.terminate() }
-                process.waitUntilExit()
-            }
+            // Processはpipe descriptorを子へ複製済み。親が未使用端を保持すると、timeoutで子を
+            // terminateしてもstdout readerへEOFが届かず、task groupが永久に閉じない。
+            try? input.fileHandleForReading.close()
+            try? output.fileHandleForWriting.close()
             let connection = LSPConnection(input: input.fileHandleForWriting, output: output.fileHandleForReading)
+            defer {
+                connection.close()
+                if process.isRunning { process.terminate() }
+                // timeout側とFoundationのtermination監視が同時に終了を観測した後に
+                // waitUntilExit()を重ねると、全test suite内でまれに永久待機する。
+                // Process自身が子をreapするため、cleanupではdescriptor closeと停止要求までに留める。
+            }
             let rootURI = request.root.standardizedFileURL.absoluteString
-            _ = try await Self.request(connection, process: process, id: 1, method: "initialize", params: [
+            _ = try await Self.request(
+                connection, process: process, timeout: requestTimeout,
+                id: 1, method: "initialize", params: [
                 "processId": ProcessInfo.processInfo.processIdentifier,
                 "rootUri": rootURI,
                 "capabilities": [:],
@@ -136,7 +160,10 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
             case .diagnostics:
                 return .unavailable("sourcekit-lsp push diagnostics require a retained session")
             }
-            let response = try await Self.request(connection, process: process, id: 2, method: method, params: params)
+            let response = try await Self.request(
+                connection, process: process, timeout: requestTimeout,
+                id: 2, method: method, params: params
+            )
             guard response["error"] == nil else {
                 let message = ((response["error"] as? [String: Any])?["message"] as? String) ?? "LSP request failed"
                 return message.localizedCaseInsensitiveContains("index") ? .indexing(message) : .unavailable(message)
@@ -259,20 +286,28 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
     private static func request(
         _ connection: LSPConnection,
         process: Process,
+        timeout: Duration,
         id: Int,
         method: String,
         params: [String: Any]
     ) async throws -> [String: Any] {
         let request = LSPJSON(params)
+        let timeoutState = LSPRequestTimeoutState()
         return try await withThrowingTaskGroup(of: LSPJSON.self) { group in
             group.addTask {
-                LSPJSON(try connection.request(id: id, method: method, params: request.value))
+                do {
+                    return LSPJSON(try connection.request(id: id, method: method, params: request.value))
+                } catch {
+                    if timeoutState.hasTimedOut { throw Self.timeoutError() }
+                    throw error
+                }
             }
             group.addTask {
-                try await Task.sleep(for: .seconds(10))
+                try await Task.sleep(for: timeout)
+                timeoutState.markTimedOut()
+                connection.close()
                 if process.isRunning { process.terminate() }
-                throw NSError(domain: "AIShell.SourceKitLSP", code: 5,
-                    userInfo: [NSLocalizedDescriptionKey: "sourcekit-lsp request timed out"])
+                throw Self.timeoutError()
             }
             guard let first = try await group.next() else {
                 throw NSError(domain: "AIShell.SourceKitLSP", code: 6)
@@ -280,6 +315,11 @@ public final class SourceKitLSPProcessWorker: SourceKitLSPWorker, @unchecked Sen
             group.cancelAll()
             return first.value
         }
+    }
+
+    private static func timeoutError() -> NSError {
+        NSError(domain: "AIShell.SourceKitLSP", code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "sourcekit-lsp request timed out"])
     }
 
     private static func locations(_ value: Any?, root: URL) -> [SourceKitLSPWorkerLocation] {
@@ -307,6 +347,19 @@ private struct LSPJSON: @unchecked Sendable {
     init(_ value: [String: Any]) { self.value = value }
 }
 
+private final class LSPRequestTimeoutState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var timedOut = false
+
+    var hasTimedOut: Bool {
+        lock.withLock { timedOut }
+    }
+
+    func markTimedOut() {
+        lock.withLock { timedOut = true }
+    }
+}
+
 private final class LSPConnection: @unchecked Sendable {
     private let input: FileHandle
     private let output: FileHandle
@@ -329,6 +382,13 @@ private final class LSPConnection: @unchecked Sendable {
         }
         throw NSError(domain: "AIShell.SourceKitLSP", code: 1,
             userInfo: [NSLocalizedDescriptionKey: "LSP response limit exceeded"])
+    }
+
+    /// `FileHandle.availableData`はTask cancellationでは中断されないため、timeout側から
+    /// descriptorを閉じてblocking read/writeを確実に解放する。
+    func close() {
+        try? input.close()
+        try? output.close()
     }
 
     private func write(_ object: [String: Any]) throws {

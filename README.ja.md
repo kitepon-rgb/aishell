@@ -29,7 +29,7 @@ Apple Silicon Mac、macOS 15以降が必要。
 ```sh
 npm install -g @quolu/aishell
 aishell-open
-codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 ```
 
 管理アプリでAIに許可するfolderを追加し、新しいCodex taskで次のように頼む。
@@ -59,11 +59,14 @@ semantic search、project profile、Git branch/worktree modeが加わる。
 Codexでは次のように登録する。
 
 ```sh
-codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 ```
 
 未知値または空の`AISHELL_CAPABILITY_SET`と`AISHELL_TOOL_PROFILE`はtyped errorでstartup停止し、
 別profileへ黙ってfallbackしない。
+
+lexical `search_context`は`ranking`を省略できる。workspace cursorなしではtest path、
+`changed_since_cursor`ありでは変更pathとtest pathを優先する。`changed`を明示する場合だけcursorを必須とする。
 
 ## なぜAIShellか
 
@@ -127,10 +130,11 @@ MCP実行ファイルは`build/AIShell.app/Contents/Helpers/aishell-mcp`へ同�
 
 ## 別のAI hostへ接続
 
-Homebrew prefixへnpm installした場合は絶対pathを登録する。
+global npm install後は`PATH`上のcommand名とexpanded development surfaceを登録する。
 
 ```sh
-codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
+claude mcp add --scope user aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 codex mcp get aishell
 ```
 

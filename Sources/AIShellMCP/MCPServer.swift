@@ -857,6 +857,7 @@ final class MCPServer: Sendable {
                 excludeGlobs: try stringArray("exclude_globs", in: object)
             )
         }
+        let changedSinceCursor = try strictOptionalString("changed_since_cursor", in: arguments)
         let rankings: [SearchContextRanking]
         if let values = arguments["ranking"]?.arrayValue {
             rankings = try values.map { value in
@@ -866,13 +867,13 @@ final class MCPServer: Sendable {
                 return ranking
             }
         } else {
-            rankings = [.changed, .tests]
+            rankings = changedSinceCursor == nil ? [.tests] : [.changed, .tests]
         }
         return SearchContextRequestV2(
             path: try strictOptionalString("path", in: arguments),
             queries: queries,
             ranking: rankings,
-            changedSinceCursor: try strictOptionalString("changed_since_cursor", in: arguments),
+            changedSinceCursor: changedSinceCursor,
             maxResults: try boundedInt("max_results", in: arguments, default: 50, minimum: 1, maximum: 500),
             byteBudget: try boundedInt("byte_budget", in: arguments, default: 65_536, minimum: 1_024, maximum: 1_048_576)
         )

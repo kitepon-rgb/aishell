@@ -1,6 +1,6 @@
 ---
 title: AIShell 汎用開発機能拡張計画
-updated: 2026-07-23
+updated: 2026-08-04
 status: planned-lattice-canonical
 owner: AIShell
 north_star: macOSの生きた状態を直接所有し、成功率を維持して開発課題あたりの総model tokenと所要時間を減らす
@@ -14,6 +14,12 @@ lattice_plan: aishell-capability-expansion
 初期高密度5 toolは3 sentinel × 3反復で両arm 9/9成功し、native Codex baseline比で
 `tokens per solved task`を25.86%、平均wall timeを32.59%削減した。ただし小規模fixtureの結果であり、
 30 task以上の代表suiteによる一般化は未完である。
+
+2026-08-04の全project横断adoption監査では、日常利用の少なさをproduct fitだけで説明できないことを確認した。
+Claudeのschema拒否、許可root外、Codexのdefault profile登録、cursorなし検索の既定失敗、全体routing正典の入口競合が
+重なっていた。狭い単発検索ではnative `rg`の方が速く短いことも同時に実測したため、AIShellは反復・複数file・
+大出力・process lifecycleへ限定して優先する。根拠と修理一覧は
+[adoption監査](../rag/development-adoption-audit-2026-08-04.md)を正とする。
 
 2026-07-20のオーナー裁定により、初期5 toolを土台として、提案済みのS〜B機能をすべて実装対象へ入れる。
 狙いは公開tool名の本数ではなく、高頻度の複数call、再scan、再読、再実行、待機を、macOSの生きた状態を

@@ -63,6 +63,29 @@ final class SourceKitLSPServiceTests: XCTestCase {
             XCTFail("production sourcekit-lsp handshake failed: \(reason)")
         }
     }
+
+    func testProcessWorkerTimeoutClosesBlockingReader() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.cleanup() }
+        let worker = SourceKitLSPProcessWorker(
+            executableURL: URL(fileURLWithPath: "/bin/sleep"),
+            arguments: ["60"],
+            requestTimeout: .milliseconds(50)
+        )
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        let response = try await worker.query(
+            fixture.request(.workspaceSymbols),
+            document: Data(contentsOf: fixture.a)
+        )
+        let elapsed = startedAt.duration(to: clock.now)
+
+        guard case let .unavailable(reason) = response else {
+            return XCTFail("timeoutをunavailableとして返しませんでした: \(response)")
+        }
+        XCTAssertTrue(reason.contains("timed out"), reason)
+        XCTAssertLessThan(elapsed, Duration.seconds(2))
+    }
 }
 
 private struct Worker: SourceKitLSPWorker {

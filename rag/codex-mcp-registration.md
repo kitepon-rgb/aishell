@@ -11,7 +11,7 @@ AIShellはネットワークサーバーや常駐daemonにせず、アプリに�
 ## 登録
 
 ```text
-codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
+codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 ```
 
 ## 実測
@@ -29,5 +29,7 @@ codex mcp add aishell -- /opt/homebrew/bin/aishell-mcp
 - 0.3.6: `run_observe`のstatus/read/wait/cancel応答へ`exitCode`・`signal`・`cancelAcknowledged`を追加。global install後の実測でnatural exitの`exitCode=1`、cancel後の`cancelAcknowledged=true`、orphan 0を確認。catalog・schema・tool数は不変
 - 0.3.5: `apply_change_set`が変更ごとに`after_content`（UTF-8テキスト4KiB以下）を返し、冗長な`result: "applied"`を削除。tool数・schema・catalog digestは0.3.4と不変（`a7fb8c…`）。global install後の実測で`initialize` version `0.3.5`、`expanded-v1` 11 tool、input/output schema欠落0、実`apply_change_set`が`after_content: "A2\n"`を返し`result`は非存在
 - 0.4.2: requestを3 laneへ分離し、`run_check`実行中でも復旧controlと読み取りが応答するようにした。catalog・schema・tool数は不変。global install後の実測で`initialize` version `0.4.2`、6秒の`run_check`を先行させた状態で`ping` 0.40s／`runtime_status` 0.41s／`search_context` 0.53s／`run_check` 6.12sの順に到着（0.4.1までは全て6.12s後）。あわせて起動時検証の失敗が`aishell-mcp: INVALID_CAPABILITY_SET: …`をstderrへ出しexit `78`（`EX_CONFIG`）で終了することを実測。stdoutの`id: null` JSON-RPC errorは互換のため維持されている
+- 0.4.8: union schemaのtop-level `type: object`欠落を直し、Claude Code 2.1.221のfresh sessionで`expanded-v1` 11 tool loadと`runtime_status`実行を確認
+- 0.4.9: 対話hostの正規登録をbare `aishell-mcp`＋`expanded-v1`へ統一。cursorなしlexical searchで省略rankingが暗黙に`changed`を選び失敗していたため、cursorなしは`tests`、cursorありは`changed, tests`を既定にした
 
 `codex --strict-config mcp get aishell` は、現行CLIが `codex mcp` で `--strict-config` をサポートしないため検証経路として使用できなかった。通常の `get/list` は設定を正常に解析した。

@@ -70,7 +70,7 @@ public struct SearchContextRequestV2: Codable, Equatable, Sendable {
     public init(
         path: String? = nil,
         queries: [SearchContextQueryV2],
-        ranking: [SearchContextRanking] = [.changed, .tests],
+        ranking: [SearchContextRanking] = [.tests],
         changedSinceCursor: String? = nil,
         maxResults: Int = 50,
         byteBudget: Int = 65_536

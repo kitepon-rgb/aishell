@@ -127,7 +127,7 @@ final class MCPContextV2WireTests: XCTestCase {
         XCTAssertEqual(secondStructured["cursor"], firstStructured["cursor"])
     }
 
-    func testWorkspaceV2ProjectionAndSearchV2FailureUseStableWireShapes() async throws {
+    func testWorkspaceV2ProjectionAndSearchV2DefaultsUseStableWireShapes() async throws {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("aishell-mcp-context-v2-\(UUID().uuidString)", isDirectory: true)
         let root = temporary.appendingPathComponent("workspace", isDirectory: true)
@@ -160,7 +160,6 @@ final class MCPContextV2WireTests: XCTestCase {
                 "action": .string("search"),
                 "path": .string(root.path),
                 "changed_since_cursor": .string(cursor),
-                "ranking": .array([.string("changed")]),
                 "queries": .array([.object([
                     "id": .string("q0"), "kind": .string("fixed"), "pattern": .string("needle")
                 ])])
@@ -176,12 +175,34 @@ final class MCPContextV2WireTests: XCTestCase {
             searchResult["structuredContent"]?.objectValue?["matches"]?.arrayValue?.count,
             1
         )
+        XCTAssertEqual(
+            searchResult["structuredContent"]?.objectValue?["rankingEvidence"]?.objectValue?["applied"],
+            .array([.string("changed"), .string("tests")])
+        )
 
-        let invalidSearch = await server.callTool(id: .number(3), params: .object([
+        let defaultSearch = await server.callTool(id: .number(3), params: .object([
             "name": .string("search_context"),
             "arguments": .object([
                 "action": .string("search"),
                 "path": .string(root.path),
+                "queries": .array([.object([
+                    "id": .string("q0"), "kind": .string("fixed"), "pattern": .string("needle")
+                ])])
+            ])
+        ]))
+        let defaultResult = try XCTUnwrap(defaultSearch.result?.objectValue)
+        XCTAssertEqual(defaultResult["isError"], .bool(false))
+        XCTAssertEqual(
+            defaultResult["structuredContent"]?.objectValue?["rankingEvidence"]?.objectValue?["applied"],
+            .array([.string("tests")])
+        )
+
+        let invalidSearch = await server.callTool(id: .number(4), params: .object([
+            "name": .string("search_context"),
+            "arguments": .object([
+                "action": .string("search"),
+                "path": .string(root.path),
+                "ranking": .array([.string("changed")]),
                 "queries": .array([.object([
                     "id": .string("q0"), "kind": .string("fixed"), "pattern": .string("needle")
                 ])])

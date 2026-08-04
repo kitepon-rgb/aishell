@@ -493,10 +493,10 @@ enum ToolCatalog {
                 "cursor": string("semantic観測を束縛するworkspace cursor"),
                 "ranking": .object([
                     "type": .string("array"),
-                    "items": enumString(["changed", "tests"], "ranking criterion"),
+                    "items": enumString(["changed", "tests"], "ranking criterion。省略時はtests、changed_since_cursor指定時はchangedとtests"),
                     "uniqueItems": .bool(true)
                 ]),
-                "changed_since_cursor": string("changed順位の下限workspace cursor"),
+                "changed_since_cursor": string("changed順位の下限workspace cursor。rankingにchangedを含める場合は必須"),
                 "max_results": integer("最大match数。1〜500、既定50", minimum: 1, maximum: 500),
                 "byte_budget": integer("返却上限byte。1〜1048576、既定65536", minimum: 1, maximum: 1_048_576),
                 "continuation": string("前回結果のcontinuation。検索結果変更時はCONTENT_CHANGED")
