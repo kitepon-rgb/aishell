@@ -11,6 +11,8 @@ AIShell 0.4.11 lets `search_context` use one existing regular file as its search
   worker's current directory. They do not widen the search to sibling files.
 - Glob queries use the attested workspace index as before, but a file scope admits only that exact indexed file.
 - The public tool schema and README now state that the scope may be a directory or one regular file.
+- `ApplyChangeSetService` now constrains operation-gate results to `Sendable`, preserving the existing serialized
+  execution contract while restoring compilation with the release CI's Swift 6.1 strict-concurrency checker.
 
 ## Verification
 

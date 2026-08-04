@@ -1636,7 +1636,7 @@ public actor ApplyChangeSetService {
             compatibility: cutoverCompatibility, now: { registryClock.now() })
     }
 
-    private func withOperationGate<T>(_ operation: () async throws -> T) async throws -> T {
+    private func withOperationGate<T: Sendable>(_ operation: () async throws -> T) async throws -> T {
         try await operationGate.acquire()
         do {
             let result = try await operation()
