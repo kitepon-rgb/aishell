@@ -488,7 +488,7 @@ enum ToolCatalog {
                         "additionalProperties": .bool(false)
                     ])
                 ]),
-                "path": string("検索root。省略時は先頭許可root"),
+                "path": string("検索scope directoryまたは単一regular file。省略時は先頭許可root"),
                 "provider": enumString(["sourcekit-lsp"], "semantic provider"),
                 "cursor": string("semantic観測を束縛するworkspace cursor"),
                 "ranking": .object([

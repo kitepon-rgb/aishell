@@ -4,6 +4,41 @@ import XCTest
 @testable import AIShellCore
 
 final class SearchContextServiceTests: XCTestCase {
+    func testRegularFileScopeSearchesOnlyThatFileForTextAndGlobQueries() async throws {
+        let fixture = try SearchFixture()
+        defer { fixture.cleanup() }
+        let readme = fixture.root.appendingPathComponent("README.md")
+        let other = fixture.root.appendingPathComponent("Other.md")
+        try "AIShell needle\n".write(to: readme, atomically: true, encoding: .utf8)
+        try "AIShell decoy\n".write(to: other, atomically: true, encoding: .utf8)
+        let indexed = try ["README.md", "Other.md"].map(fixture.indexedFile(relativePath:))
+        let environment = fixture.environment(indexedFiles: indexed)
+        let service = try fixture.service()
+
+        let lexical = try await service.search(
+            .init(
+                path: readme.path,
+                queries: [.init(id: "fixed", kind: .fixed, pattern: "AIShell")],
+                ranking: [],
+                byteBudget: 4_096
+            ),
+            environment: environment
+        )
+        XCTAssertEqual(lexical.matches.map(\.path), ["README.md"])
+        XCTAssertEqual(lexical.freshness.searchScope, readme.path)
+
+        let glob = try await service.search(
+            .init(
+                path: readme.path,
+                queries: [.init(id: "glob", kind: .glob, pattern: "*.md")],
+                ranking: [],
+                byteBudget: 4_096
+            ),
+            environment: environment
+        )
+        XCTAssertEqual(glob.matches.map(\.path), ["README.md"])
+    }
+
     func testFrozenBenchmarkV2FourQueryRequestHasCompleteCoverageAndNoDuplicateIdentity() async throws {
         let fixture = try SearchFixture()
         defer { fixture.cleanup() }

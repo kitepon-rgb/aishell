@@ -45,7 +45,7 @@ The default profile exposes five high-density development tools plus two always-
 |---|---|
 | `workspace_snapshot` | Bounded initial workspace preview, reconciled change delta, Git state, and primary context |
 | `read_context` | Budgeted multi-file reads with SHA-256 identity and continuation |
-| `search_context` | Budgeted lexical context from a directly launched `rg` worker; the expanded capability also provides cursor-bound semantic definition/reference/symbol queries without lexical fallback |
+| `search_context` | Budgeted lexical context from a directly launched `rg` worker, scoped to a directory or one regular file; the expanded capability also provides cursor-bound semantic definition/reference/symbol queries without lexical fallback |
 | `run_check` | Direct process execution, primary diagnostics, and complete stdout/stderr artifacts |
 | `artifact_read` | Range, tail, and pattern-centered reads from retained artifacts; the expanded capability also searches and compares finalized managed-run artifacts |
 | `runtime_status` | Allowed-root, pause, worktree, and next-action state, including while paused or unconfigured |

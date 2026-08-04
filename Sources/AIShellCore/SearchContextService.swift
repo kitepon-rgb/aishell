@@ -362,8 +362,10 @@ public actor SearchContextService {
             throw SearchContextServiceError.rescanRequired("workspace observation is not fresh")
         }
         let scope = try resolver.resolveExisting(request.path)
-        guard try scope.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-            throw SearchContextServiceError.invalidArgument("search path must be a directory")
+        let scopeValues = try scope.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+        let scopeIsDirectory = scopeValues.isDirectory == true
+        guard scopeIsDirectory || scopeValues.isRegularFile == true else {
+            throw SearchContextServiceError.invalidArgument("search path must be a directory or regular file")
         }
         let root = try effectiveRoot(containing: scope)
         let initialScopeEvidence = try fileIdentity(scope)
@@ -376,7 +378,12 @@ public actor SearchContextService {
             let excludeMatchers = try query.excludeGlobs.map { try GlobMatcher(pattern: $0) }
             switch query.kind {
             case .fixed, .regex:
-                let worker = try runRG(query: query, selectedCase: selectedCase, scope: scope)
+                let worker = try runRG(
+                    query: query,
+                    selectedCase: selectedCase,
+                    scope: scope,
+                    scopeIsDirectory: scopeIsDirectory
+                )
                 workerEvidence.append([
                     "query_id": query.id,
                     "argv": worker.arguments,
@@ -609,7 +616,8 @@ public actor SearchContextService {
     private func runRG(
         query: SearchContextQueryV2,
         selectedCase: SearchContextCaseMode,
-        scope: URL
+        scope: URL,
+        scopeIsDirectory: Bool
     ) throws -> WorkerResult {
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("AIShellSearch-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
@@ -634,7 +642,7 @@ public actor SearchContextService {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        process.currentDirectoryURL = scope
+        process.currentDirectoryURL = scopeIsDirectory ? scope : scope.deletingLastPathComponent()
         process.standardOutput = stdout
         process.standardError = stderr
         do { try process.run() }

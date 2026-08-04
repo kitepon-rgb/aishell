@@ -432,21 +432,29 @@ public actor ContextCompilerService {
     ) async throws -> SearchContextResult {
         guard !query.isEmpty else { throw AIShellError.invalidArgument("queryは空にできません。") }
         let resolver = try await activeResolver()
-        let root = try resolver.resolveExisting(path)
-        guard try root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
-            throw AIShellError.invalidPath(root.path)
+        let scope = try resolver.resolveExisting(path)
+        let scopeValues = try scope.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+        let scopeIsDirectory = scopeValues.isDirectory == true
+        guard scopeIsDirectory || scopeValues.isRegularFile == true else {
+            throw AIShellError.invalidPath(scope.path)
         }
+        let resultRoot = scopeIsDirectory ? scope : scope.deletingLastPathComponent()
         let executable = try rgExecutable()
-        let output = try runRG(executable: executable, query: query, root: root)
+        let output = try runRG(
+            executable: executable,
+            query: query,
+            scope: scope,
+            workingDirectory: resultRoot
+        )
         let changed = Set(await workspaceRuntime?.recentChangedPaths() ?? [])
-        var matches = parseRG(output: output, root: root, changedPaths: changed)
+        var matches = parseRG(output: output, root: resultRoot, changedPaths: changed)
         matches.sort {
             if $0.score != $1.score { return $0.score > $1.score }
             if $0.path != $1.path { return $0.path < $1.path }
             return $0.line < $1.line
         }
         let resultDigest = Self.searchResultDigest(matches)
-        let searchSignature = Self.signature(for: [query, root.path])
+        let searchSignature = Self.signature(for: [query, scope.path])
         let startIndex = try parseSearchContinuation(
             continuation,
             signature: searchSignature,
@@ -826,7 +834,7 @@ public actor ContextCompilerService {
         throw AIShellError.workerUnavailable("rg")
     }
 
-    private func runRG(executable: URL, query: String, root: URL) throws -> Data {
+    private func runRG(executable: URL, query: String, scope: URL, workingDirectory: URL) throws -> Data {
         let scratch = FileManager.default.temporaryDirectory
             .appendingPathComponent("AIShellRG-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
@@ -840,9 +848,9 @@ public actor ContextCompilerService {
             "--json", "--line-number", "--color", "never", "--fixed-strings",
             "--glob", "!.git/**", "--glob", "!.build/**", "--glob", "!node_modules/**",
             "--glob", "!.aishell-transactions/**",
-            query, root.path
+            query, scope.path
         ]
-        process.currentDirectoryURL = root
+        process.currentDirectoryURL = workingDirectory
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         try process.run()

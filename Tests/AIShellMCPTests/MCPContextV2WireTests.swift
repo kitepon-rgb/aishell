@@ -197,7 +197,25 @@ final class MCPContextV2WireTests: XCTestCase {
             .array([.string("tests")])
         )
 
-        let invalidSearch = await server.callTool(id: .number(4), params: .object([
+        try Data("needle sibling\n".utf8).write(to: root.appendingPathComponent("Other.swift"))
+        let fileSearch = await server.callTool(id: .number(4), params: .object([
+            "name": .string("search_context"),
+            "arguments": .object([
+                "query": .string("needle"),
+                "path": .string(root.appendingPathComponent("Source.swift").path),
+                "byte_budget": .number(1_200)
+            ])
+        ]))
+        let fileResult = try XCTUnwrap(fileSearch.result?.objectValue)
+        XCTAssertEqual(fileResult["isError"], .bool(false))
+        XCTAssertEqual(fileResult["structuredContent"]?.objectValue?["matches"]?.arrayValue?.count, 1)
+        XCTAssertEqual(
+            fileResult["structuredContent"]?.objectValue?["matches"]?.arrayValue?.first?
+                .objectValue?["path"],
+            .string("Source.swift")
+        )
+
+        let invalidSearch = await server.callTool(id: .number(5), params: .object([
             "name": .string("search_context"),
             "arguments": .object([
                 "action": .string("search"),

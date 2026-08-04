@@ -32,5 +32,6 @@ codex mcp add aishell --env AISHELL_CAPABILITY_SET=expanded-v1 -- aishell-mcp
 - 0.4.8: union schemaのtop-level `type: object`欠落を直し、Claude Code 2.1.221のfresh sessionで`expanded-v1` 11 tool loadと`runtime_status`実行を確認
 - 0.4.9: 対話hostの正規登録をbare `aishell-mcp`＋`expanded-v1`へ統一。cursorなしlexical searchで省略rankingが暗黙に`changed`を選び失敗していたため、cursorなしは`tests`、cursorありは`changed, tests`を既定にした
 - 0.4.10: 0.4.9公開後のfresh Codex smokeで、省略検索のsnapshot前処理が実repo全entryのsort比較ごとに`URL(fileURLWithPath:)`を生成し数分CPUを占有することを検出。priorityのdecorate-sort化に加え、cursor-free lexical searchの復元時full scan、未使用indexed-file projection、Git ignored manifest traversalを除去した。198,478 entry／74 MB checkpointの同一release queryは5.94秒。checkpointの全payload SHA・schema・entry invariant検証は維持
+- 0.4.11: Aiterm 0.21.4由来のfresh managed Claudeがuser scope MCPを復元し、AIShell 11 toolと`runtime_status`を直接利用できることを確認。その実機smokeで`search_context(path:"README.md")`が実在regular fileを拒否したため、directoryに加えて単一fileをscopeとして受理する。lexical workerはfile自身だけへ`rg`を実行し、globもattested indexからexact fileだけを許す
 
 `codex --strict-config mcp get aishell` は、現行CLIが `codex mcp` で `--strict-config` をサポートしないため検証経路として使用できなかった。通常の `get/list` は設定を正常に解析した。
