@@ -84,6 +84,29 @@ final class MCPTypesTests: XCTestCase {
         XCTAssertEqual(first, second)
     }
 
+    func testEveryDefaultProfileToolHasTopLevelObjectSchemas() throws {
+        let catalogs: [[MCPTool]] = [
+            try ToolCatalog.listedTools(profile: nil, capabilitySet: nil),
+            try ToolCatalog.listedTools(profile: nil, capabilitySet: "expanded-v1"),
+            try ToolCatalog.listedTools(profile: "factory", capabilitySet: nil)
+        ]
+
+        for catalog in catalogs {
+            for tool in catalog {
+                XCTAssertEqual(
+                    tool.inputSchema.objectValue?["type"],
+                    .string("object"),
+                    "\(tool.name) must expose a top-level object input schema"
+                )
+                XCTAssertEqual(
+                    tool.outputSchema?.objectValue?["type"],
+                    .string("object"),
+                    "\(tool.name) must expose a top-level object output schema"
+                )
+            }
+        }
+    }
+
     func testInvalidCapabilitySetIsTypedStartupFailureWithoutFallback() async throws {
         XCTAssertThrowsError(try ToolCatalog.listedTools(profile: nil, capabilitySet: "future")) { error in
             XCTAssertEqual(error as? MCPStartupError, .invalidCapabilitySet("future"))

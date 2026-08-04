@@ -776,7 +776,7 @@ enum ToolCatalog {
     ])
 
     private static func artifactReadExpandedInputSchema(legacy: JSONValue) -> JSONValue {
-        .object(["oneOf": .array([
+        .object(["type": .string("object"), "oneOf": .array([
             legacy,
             closedObject(required: ["action", "project_path", "sources", "pattern"], properties: [
                 "action": constString("search"),
@@ -831,7 +831,10 @@ enum ToolCatalog {
 
     private static func artifactReadExpandedOutputSchema(legacy: JSONValue) -> JSONValue {
         let legacyVariants = legacy.objectValue?["oneOf"]?.arrayValue ?? []
-        return .object(["oneOf": .array(legacyVariants + [artifactSearchOutputSchema, artifactCompareOutputSchema])])
+        return .object([
+            "type": .string("object"),
+            "oneOf": .array(legacyVariants + [artifactSearchOutputSchema, artifactCompareOutputSchema])
+        ])
     }
 
     private static let changeImpactTool = MCPTool(
@@ -849,7 +852,7 @@ enum ToolCatalog {
         name: "run_observe",
         title: "managed runを観測・取消",
         description: "認証付きrun_handleで、adapterから独立して継続するmanaged runの状態確認、stdout/stderr/diagnostic増分読取、revision/evidence待機、identity照合付き取消を行います。request cancellationはrunを停止しません。",
-        inputSchema: .object(["oneOf": .array([
+        inputSchema: .object(["type": .string("object"), "oneOf": .array([
             closedObject(required: ["action", "run_handle"], properties: [
                 "action": constString("status"), "run_handle": boundedString(minLength: 1, maxLength: 16_384)
             ]),
@@ -993,6 +996,7 @@ enum ToolCatalog {
 
     private static func runCheckExpandedInputSchema(legacy: JSONValue) -> JSONValue {
         .object([
+        "type": .string("object"),
         "oneOf": .array([
             legacy,
             runCheckV2Variant(invocation: directInvocationSchema, selection: preparedSelectionSchema, cache: constString("off")),
@@ -1091,6 +1095,7 @@ enum ToolCatalog {
     private static func runCheckExpandedOutputSchema(legacy: JSONValue) -> JSONValue {
         let legacyVariants = legacy.objectValue?["oneOf"]?.arrayValue ?? []
         return .object([
+            "type": .string("object"),
             "oneOf": .array(legacyVariants + [runCheckV2SuccessSchema, runCheckV2StartSchema, runCheckV2ErrorSchema])
         ])
     }
@@ -1142,6 +1147,7 @@ enum ToolCatalog {
     }
 
     private static let changeImpactInputSchema: JSONValue = .object([
+        "type": .string("object"),
         "oneOf": .array([
             changeImpactInitialSchema(operation: "analyze", recommending: false),
             changeImpactInitialSchema(operation: "recommend", recommending: true),
@@ -1254,6 +1260,7 @@ enum ToolCatalog {
         ]
     )
     private static let changeImpactOutputSchema: JSONValue = .object([
+        "type": .string("object"),
         "oneOf": .array([analyzeOutputSchema, recommendOutputSchema, changeImpactErrorSchema])
     ])
 
