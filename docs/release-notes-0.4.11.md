@@ -20,8 +20,17 @@ AIShell 0.4.11 lets `search_context` use one existing regular file as its search
 - The MCP wire fixture covers the legacy single-`query` request used by Claude and proves that it does not widen
   a file scope to a sibling containing the same text.
 - Full Swift regression passed 567/567; the release-gate fixture passed 1/1 and the release app packaged successfully.
-- The release smoke uses a fresh Aiterm-managed Claude session, calls the installed AIShell MCP directly without
-  shell fallback, and requires both `runtime_status` and file-scoped `search_context` to succeed.
+- Release CI run `30874932377` passed on commit `eb7e36ff6ae3` with Swift 6.1.2, including the full Swift test,
+  application package, and npm payload gates.
+- The published `@quolu/aishell@0.4.11` is npm `latest` with git head `eb7e36ff6ae3`, integrity
+  `sha512-1O9H6NigRo+eRRMVDT7aWBp19TSQQ2EAmXgylu9wFe59Ry9iIc+3hFgXQWx6laL/hqSKzCofEV1UL0VVrBaJTg==`, and
+  shasum `44ef71f8354bd633624d3c56b3f3b91ce7330193`.
+- The globally installed package and application bundle both report `0.4.11`; the manager restarted from that
+  bundle successfully.
+- A fresh Aiterm 0.21.4-managed Claude session discovered all 11 AIShell tools and called the installed MCP
+  directly without shell fallback. `runtime_status` succeeded, and `search_context(query: "AIShell", path:
+  "README.md", byte_budget: 1200)` succeeded with 7 returned matches and 1,132 bytes. The smoke session was
+  closed and left no matching temporary state.
 
 ## Compatibility
 

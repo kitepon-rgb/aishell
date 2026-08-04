@@ -18,7 +18,7 @@ AIShellが日常開発でほぼ使われなかった主因は一つではない�
 - Codex: unique tool call 115,531件のうち、AIShell wrapper callは257件。254件は7月19日のAIShell自己開発／benchmarkで、以後の日常課題は3件だけだった。
 - その日常3件は`bingo` 2件、`RootSitePromotion` 1件で、すべて`OUTSIDE_ALLOWED_ROOT`により失敗した。
 - Claude: 修正前の実AIShell callは0件。`expanded-v1`のunion input/output schemaにtop-level `type: object`がなく、Claude Codeがcatalog全体を拒否していた。
-- Aiterm managed Claude: schema修正後も`--setting-sources ""`によるhook隔離が`~/.claude.json`のuser scope `mcpServers`まで不可視にし、fresh sessionではAIShellが0件だった。Aiterm 0.21.4がuser scope MCPだけをowner-only launch configへsnapshotし、fresh ClaudeでAIShell 11 toolと`runtime_status`成功を確認した。
+- Aiterm managed Claude: schema修正後も`--setting-sources ""`によるhook隔離が`~/.claude.json`のuser scope `mcpServers`まで不可視にし、fresh sessionではAIShellが0件だった。Aiterm 0.21.4がuser scope MCPだけをowner-only launch configへsnapshotし、fresh ClaudeでAIShell 11 tool、`runtime_status`、単一file scopeの`search_context`成功を確認した。
 - 代替入口はCodexで`exec_command` 22,206件、aiterm read/send 約14,889/13,163件、`apply_patch` 6,976件。ClaudeではBash 20,632件、Read 3,695件、Edit 3,226件、aiterm read/send 約2,010件だった。
 
 集計は同一tool callの再収録をcall identityでdeduplicateした。したがって表示行数ではなく呼出し単位の比較である。
@@ -60,7 +60,7 @@ AIShellが日常開発でほぼ使われなかった主因は一つではない�
 - AIShell 0.4.9: cursorなし検索の既定を`tests`、cursorありを`changed, tests`へ修正。explicit `changed` without cursorは引き続きtyped error。
 - AIShell 0.4.9: SourceKit-LSP launch後に親の未使用pipe端を閉じ、子のexit/timeout時にEOFでblocking readを解放。termination観測後の重複`waitUntilExit()`も除去し、全suite内で再現した終了待ちdeadlockを解消。
 - AIShell 0.4.10: context候補のpriorityをentryごとに一度だけ文字列から計算してdecorate-sortし、relative pathごとのfilesystem解決とsort比較回数分の再計算を除去。cursor-free lexical searchでは有効checkpoint復元後のfull filesystem scanと未使用indexed-file projectionを省き、Git profile discoveryはtracked＋non-ignored untracked manifestだけを列挙する。198,478 entry／74 MB checkpointの同一release queryは約20秒の全scan段階から5.94秒まで短縮。全payload SHA・schema・entry invariant検証は維持。
-- AIShell 0.4.11: `search_context`がdirectoryに加えて単一regular fileをscopeとして受理する。lexical workerはそのfileだけを直接検索し、globはattested indexからexact fileだけを許して、親directoryやsiblingへ暗黙に広げない。
+- AIShell 0.4.11: `search_context`がdirectoryに加えて単一regular fileをscopeとして受理する。lexical workerはそのfileだけを直接検索し、globはattested indexからexact fileだけを許して、親directoryやsiblingへ暗黙に広げない。commit `eb7e36ff6ae3`のCI `30874932377`はSwift 6.1.2でfull test／app package／npm payloadを完走。npm `latest`、global package、app bundleはいずれも0.4.11。fresh managed Claudeは11 toolを発見し、`runtime_status`成功、`search_context(query:"AIShell", path:"README.md", byte_budget:1200)`成功（7件、1,132 bytes）を返した。
 - Aiterm 0.21.4: managed Claudeの通常hook／plugin／permission／project-local MCP隔離を維持しつつ、user scope `mcpServers`だけを0600のlaunch snapshotで継承する。定義やcredentialはargv／metadata／logへ展開しない。
 - runtime: 管理UIから`/Users/kite/Developer`を許可rootへ追加し、以前失敗した`bingo`のsnapshot成功を確認。
 - host config: Claude/Codex両方をbare `aishell-mcp`＋`expanded-v1`へ統一。
