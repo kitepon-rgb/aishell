@@ -4,6 +4,89 @@ import XCTest
 @testable import AIShellCore
 
 final class WorkspaceStateRuntimeTests: XCTestCase {
+    func testContextPrioritizationComputesPriorityOncePerFile() {
+        let paths = ["Sources/App.swift", "Tests/AppTests.swift", "Package.swift", "docs/CLAUDE.md"]
+        var entries = Dictionary(uniqueKeysWithValues: paths.map { path in
+            (path, WorkspaceEntry(
+                path: path,
+                identity: path,
+                isDirectory: false,
+                sizeBytes: 1,
+                modifiedAt: nil,
+                sha256: nil
+            ))
+        })
+        entries["build"] = WorkspaceEntry(
+            path: "build", identity: "build", isDirectory: true,
+            sizeBytes: 0, modifiedAt: nil, sha256: nil
+        )
+
+        XCTAssertEqual(
+            WorkspaceStateRuntime.prioritizedContextEntries(in: entries).map(\.path),
+            ["docs/CLAUDE.md", "Package.swift", "Tests/AppTests.swift", "Sources/App.swift"]
+        )
+
+        var priorityCalls = 0
+        _ = WorkspaceStateRuntime.prioritizedContextEntries(in: entries) { path in
+            priorityCalls += 1
+            return path.count
+        }
+        XCTAssertEqual(priorityCalls, paths.count)
+    }
+
+    func testCurrentSearchCursorReusesStateWithoutFullRescan() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("State.swift")
+        try "let value = 1\n".write(to: file, atomically: false, encoding: .utf8)
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+        let runtime = WorkspaceStateRuntime(runtimeStore: store, startsFSEvents: false)
+
+        let first = try await runtime.currentSearchCursor(path: root.path)
+        let second = try await runtime.currentSearchCursor(path: root.path)
+
+        XCTAssertEqual(first, second)
+        let repeatedScanCount = await runtime.scanInvocationCountForTests()
+        XCTAssertEqual(repeatedScanCount, 1)
+
+        try "let value = 2\n".write(to: file, atomically: false, encoding: .utf8)
+        await runtime.ingestObservedPaths([file.path])
+        let advanced = try await runtime.currentSearchCursor(path: root.path)
+
+        XCTAssertNotEqual(advanced, second)
+        let changedScanCount = await runtime.scanInvocationCountForTests()
+        XCTAssertEqual(changedScanCount, 1)
+    }
+
+    func testCurrentSearchCursorRestoresCheckpointWithoutFilesystemScan() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "let value = 1\n".write(
+            to: root.appendingPathComponent("State.swift"),
+            atomically: false,
+            encoding: .utf8
+        )
+        let store = RuntimeStore(baseDirectory: fixture.base.appendingPathComponent("runtime"))
+        try await store.setAllowedRoot(root)
+
+        let initialRuntime = WorkspaceStateRuntime(runtimeStore: store)
+        let initial = try await initialRuntime.snapshot(path: root.path, contextBudget: 0)
+        let initialScanCount = await initialRuntime.scanInvocationCountForTests()
+        XCTAssertEqual(initialScanCount, 1)
+
+        let restoredRuntime = WorkspaceStateRuntime(runtimeStore: store)
+        let cursor = try await restoredRuntime.currentSearchCursor(path: root.path)
+
+        XCTAssertEqual(cursor, initial.cursor)
+        let restoredScanCount = await restoredRuntime.scanInvocationCountForTests()
+        XCTAssertEqual(restoredScanCount, 0)
+    }
+
     func testWorkspaceDeltaViewSurvivesSnapshotConsumerAndRestart() async throws {
         let fixture = try TemporaryFixture()
         defer { fixture.cleanup() }

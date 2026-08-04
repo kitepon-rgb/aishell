@@ -661,6 +661,40 @@ final class ProjectProfileServiceTests: XCTestCase {
         XCTAssertTrue(after.invalidationReasons.contains { $0.kind == "provider_or_environment_changed" })
     }
 
+    func testGitDiscoveryExcludesIgnoredManifests() async throws {
+        let fixture = try TemporaryFixture()
+        defer { fixture.cleanup() }
+        let root = try workspace(in: fixture)
+        try writePackage(at: root, name: "root", scripts: [:], workspaces: ["packages/*"])
+        try writePackage(
+            at: root.appendingPathComponent("packages/member", isDirectory: true),
+            name: "member",
+            scripts: [:]
+        )
+        try writePackage(
+            at: root.appendingPathComponent("generated/ignored", isDirectory: true),
+            name: "ignored",
+            scripts: [:]
+        )
+        try "generated/\n".write(
+            to: root.appendingPathComponent(".gitignore"), atomically: true, encoding: .utf8
+        )
+        let git = Process()
+        git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        git.arguments = ["-C", root.path, "init", "--quiet"]
+        git.standardOutput = FileHandle.nullDevice
+        git.standardError = FileHandle.nullDevice
+        try git.run()
+        git.waitUntilExit()
+        XCTAssertEqual(git.terminationStatus, 0)
+        let service = try await makeService(root: root, fixture: fixture)
+
+        let result = try await service.catalog(rootPath: root.path, observedCursor: cursor(1))
+
+        XCTAssertEqual(result.profiles.map(\.projectRoot).sorted(), ["", "packages/member"])
+        XCTAssertFalse(result.profiles.contains { $0.projectRoot.hasPrefix("generated/") })
+    }
+
     private func workspace(in fixture: TemporaryFixture) throws -> URL {
         let root = fixture.base.appendingPathComponent("workspace", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

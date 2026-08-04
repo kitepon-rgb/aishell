@@ -124,6 +124,10 @@ struct WorkspaceCheckpoint: Codable, Equatable, Sendable {
     }
 }
 
+private struct WorkspaceCheckpointSchemaEnvelope: Decodable {
+    let schema: String
+}
+
 struct WorkspaceCheckpointQuota: Sendable {
     var maximumRoots = 8
     var maximumEntriesPerRoot = 500_000
@@ -159,15 +163,9 @@ actor WorkspaceCheckpointStore {
         }
         let schema: String
         do {
-            let object = try JSONSerialization.jsonObject(with: data)
-            guard let dictionary = object as? [String: Any], let value = dictionary["schema"] as? String else {
-                throw AIShellError.checkpointCorrupt("schemaがありません: \(url.path)")
-            }
-            schema = value
-        } catch let error as AIShellError {
-            throw error
+            schema = try Self.decoder.decode(WorkspaceCheckpointSchemaEnvelope.self, from: data).schema
         } catch {
-            throw AIShellError.checkpointCorrupt("JSONをdecodeできません: \(url.path)")
+            throw AIShellError.checkpointCorrupt("schemaをdecodeできません: \(url.path)")
         }
         guard schema == WorkspaceCheckpoint.currentSchema else {
             throw AIShellError.checkpointUnsupported(schema)
@@ -192,9 +190,9 @@ actor WorkspaceCheckpointStore {
         guard storedDigest == actualDigest else {
             throw AIShellError.checkpointCorrupt("payload_sha256が一致しません: \(url.path)")
         }
-        try Self.validateEntries(checkpoint.entries, path: url.path)
+        try Self.validateEntries(checkpoint.entries, path: url.path, requiresCanonicalOrder: true)
         try Self.validateJournal(checkpoint, path: url.path)
-        return checkpoint.normalized(payloadSHA256: storedDigest)
+        return checkpoint
     }
 
     @discardableResult
@@ -206,7 +204,6 @@ actor WorkspaceCheckpointStore {
             throw AIShellError.checkpointUnsupported(checkpoint.schema)
         }
         _ = try checkpointURL(rootDigest: checkpoint.rootDigest)
-        try Self.validateEntries(checkpoint.entries, path: checkpoint.rootPath)
         try Self.validateJournal(checkpoint, path: checkpoint.rootPath)
         guard checkpoint.entries.count <= quota.maximumEntriesPerRoot else {
             throw AIShellError.checkpointQuotaExceeded(
@@ -214,6 +211,11 @@ actor WorkspaceCheckpointStore {
             )
         }
         let withoutDigest = checkpoint.normalized()
+        try Self.validateEntries(
+            withoutDigest.entries,
+            path: checkpoint.rootPath,
+            requiresCanonicalOrder: true
+        )
         let digest = Self.digest(try Self.encoder.encode(withoutDigest))
         let encoded = try Self.encoder.encode(withoutDigest.normalized(payloadSHA256: digest))
         guard encoded.count <= quota.maximumBytesPerRoot else {
@@ -361,15 +363,22 @@ actor WorkspaceCheckpointStore {
         return try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
     }
 
-    private static func validateEntries(_ entries: [WorkspaceCheckpointEntry], path: String) throws {
+    private static func validateEntries(
+        _ entries: [WorkspaceCheckpointEntry],
+        path: String,
+        requiresCanonicalOrder: Bool = false
+    ) throws {
+        var previousPath: String?
         var seen = Set<String>()
         for entry in entries {
             guard !entry.path.isEmpty,
                   !entry.path.hasPrefix("/"),
-                  !entry.path.split(separator: "/").contains(".."),
-                  seen.insert(entry.path).inserted else {
+                  !containsParentTraversalComponent(entry.path),
+                  previousPath.map({ !requiresCanonicalOrder || $0 < entry.path }) ?? true,
+                  requiresCanonicalOrder || seen.insert(entry.path).inserted else {
                 throw AIShellError.checkpointCorrupt("不正又は重複したentry path: \(path)")
             }
+            previousPath = entry.path
             switch (entry.kind, entry.hashState, entry.sha256) {
             case (.directory, .notApplicable, nil), (.file, .deferred, nil):
                 break
@@ -379,6 +388,10 @@ actor WorkspaceCheckpointStore {
                 throw AIShellError.checkpointCorrupt("entry hash invariant違反: \(entry.path)")
             }
         }
+    }
+
+    private static func containsParentTraversalComponent(_ path: String) -> Bool {
+        path == ".." || path.hasPrefix("../") || path.hasSuffix("/..") || path.contains("/../")
     }
 
     private static func validateJournal(_ checkpoint: WorkspaceCheckpoint, path: String) throws {

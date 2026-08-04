@@ -48,14 +48,16 @@ AIShellが日常開発でほぼ使われなかった主因は一つではない�
 3. **host登録drift**: Codexがdefault 7 toolで、高密度の`change_impact`、`apply_change_set`、`run_observe`、`workspace_wait`を発見できない。
 4. **公開request既定の矛盾**: `ranking`と`changed_since_cursor`はschema上optionalなのに、省略rankingが`changed`を含みcursor必須errorになった。
 5. **process timeoutの未完了**: SourceKit-LSP子processをtimeout終了しても親がstdout pipeの書込み端を保持し、readerがEOFを受け取れずrequestが終わらなかった。
-6. **routing正典の空白**: aiterm、native search/edit、Latticeの入口は全体指示にあるが、AIShellを先に使うtask classがなかった。
-7. **正しい非採用**: single-file edit、狭い一回検索、小出力command、PTYはAIShellの対象外であり、native/aiterm利用が正しい。
+6. **実workspaceでのcontext前処理暴走**: 0.4.9公開後のfresh host smokeで、省略検索が数分CPUを占有した。sampleでは全entryのsort comparatorが比較ごとに相対pathを`URL(fileURLWithPath:)`へ変換し、`getcwd`／`lstat`を反復していた。
+7. **routing正典の空白**: aiterm、native search/edit、Latticeの入口は全体指示にあるが、AIShellを先に使うtask classがなかった。
+8. **正しい非採用**: single-file edit、狭い一回検索、小出力command、PTYはAIShellの対象外であり、native/aiterm利用が正しい。
 
 ## 修理
 
 - AIShell 0.4.8: Claudeが拒否したunion schemaを修正し、fresh Claude Code 2.1.221で11 tool loadと実callを確認。
 - AIShell 0.4.9: cursorなし検索の既定を`tests`、cursorありを`changed, tests`へ修正。explicit `changed` without cursorは引き続きtyped error。
 - AIShell 0.4.9: SourceKit-LSP launch後に親の未使用pipe端を閉じ、子のexit/timeout時にEOFでblocking readを解放。termination観測後の重複`waitUntilExit()`も除去し、全suite内で再現した終了待ちdeadlockを解消。
+- AIShell 0.4.10: context候補のpriorityをentryごとに一度だけ文字列から計算してdecorate-sortし、relative pathごとのfilesystem解決とsort比較回数分の再計算を除去。cursor-free lexical searchでは有効checkpoint復元後のfull filesystem scanと未使用indexed-file projectionを省き、Git profile discoveryはtracked＋non-ignored untracked manifestだけを列挙する。198,478 entry／74 MB checkpointの同一release queryは約20秒の全scan段階から5.94秒まで短縮。全payload SHA・schema・entry invariant検証は維持。
 - runtime: 管理UIから`/Users/kite/Developer`を許可rootへ追加し、以前失敗した`bingo`のsnapshot成功を確認。
 - host config: Claude/Codex両方をbare `aishell-mcp`＋`expanded-v1`へ統一。
 - dotagents: READMEへ両hostの登録を追加し、`verify-install`がscope/enabled/command/environment/connectionを検査するよう変更。

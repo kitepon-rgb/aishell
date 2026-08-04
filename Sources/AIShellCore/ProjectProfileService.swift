@@ -706,26 +706,17 @@ public actor ProjectProfileService {
 
     private func discover(ownerRoot: URL) throws -> [Candidate] {
         let manager = FileManager.default
-        guard let enumerator = manager.enumerator(
-            at: ownerRoot,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
         var result: [Candidate] = []
-        while let discoveredURL = enumerator.nextObject() as? URL {
+
+        func appendCandidate(_ discoveredURL: URL) throws {
             let discoveredValues = try discoveredURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-            if discoveredValues.isDirectory == true,
-               [".git", ".build", "node_modules", ".aishell-transactions"].contains(discoveredURL.lastPathComponent) {
-                enumerator.skipDescendants()
-                continue
-            }
-            guard discoveredValues.isSymbolicLink != true else { continue }
+            guard discoveredValues.isSymbolicLink != true else { return }
             let url = try Self.canonicalURL(discoveredURL)
             let relative = Self.relative(url, to: ownerRoot)
             let components = relative.split(separator: "/").map(String.init)
-            guard let spec = Self.providers.first(where: { $0.manifest == url.lastPathComponent }) else { continue }
+            guard let spec = Self.providers.first(where: { $0.manifest == url.lastPathComponent }) else { return }
             let root = url.deletingLastPathComponent()
-            guard root.path == ownerRoot.path || root.path.hasPrefix(ownerRoot.path + "/") else { continue }
+            guard root.path == ownerRoot.path || root.path.hasPrefix(ownerRoot.path + "/") else { return }
             let relativeRoot = Self.relative(root, to: ownerRoot)
             let manifestPath = Self.relative(url, to: ownerRoot)
             let identity = try Self.fileIdentity(root)
@@ -748,6 +739,28 @@ public actor ProjectProfileService {
                 rootIdentity: identity,
                 projectId: try Self.digestJSON(descriptor)
             ))
+        }
+
+        let manifestNames = Set(Self.providers.map(\.manifest))
+        if let visibleManifests = try Self.gitVisibleFiles(under: ownerRoot, fileNames: manifestNames) {
+            for url in visibleManifests {
+                try appendCandidate(url)
+            }
+        } else {
+            guard let enumerator = manager.enumerator(
+                at: ownerRoot,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ) else { return [] }
+            while let discoveredURL = enumerator.nextObject() as? URL {
+                let discoveredValues = try discoveredURL.resourceValues(forKeys: [.isDirectoryKey])
+                if discoveredValues.isDirectory == true,
+                   [".git", ".build", "node_modules", ".aishell-transactions"].contains(discoveredURL.lastPathComponent) {
+                    enumerator.skipDescendants()
+                    continue
+                }
+                try appendCandidate(discoveredURL)
+            }
         }
         return result.sorted {
             if $0.relativeRoot != $1.relativeRoot { return $0.relativeRoot.utf8.lexicographicallyPrecedes($1.relativeRoot.utf8) }
@@ -1391,7 +1404,11 @@ public actor ProjectProfileService {
         let data = try Data(contentsOf: candidate.manifestURL)
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [] }
         let patterns = try npmWorkspacePatterns(json: json, candidate: candidate)
-        return try regularFiles(under: candidate.projectRoot)
+        let packageFiles = try gitVisibleFiles(
+            under: candidate.projectRoot,
+            fileNames: ["package.json"]
+        ) ?? regularFiles(under: candidate.projectRoot).filter { $0.lastPathComponent == "package.json" }
+        return packageFiles
             .filter { $0.lastPathComponent == "package.json" && $0.path != candidate.manifestURL.path }
             .compactMap { url -> String? in
                 let canonical: URL
@@ -1448,6 +1465,50 @@ public actor ProjectProfileService {
             }
         }
         return patterns
+    }
+
+    /// Git workspaceではtracked fileと非ignored untracked fileだけを索引に使う。
+    /// `rev-parse`で非Gitと確認できた時だけdirect filesystem列挙へ切り替える。
+    private static func gitVisibleFiles(under root: URL, fileNames: Set<String>) throws -> [URL]? {
+        let git = URL(fileURLWithPath: "/usr/bin/git")
+        guard FileManager.default.isExecutableFile(atPath: git.path) else { return nil }
+        let probe = try run(git, ["-C", root.path, "rev-parse", "--is-inside-work-tree"])
+        let probeOutput = String(decoding: probe.stdout, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if probe.exitStatus != 0 {
+            let message = String(decoding: probe.stderr, as: UTF8.self)
+            if message.localizedCaseInsensitiveContains("not a git repository") { return nil }
+            throw ProviderExecutionError.providerNonzero(probe.exitStatus, message, nil)
+        }
+        guard probeOutput == "true" else { return nil }
+
+        var arguments = ["-C", root.path, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--"]
+        for name in fileNames.sorted() {
+            arguments.append(name)
+            arguments.append(":(glob)**/\(name)")
+        }
+        let listing = try run(git, arguments)
+        guard listing.exitStatus == 0 else {
+            throw ProviderExecutionError.providerNonzero(
+                listing.exitStatus,
+                String(decoding: listing.stderr, as: UTF8.self),
+                nil
+            )
+        }
+        return try listing.stdout.split(separator: 0).compactMap { bytes -> URL? in
+            let relative = String(decoding: bytes, as: UTF8.self)
+            guard !relative.isEmpty, !relative.hasPrefix("/") else { return nil }
+            let components = relative.split(separator: "/", omittingEmptySubsequences: false)
+            guard !components.contains(".."), !components.contains(where: \.isEmpty),
+                  !components.dropLast().contains(where: { $0.hasPrefix(".") }),
+                  !ReservedNamespacePolicy.contains(relativePath: relative) else { return nil }
+            let url = root.appendingPathComponent(relative).standardizedFileURL
+            guard url.path.hasPrefix(root.standardizedFileURL.path + "/") else { return nil }
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true,
+                  fileNames.contains(url.lastPathComponent) else { return nil }
+            return url
+        }.sorted { $0.path.utf8.lexicographicallyPrecedes($1.path.utf8) }
     }
 
     private static func regularFiles(under root: URL) throws -> [URL] {

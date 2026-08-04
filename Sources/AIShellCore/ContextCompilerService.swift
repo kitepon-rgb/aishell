@@ -289,15 +289,13 @@ public actor ContextCompilerService {
             guard !request.ranking.contains(.changed) else {
                 throw SearchContextServiceError.invalidArgument("changed順位にはchanged_since_cursorが必要です。")
             }
-            fromCursor = try await workspaceRuntime.snapshot(
-                path: request.path,
-                entryLimit: 5_000,
-                contextBudget: 0
-            ).cursor
+            fromCursor = try await workspaceRuntime.currentSearchCursor(path: request.path)
         }
+        let includeIndexedFiles = request.queries.contains { $0.kind == .glob }
         let initial = try await workspaceRuntime.searchContextObservation(
             path: request.path,
-            fromCursor: fromCursor
+            fromCursor: fromCursor,
+            includeIndexedFiles: false
         )
         let catalog = try await projectProfiles.catalog(
             rootPath: request.path,
@@ -312,7 +310,8 @@ public actor ContextCompilerService {
             fromCursor: fromCursor,
             testPaths: testPaths,
             testClassification: catalog.profiles.contains(where: { $0.status != .complete }) ? "partial" : "complete",
-            projectProfileDigest: profileDigest
+            projectProfileDigest: profileDigest,
+            includeIndexedFiles: includeIndexedFiles
         )
         return try await provider.search(request, environment: environment)
     }

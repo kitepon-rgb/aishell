@@ -282,12 +282,78 @@ public actor WorkspaceStateRuntime {
             testCandidates: testPaths(in: state.entries),
             gitStatusState: git.state,
             gitStatus: git.lines,
-            context: try contextChunks(
+            context: contextBudget > 0 ? try contextChunks(
                 root: root,
-                candidates: prioritizedContextEntries(in: state.entries),
+                candidates: Self.prioritizedContextEntries(in: state.entries),
                 budget: contextBudget
-            )
+            ) : []
         )
+    }
+
+    /// Cursorだけを必要とする検索開始時に、presentation用の全entry sortやcontext生成を行わず
+    /// checkpointとFSEvents差分を現在状態へ収束させる。
+    func currentSearchCursor(path: String? = nil) async throws -> String {
+        let resolver = try await activeResolver()
+        let requested = try resolver.resolveExisting(path)
+        guard try requested.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true else {
+            throw AIShellError.invalidPath(requested.path)
+        }
+        let owner = try EffectiveRootProjectCatalog(rootURLs: resolver.rootURLs).resolveOwner(for: requested)
+        let root = owner.root
+        let key = root.path
+        if let existing = states[key], existing.rootIdentity != owner.rootIdentity {
+            _ = existing.observer?.drainThroughCurrent()
+            states.removeValue(forKey: key)
+        }
+        if states[key] == nil {
+            try await initialize(
+                root: root,
+                key: key,
+                requestedCursor: nil,
+                reconcileFilesystem: false
+            )
+        }
+        if states[key]?.observer != nil {
+            try await Task.sleep(for: .milliseconds(500))
+        }
+        drainObserver(for: key)
+        guard var state = states[key] else { throw AIShellError.invalidPath(root.path) }
+        var needsPersistence = false
+
+        if state.journal.rescanReason != nil {
+            state.journal.startNewGeneration(UUID().uuidString.lowercased())
+            state.knownChangesBySequence.removeAll(keepingCapacity: true)
+            state.checkpointState = "rebuilt"
+            state.prefetchedPaths.removeAll(keepingCapacity: true)
+            state.prefetchedEntries.removeAll(keepingCapacity: true)
+            state.entries = try scan(root: root)
+            states[key] = state
+            if let rebuildHookForTests {
+                ingest(try rebuildHookForTests())
+            }
+            drainObserver(for: key)
+            guard let refreshed = states[key] else { throw AIShellError.invalidPath(root.path) }
+            state = refreshed
+            if let reason = state.journal.rescanReason {
+                throw AIShellError.rescanRequired("search baseline rebuild failed: \(reason)")
+            }
+            needsPersistence = true
+        }
+        if !state.journal.events.isEmpty {
+            let appliedSequence = state.journal.sequence
+            _ = try reconcile(paths: state.journal.events.map(\.path), state: &state)
+            state.journal.discardEvents(through: appliedSequence)
+            state.knownChangesBySequence.removeAll(keepingCapacity: true)
+            needsPersistence = true
+        }
+        state.prefetchedPaths.removeAll(keepingCapacity: true)
+        state.prefetchedEntries.removeAll(keepingCapacity: true)
+        state.lastAccessedAt = Date()
+        states[key] = state
+        if needsPersistence {
+            try await persistCheckpoint(state)
+        }
+        return cursor(for: state)
     }
 
     func ingestObservedPaths(_ paths: [String]) {
@@ -499,7 +565,7 @@ public actor WorkspaceStateRuntime {
     }
 
     private static func canonicalLess(_ lhs: String, _ rhs: String) -> Bool {
-        Data(lhs.utf8).lexicographicallyPrecedes(Data(rhs.utf8))
+        lhs.utf8.lexicographicallyPrecedes(rhs.utf8)
     }
 
     private static func sha256(_ data: Data) -> String {
@@ -521,7 +587,8 @@ public actor WorkspaceStateRuntime {
     func workspaceDeltaObservation(
         path: String? = nil,
         fromCursor: String,
-        deliveryGrace: Duration
+        deliveryGrace: Duration,
+        includeIndexedFiles: Bool = true
     ) async throws -> WorkspaceDeltaObservation {
         let resolver = try await activeResolver()
         let requested = try resolver.resolveExisting(path)
@@ -576,10 +643,15 @@ public actor WorkspaceStateRuntime {
             changedPaths.insert(change.path)
             if let previous = change.previousPath { changedPaths.insert(previous) }
         }
-        let indexedFiles = state.entries.values.compactMap { entry -> SearchContextIndexedFile? in
-            guard !entry.isDirectory, let sha256 = entry.sha256 else { return nil }
-            return SearchContextIndexedFile(path: entry.path, fileIdentity: entry.identity, contentSHA256: sha256)
-        }.sorted { Data($0.path.utf8).lexicographicallyPrecedes(Data($1.path.utf8)) }
+        let indexedFiles: [SearchContextIndexedFile]
+        if includeIndexedFiles {
+            indexedFiles = state.entries.values.compactMap { entry -> SearchContextIndexedFile? in
+                guard !entry.isDirectory, let sha256 = entry.sha256 else { return nil }
+                return SearchContextIndexedFile(path: entry.path, fileIdentity: entry.identity, contentSHA256: sha256)
+            }.sorted { Self.canonicalLess($0.path, $1.path) }
+        } else {
+            indexedFiles = []
+        }
         let throughCursor = cursor(for: state)
         let changedDigest = SHA256.hash(data: Data(changedPaths.sorted().joined(separator: "\u{0}").utf8))
             .map { String(format: "%02x", $0) }.joined()
@@ -607,9 +679,15 @@ public actor WorkspaceStateRuntime {
         fromCursor: String,
         testPaths: Set<String> = [],
         testClassification: String = "unavailable",
-        projectProfileDigest: String? = nil
+        projectProfileDigest: String? = nil,
+        includeIndexedFiles: Bool = true
     ) async throws -> SearchContextEnvironment {
-        let view = try await workspaceDeltaObservation(path: path, fromCursor: fromCursor)
+        let view = try await workspaceDeltaObservation(
+            path: path,
+            fromCursor: fromCursor,
+            deliveryGrace: .milliseconds(500),
+            includeIndexedFiles: includeIndexedFiles
+        )
         return SearchContextEnvironment(
             effectiveRootIdentity: view.effectiveRootIdentity,
             effectiveRootPolicyDigest: view.effectiveRootPolicyDigest,
@@ -621,7 +699,7 @@ public actor WorkspaceStateRuntime {
             testPaths: testPaths,
             testClassification: testClassification,
             projectProfileDigest: projectProfileDigest,
-            indexedFiles: view.indexedFiles,
+            indexedFiles: includeIndexedFiles ? view.indexedFiles : nil,
             isFresh: true
         )
     }
@@ -693,7 +771,12 @@ public actor WorkspaceStateRuntime {
     func scanInvocationCountForTests() -> Int { scanInvocationCount }
     func contentReadCountForTests() -> Int { contentReadCount }
 
-    private func initialize(root: URL, key: String, requestedCursor: String?) async throws {
+    private func initialize(
+        root: URL,
+        key: String,
+        requestedCursor: String?,
+        reconcileFilesystem: Bool = true
+    ) async throws {
         if states.count >= stateLimit,
            let oldest = states.min(by: { $0.value.lastAccessedAt < $1.value.lastAccessedAt })?.key {
             states.removeValue(forKey: oldest)
@@ -782,6 +865,12 @@ public actor WorkspaceStateRuntime {
                 warmed.journal.startNewGeneration(warmed.journal.generation)
             }
             states[key] = warmed
+        }
+        // Cursorなしの検索は実ファイルをworkerで直接読むため、正常なcheckpoint復元時に
+        // 全entryを再列挙する必要はない。FSEvents差分は呼出元でdrain/reconcileし、
+        // continuity喪失はrescanReason経由で明示的な全scanへ昇格する。
+        if !reconcileFilesystem, restored != nil {
+            return
         }
         let dirtyPaths = Set(states[key]?.journal.events.map(\.path) ?? [])
         let scannedEntries = try scan(
@@ -1198,14 +1287,14 @@ public actor WorkspaceStateRuntime {
     }
 
     private func manifestPaths(in entries: [String: WorkspaceEntry]) -> [String] {
-        let names: Set<String> = ["Package.swift", "package.json", "Cargo.toml", "pyproject.toml", "go.mod"]
-        return entries.values.filter { names.contains(URL(fileURLWithPath: $0.path).lastPathComponent) }
+        let names: Set<Substring> = ["Package.swift", "package.json", "Cargo.toml", "pyproject.toml", "go.mod"]
+        return entries.values.filter { names.contains(Self.lastPathComponent(of: $0.path)) }
             .map(\.path).sorted()
     }
 
     private func guidancePaths(in entries: [String: WorkspaceEntry]) -> [String] {
         entries.values.filter {
-            let name = URL(fileURLWithPath: $0.path).lastPathComponent
+            let name = Self.lastPathComponent(of: $0.path)
             return name == "AGENTS.md" || name == "CLAUDE.md" || $0.path == "rag/INDEX.md"
         }.map(\.path).sorted()
     }
@@ -1216,21 +1305,30 @@ public actor WorkspaceStateRuntime {
         }.map(\.path).sorted().prefix(100).map { $0 }
     }
 
-    private func prioritizedContextEntries(in entries: [String: WorkspaceEntry]) -> [WorkspaceEntry] {
-        entries.values.filter { !$0.isDirectory }.sorted {
-            let left = contextPriority($0.path)
-            let right = contextPriority($1.path)
-            if left != right { return left < right }
-            return $0.path < $1.path
-        }
+    static func prioritizedContextEntries(
+        in entries: [String: WorkspaceEntry],
+        priority: (String) -> Int = WorkspaceStateRuntime.contextPriority
+    ) -> [WorkspaceEntry] {
+        entries.values.filter { !$0.isDirectory }
+            .map { (entry: $0, priority: priority($0.path)) }
+            .sorted {
+                if $0.priority != $1.priority { return $0.priority < $1.priority }
+                return $0.entry.path < $1.entry.path
+            }
+            .map(\.entry)
     }
 
-    private func contextPriority(_ path: String) -> Int {
-        let name = URL(fileURLWithPath: path).lastPathComponent
+    private static func contextPriority(_ path: String) -> Int {
+        let name = lastPathComponent(of: path)
         if name == "AGENTS.md" || name == "CLAUDE.md" || path == "rag/INDEX.md" { return 0 }
         if ["Package.swift", "package.json", "Cargo.toml", "pyproject.toml", "go.mod"].contains(name) { return 1 }
         if path.contains("/Tests/") || path.hasPrefix("Tests/") || path.contains(".test.") { return 2 }
         return 3
+    }
+
+    private static func lastPathComponent(of path: String) -> Substring {
+        guard let separator = path.lastIndex(of: "/") else { return path[...] }
+        return path[path.index(after: separator)...]
     }
 
     private func contextChunks(
